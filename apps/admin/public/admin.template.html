@@ -1,0 +1,1298 @@
+<title>AVEX Pay Admin</title>
+<style>
+  /**
+   * AVEX Pay admin panel.
+   *
+   * Same design language as the checkout and the planning documents: pure black
+   * ground, acid lime for the one thing that matters per view, dark cards at a
+   * 14-20px radius, monospace for every number and identifier.
+   *
+   * One deliberate difference from the checkout. Lime is used far more sparingly
+   * here, because this panel is dense with numbers and an accent that appears on
+   * every second figure stops meaning anything. It is reserved for the primary
+   * action and for a value that is currently wrong.
+   */
+  :root {
+    --void: #000000;
+    --card: #121212;
+    --card-2: #1A1A1A;
+    --card-3: #242424;
+    --line: #262626;
+    --line-2: #333333;
+
+    --ink: #FFFFFF;
+    --muted: #8B8B8B;
+    --faint: #5A5A5A;
+
+    --lime: #C6F73F;
+    --lime-ink: #0A0A0A;
+    --lime-wash: rgba(198, 247, 63, 0.10);
+    --lime-edge: rgba(198, 247, 63, 0.28);
+
+    --teal: #2ED3A0;
+    --teal-wash: rgba(46, 211, 160, 0.12);
+    --amber: #F5A623;
+    --amber-wash: rgba(245, 166, 35, 0.12);
+    --coral: #FF5A4E;
+    --coral-wash: rgba(255, 90, 78, 0.12);
+    --violet: #8B7CF6;
+
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+    --r-lg: 20px;
+    --r-md: 14px;
+    --r-sm: 10px;
+    --pill: 999px;
+
+    --s-2: 0.6875rem;
+    --s-1: 0.8125rem;
+    --s0: 0.9375rem;
+    --s1: 1.0625rem;
+    --s2: 1.375rem;
+    --s3: 1.875rem;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--void);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: var(--s0);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  [hidden] { display: none !important; }
+
+  /* ── shell ──────────────────────────────────────────────────────────── */
+
+  .shell { display: grid; grid-template-columns: 13rem minmax(0, 1fr); min-height: 100vh; }
+
+  .side {
+    background: var(--card);
+    border-inline-end: 1px solid var(--line);
+    padding: 1.25rem 0.875rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 800; }
+  .brand-mark {
+    width: 1.625rem; height: 1.625rem;
+    border-radius: var(--r-sm);
+    background: var(--lime); color: var(--lime-ink);
+    display: grid; place-items: center;
+    font-family: var(--mono); font-weight: 700; font-size: var(--s-1);
+    flex: none;
+  }
+  .brand-sub {
+    font-family: var(--mono);
+    font-size: var(--s-2);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  nav { display: flex; flex-direction: column; gap: 0.15rem; }
+  .nav-btn {
+    display: flex; align-items: center; gap: 0.5rem;
+    width: 100%; padding: 0.5rem 0.625rem;
+    border: none; background: transparent;
+    border-radius: var(--r-sm);
+    color: var(--muted); font: inherit; font-size: var(--s-1);
+    text-align: left; cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .nav-btn:hover { background: var(--card-2); color: var(--ink); }
+  .nav-btn[aria-current="true"] { background: var(--lime-wash); color: var(--lime); font-weight: 700; }
+  .nav-btn:focus-visible { outline: 2px solid var(--lime); outline-offset: 1px; }
+  .nav-count {
+    margin-inline-start: auto;
+    font-family: var(--mono); font-size: var(--s-2);
+    background: var(--card-3); color: var(--muted);
+    border-radius: var(--pill); padding: 0.05rem 0.4rem;
+  }
+  .nav-count.alert { background: var(--coral-wash); color: var(--coral); }
+
+  .whoami {
+    margin-top: auto;
+    border-top: 1px solid var(--line);
+    padding-top: 0.875rem;
+    display: flex; flex-direction: column; gap: 0.3rem;
+    font-size: var(--s-2);
+  }
+  .whoami-email { font-family: var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+  .role-pill {
+    align-self: flex-start;
+    font-family: var(--mono); font-size: var(--s-2);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    padding: 0.1rem 0.5rem; border-radius: var(--pill);
+    background: var(--card-3); color: var(--muted);
+  }
+  .role-pill[data-role="operator"] { background: var(--teal-wash); color: var(--teal); }
+  .role-pill[data-role="superadmin"] { background: var(--lime-wash); color: var(--lime); }
+
+  main { padding: clamp(1rem, 2.5vw, 1.75rem); min-width: 0; }
+
+  .head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;
+  }
+  h1 { font-size: var(--s2); font-weight: 800; margin: 0; letter-spacing: -0.015em; }
+  h2 { font-size: var(--s1); font-weight: 700; margin: 0; }
+  .sub { color: var(--muted); font-size: var(--s-1); margin: 0.15rem 0 0; }
+
+  /* ── cards, tables ──────────────────────────────────────────────────── */
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+  .card-head {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  }
+  .card-body { padding: 1rem; }
+
+  .grid { display: grid; gap: 0.625rem; }
+  .grid.cols { grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
+
+  .metric {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--r-md); padding: 0.875rem 1rem;
+    display: flex; flex-direction: column; gap: 0.1rem;
+  }
+  .metric-value {
+    font-family: var(--mono); font-size: var(--s3); font-weight: 700;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+  }
+  .metric-label { font-size: var(--s-2); color: var(--muted); }
+  .metric.bad { border-color: rgba(255, 90, 78, 0.3); }
+  .metric.bad .metric-value { color: var(--coral); }
+  .metric.warn { border-color: rgba(245, 166, 35, 0.3); }
+  .metric.warn .metric-value { color: var(--amber); }
+  .metric.good .metric-value { color: var(--teal); }
+
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--s-1); }
+  th, td {
+    text-align: left; padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid var(--line); vertical-align: top;
+  }
+  th {
+    font-size: var(--s-2); text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--faint); font-weight: 600; white-space: nowrap;
+    position: sticky; top: 0; background: var(--card);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover { background: var(--card-2); }
+  td.m, th.m {
+    font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .dim { color: var(--muted); }
+  .faint { color: var(--faint); }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--mono); font-size: var(--s-2);
+    padding: 0.05rem 0.45rem; border-radius: var(--pill);
+    background: var(--card-3); color: var(--muted); white-space: nowrap;
+  }
+  .tag.ok { background: var(--teal-wash); color: var(--teal); }
+  .tag.warn { background: var(--amber-wash); color: var(--amber); }
+  .tag.bad { background: var(--coral-wash); color: var(--coral); }
+  .tag.lime { background: var(--lime-wash); color: var(--lime); }
+  .tag.violet { background: rgba(139, 124, 246, 0.14); color: var(--violet); }
+
+  /* ── controls ───────────────────────────────────────────────────────── */
+
+  .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+
+  input[type="text"], input[type="password"], input[type="search"], select, textarea {
+    background: var(--card-2); color: var(--ink);
+    border: 1px solid var(--line-2); border-radius: var(--r-sm);
+    padding: 0.45rem 0.625rem; font: inherit; font-size: var(--s-1);
+    min-width: 0;
+  }
+  textarea { width: 100%; resize: vertical; min-height: 4.5rem; line-height: 1.5; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--lime); outline-offset: 1px;
+  }
+  input::placeholder, textarea::placeholder { color: var(--faint); }
+  .mono-input { font-family: var(--mono); }
+
+  button {
+    font: inherit; cursor: pointer;
+    border-radius: var(--pill);
+    transition: filter 120ms ease, background 120ms ease, color 120ms ease;
+  }
+  .btn {
+    padding: 0.4rem 0.9rem; font-size: var(--s-1); font-weight: 600;
+    background: var(--card-3); color: var(--ink); border: 1px solid var(--line-2);
+  }
+  .btn:hover:not(:disabled) { background: var(--line-2); }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .btn.primary { background: var(--lime); color: var(--lime-ink); border-color: var(--lime); font-weight: 700; }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--lime); }
+  .btn.danger { background: transparent; color: var(--coral); border-color: rgba(255, 90, 78, 0.4); }
+  .btn.danger:hover:not(:disabled) { background: var(--coral-wash); }
+  .btn.ghost { background: transparent; color: var(--muted); }
+  .btn.ghost:hover:not(:disabled) { color: var(--ink); background: var(--card-2); }
+  .btn:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+  .btn.sm { padding: 0.2rem 0.6rem; font-size: var(--s-2); }
+
+  /* ── notices ────────────────────────────────────────────────────────── */
+
+  .notice {
+    padding: 0.7rem 0.875rem; border-radius: var(--r-sm);
+    font-size: var(--s-1); line-height: 1.5;
+    display: flex; gap: 0.5rem; align-items: flex-start;
+  }
+  .notice.info { background: var(--card-2); color: var(--muted); }
+  .notice.ok { background: var(--teal-wash); color: var(--teal); }
+  .notice.warn { background: var(--amber-wash); color: var(--amber); }
+  .notice.bad { background: var(--coral-wash); color: var(--coral); }
+  .notice strong { color: var(--ink); }
+
+  .empty { padding: 2rem 1rem; text-align: center; color: var(--faint); font-size: var(--s-1); }
+  .empty-mark { font-size: 1.5rem; display: block; margin-bottom: 0.4rem; }
+
+  /* ── modal ──────────────────────────────────────────────────────────── */
+
+  .veil {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72);
+    display: grid; place-items: center; padding: 1rem; z-index: 20;
+  }
+  .modal {
+    background: var(--card); border: 1px solid var(--line-2);
+    border-radius: var(--r-lg); padding: 1.25rem;
+    width: min(34rem, 100%);
+    display: flex; flex-direction: column; gap: 0.75rem;
+    max-height: 90vh; overflow-y: auto;
+  }
+  .modal h2 { font-size: var(--s1); }
+  .modal-note { font-size: var(--s-1); color: var(--muted); margin: 0; }
+  .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.25rem; }
+  .field-label {
+    font-size: var(--s-2); text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); font-weight: 600; display: block; margin-bottom: 0.25rem;
+  }
+
+  /* ── sign in ────────────────────────────────────────────────────────── */
+
+  .signin-wrap { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
+  .signin {
+    width: min(24rem, 100%);
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--r-lg); padding: 1.5rem;
+    display: flex; flex-direction: column; gap: 0.875rem;
+  }
+  .signin input { width: 100%; }
+  .signin .btn { width: 100%; text-align: center; justify-content: center; }
+
+  .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.3rem 0.875rem; font-size: var(--s-1); }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+
+  @media (max-width: 52rem) {
+    .shell { grid-template-columns: minmax(0, 1fr); }
+    .side { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+    nav { flex-direction: row; flex-wrap: wrap; }
+    .whoami { margin: 0 0 0 auto; border: none; padding: 0; align-items: flex-end; }
+  }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<!-- ══ sign in ══════════════════════════════════════════════════════════ -->
+<div class="signin-wrap" id="signin-screen">
+  <form class="signin" id="signin-form">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">A</span>
+      <span>AVEX <span style="color:var(--lime)">Admin</span></span>
+    </div>
+    <p class="modal-note">Staff access. Every action here is recorded.</p>
+
+    <div id="signin-step-password">
+      <label class="field-label" for="signin-email">Email</label>
+      <input type="text" id="signin-email" autocomplete="username" spellcheck="false" />
+      <div style="height:.5rem"></div>
+      <label class="field-label" for="signin-password">Password</label>
+      <input type="password" id="signin-password" autocomplete="current-password" />
+    </div>
+
+    <div id="signin-step-code" hidden>
+      <label class="field-label" for="signin-code">Authenticator code</label>
+      <input type="text" id="signin-code" class="mono-input" inputmode="numeric"
+             autocomplete="one-time-code" maxlength="6" placeholder="000000" />
+      <p class="modal-note" id="signin-code-note" style="margin-top:.5rem"></p>
+    </div>
+
+    <div class="notice bad" id="signin-error" hidden></div>
+    <button class="btn primary" type="submit" id="signin-submit">Continue</button>
+  </form>
+</div>
+
+<!-- ══ panel ════════════════════════════════════════════════════════════ -->
+<div class="shell" id="panel" hidden>
+  <aside class="side">
+    <div>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span>AVEX <span style="color:var(--lime)">Admin</span></span>
+      </div>
+      <div class="brand-sub" style="margin-top:.35rem">staff panel</div>
+    </div>
+
+    <nav id="nav" aria-label="Sections"></nav>
+
+    <div class="whoami">
+      <span class="role-pill" id="me-role">—</span>
+      <span class="whoami-email" id="me-email">—</span>
+      <button class="btn ghost sm" type="button" id="sign-out">Sign out</button>
+    </div>
+  </aside>
+
+  <main>
+    <div class="notice bad" id="global-error" hidden></div>
+    <div class="notice ok" id="global-ok" hidden></div>
+    <section id="view"></section>
+  </main>
+</div>
+
+<div id="modal-root"></div>
+
+<script>
+/* @inject:modules */
+
+(() => {
+  'use strict';
+
+  /**
+   * The panel is one file with no framework, and that is a decision rather than a
+   * shortcut.
+   *
+   * This origin can suspend merchants and approve assets that the whole platform
+   * then treats as money. Every dependency shipped here is code running with those
+   * powers, so for six mostly-read screens the smallest possible surface is worth
+   * more than the convenience of a component library.
+   *
+   * The session token is held in a variable, never in `localStorage`. An XSS on this
+   * origin would be able to read storage; a token in a closure at least dies with the
+   * tab, and the eight-hour server-side expiry does the rest.
+   */
+  const API = (window.AVEX_ADMIN_API ?? '').replace(/\/$/, '');
+
+  let token = null;
+  let me = null;
+  let section = null;
+  /** Cached counts for the nav badges, refreshed whenever health is fetched. */
+  let badges = { unmatched: 0, review: 0 };
+
+  const el = (id) => document.getElementById(id);
+  const view = () => el('view');
+
+  /**
+   * Replace a container's children, dropping the absent ones.
+   *
+   * `replaceChildren` stringifies whatever it is given, so a `null` from a
+   * conditional expression renders as the literal text "null" on the page. Sections
+   * are built with `cond ? node : null`, so every render site needs this rather than
+   * the raw DOM call — which is why it exists as a helper instead of a comment
+   * telling people to remember.
+   */
+  function render(container, ...children) {
+    container.replaceChildren(...children.flat().filter((child) => child !== null && child !== undefined && child !== false));
+  }
+
+  // ── transport ───────────────────────────────────────────────────────────
+
+  class ApiError extends Error {
+    constructor(status, body) {
+      super(body?.message ?? `request failed with ${status}`);
+      this.status = status;
+      this.body = body ?? {};
+    }
+  }
+
+  async function api(path, options = {}) {
+    const response = await fetch(`${API}${path}`, {
+      method: options.method ?? 'GET',
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(options.body ? { 'content-type': 'application/json' } : {}),
+      },
+      ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+    });
+
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      // A non-JSON body is still a failure worth reporting with its status.
+    }
+
+    if (!response.ok) throw new ApiError(response.status, body);
+    return body;
+  }
+
+  // ── notices ─────────────────────────────────────────────────────────────
+
+  let okTimer = null;
+  function showOk(message) {
+    const node = el('global-ok');
+    node.textContent = message;
+    node.hidden = false;
+    clearTimeout(okTimer);
+    okTimer = setTimeout(() => { node.hidden = true; }, 6000);
+  }
+
+  function showError(error) {
+    const node = el('global-error');
+    node.textContent = error instanceof ApiError ? error.message : String(error?.message ?? error);
+    node.hidden = false;
+  }
+
+  function clearNotices() {
+    el('global-error').hidden = true;
+  }
+
+  // ── small DOM helpers ───────────────────────────────────────────────────
+
+  /**
+   * Build an element. Text is always set through `textContent`.
+   *
+   * Nothing in this panel assigns `innerHTML` from data. Merchant names, review
+   * notes and audit metadata are all attacker-influenced — a merchant chooses their
+   * own organisation name — and this is the origin where a script must never run.
+   */
+  function h(tag, attrs = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      if (value === null || value === undefined || value === false) continue;
+      if (key === 'class') node.className = value;
+      else if (key === 'text') node.textContent = String(value);
+      else if (key === 'onclick') node.addEventListener('click', value);
+      else if (key === 'onsubmit') node.addEventListener('submit', value);
+      else node.setAttribute(key, value === true ? '' : String(value));
+    }
+    for (const child of [].concat(children)) {
+      if (child === null || child === undefined || child === false) continue;
+      node.append(typeof child === 'object' ? child : document.createTextNode(String(child)));
+    }
+    return node;
+  }
+
+  const td = (text, cls) => h('td', { class: cls, text });
+  const tag = (text, kind) => h('span', { class: `tag ${kind ?? ''}`.trim(), text });
+
+  function table(headers, rows) {
+    if (rows.length === 0) return empty('Nothing here.');
+    return h('div', { class: 'card' }, [
+      h('div', { class: 'scroll' }, [
+        h('table', {}, [
+          h('thead', {}, [h('tr', {}, headers.map((header) => h('th', { class: header.mono ? 'm' : null, text: header.label ?? header })))]),
+          h('tbody', {}, rows),
+        ]),
+      ]),
+    ]);
+  }
+
+  function empty(message, mark = '🗒️') {
+    return h('div', { class: 'card' }, [
+      h('div', { class: 'empty' }, [h('span', { class: 'empty-mark', text: mark }), message]),
+    ]);
+  }
+
+  function metric(label, value, kind) {
+    return h('div', { class: `metric ${kind ?? ''}`.trim() }, [
+      h('div', { class: 'metric-value', text: value }),
+      h('div', { class: 'metric-label', text: label }),
+    ]);
+  }
+
+  function pageHead(title, subtitle, actions = []) {
+    return h('div', { class: 'head' }, [
+      h('div', {}, [h('h1', { text: title }), subtitle ? h('p', { class: 'sub', text: subtitle }) : null]),
+      actions.length > 0 ? h('div', { class: 'row' }, actions) : null,
+    ]);
+  }
+
+  // ── modal, and the elevation prompt ─────────────────────────────────────
+
+  function closeModal() {
+    el('modal-root').textContent = '';
+  }
+
+  /**
+   * A modal that collects a note, and a code when the action is elevation-gated.
+   *
+   * The code is asked for here, before submitting, rather than after a 403. An
+   * operator who has typed a considered review note should not lose it because their
+   * two-minute window closed while they were writing.
+   */
+  function prompt({ title, note, permission, fields, confirmLabel, danger, onConfirm }) {
+    const needsCode = permission && needsElevation(permission) && !elevationIsFresh(me?.mfaSatisfiedAt);
+    const inputs = new Map();
+
+    const body = h('div', { class: 'modal' }, [
+      h('h2', { text: title }),
+      note ? h('p', { class: 'modal-note', text: note }) : null,
+      ...fields.map((field) => {
+        const control =
+          field.type === 'textarea'
+            ? h('textarea', { id: `f-${field.name}`, placeholder: field.placeholder ?? '' })
+            : h('input', {
+                type: 'text',
+                id: `f-${field.name}`,
+                class: field.mono ? 'mono-input' : null,
+                placeholder: field.placeholder ?? '',
+                value: field.value ?? '',
+              });
+        inputs.set(field.name, control);
+        return h('div', {}, [h('label', { class: 'field-label', for: `f-${field.name}`, text: field.label }), control]);
+      }),
+      needsCode
+        ? h('div', {}, [
+            h('label', { class: 'field-label', for: 'f-code', text: 'Authenticator code' }),
+            (() => {
+              const control = h('input', {
+                type: 'text',
+                id: 'f-code',
+                class: 'mono-input',
+                inputmode: 'numeric',
+                maxlength: '6',
+                placeholder: '000000',
+              });
+              inputs.set('code', control);
+              return control;
+            })(),
+            h('p', { class: 'modal-note', style: 'margin-top:.35rem', text: 'This action needs your second factor confirmed again.' }),
+          ])
+        : null,
+      h('div', { class: 'notice bad', id: 'modal-error', hidden: true }),
+      h('div', { class: 'modal-actions' }, [
+        h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: closeModal }),
+        h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, type: 'button', text: confirmLabel, id: 'modal-confirm' }),
+      ]),
+    ]);
+
+    const veil = h('div', { class: 'veil' }, [body]);
+    el('modal-root').textContent = '';
+    el('modal-root').append(veil);
+
+    const values = () => {
+      const out = {};
+      for (const [name, control] of inputs) out[name] = control.value.trim();
+      return out;
+    };
+
+    body.querySelector('#modal-confirm').addEventListener('click', async () => {
+      const confirm = body.querySelector('#modal-confirm');
+      const error = body.querySelector('#modal-error');
+      confirm.disabled = true;
+      error.hidden = true;
+
+      try {
+        const collected = values();
+        if (needsCode) {
+          if (!/^\d{6}$/.test(collected.code ?? '')) throw new Error('Enter the six-digit code.');
+          await api('/admin/auth/reauthenticate', { method: 'POST', body: { code: collected.code } });
+          // Reflect the fresh stamp so a second action in the same minute does not
+          // ask again.
+          me = { ...me, mfaSatisfiedAt: new Date().toISOString() };
+        }
+        await onConfirm(collected);
+        closeModal();
+      } catch (failure) {
+        error.textContent = failure?.message ?? String(failure);
+        error.hidden = false;
+        confirm.disabled = false;
+      }
+    });
+
+    const first = inputs.values().next().value;
+    if (first) first.focus();
+  }
+
+  // ── sign in ─────────────────────────────────────────────────────────────
+
+  let challengeToken = null;
+
+  el('signin-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const error = el('signin-error');
+    const submit = el('signin-submit');
+    error.hidden = true;
+    submit.disabled = true;
+
+    try {
+      if (challengeToken === null) {
+        const outcome = await api('/admin/auth/login', {
+          method: 'POST',
+          body: { email: el('signin-email').value.trim(), password: el('signin-password').value },
+        });
+        challengeToken = outcome.challengeToken;
+        el('signin-step-password').hidden = true;
+        el('signin-step-code').hidden = false;
+        el('signin-code-note').textContent =
+          outcome.status === 'enrollment_required'
+            ? `Add this secret to your authenticator, then enter the code: ${outcome.totpSecret}`
+            : 'Enter the code from your authenticator app.';
+        el('signin-submit').textContent = 'Sign in';
+        el('signin-code').focus();
+      } else {
+        const outcome = await api('/admin/auth/complete', {
+          method: 'POST',
+          body: { challengeToken, code: el('signin-code').value.trim() },
+        });
+        token = outcome.sessionToken;
+        await start();
+      }
+    } catch (failure) {
+      error.textContent = failure?.message ?? String(failure);
+      error.hidden = false;
+      // A wrong code should not send the operator back to retyping their password.
+      if (failure?.status === 401 && challengeToken !== null) el('signin-code').select();
+    } finally {
+      submit.disabled = false;
+    }
+  });
+
+  el('sign-out').addEventListener('click', async () => {
+    try {
+      await api('/admin/auth/sign-out', { method: 'POST' });
+    } finally {
+      token = null;
+      me = null;
+      location.reload();
+    }
+  });
+
+  async function start() {
+    me = await api('/admin/me');
+    el('signin-screen').hidden = true;
+    el('panel').hidden = false;
+
+    el('me-email').textContent = me.email;
+    const role = el('me-role');
+    role.textContent = me.role;
+    role.dataset.role = me.role;
+
+    renderNav();
+    await go(defaultSection(me.permissions));
+  }
+
+  function renderNav() {
+    const nav = el('nav');
+    nav.textContent = '';
+    for (const item of visibleNav(me.permissions)) {
+      const count = badges[item.id];
+      nav.append(
+        h('button', {
+          class: 'nav-btn',
+          type: 'button',
+          'aria-current': String(item.id === section),
+          onclick: () => void go(item.id),
+        }, [
+          h('span', { 'aria-hidden': 'true', text: item.marker }),
+          item.label,
+          count ? h('span', { class: `nav-count ${count > 0 ? 'alert' : ''}`.trim(), text: String(count) }) : null,
+        ]),
+      );
+    }
+  }
+
+  async function go(next) {
+    if (next === null) {
+      render(view(), empty('Your role has no sections to show.', '🚫'));
+      return;
+    }
+    section = next;
+    renderNav();
+    clearNotices();
+    render(view(), h('div', { class: 'empty', text: 'Loading…' }));
+
+    try {
+      await SECTIONS[next]();
+    } catch (failure) {
+      showError(failure);
+      render(view(), empty('Could not load this section.', '⚠️'));
+    }
+  }
+
+  function refresh() {
+    return go(section);
+  }
+
+
+  // ── sections ────────────────────────────────────────────────────────────
+
+  const SECTIONS = {
+    async health() {
+      const data = await api('/admin/health');
+
+      // Refresh the nav badges from the same payload rather than a second request.
+      badges = { unmatched: data.reconciliation.pending, review: data.review.waiting };
+      renderNav();
+
+      const laggingChains = data.chains.filter(
+        (chain) => chain.staleForMs !== null && chain.staleForMs > 5 * 60_000,
+      );
+
+      render(view(), 
+        pageHead('Health', 'Everything that can be wrong without producing an error.', [
+          h('button', { class: 'btn', type: 'button', text: 'Refresh', onclick: () => void refresh() }),
+        ]),
+
+        h('div', { class: 'grid cols', style: 'margin-bottom:1rem' }, [
+          metric('Chains lagging', String(laggingChains.length), laggingChains.length > 0 ? 'bad' : 'good'),
+          metric('Unmatched payments', String(data.reconciliation.pending), data.reconciliation.pending > 0 ? 'warn' : 'good'),
+          metric('Contracts awaiting review', String(data.review.waiting), data.review.waiting > 0 ? 'warn' : 'good'),
+          metric('Webhooks failed (1h)', String(data.webhooks.failedLastHour), data.webhooks.failedLastHour > 0 ? 'warn' : 'good'),
+          metric('Oracle breakers open', String(data.oracle.openAssets.length), data.oracle.openAssets.length > 0 ? 'bad' : 'good'),
+          metric(
+            'Oldest unmatched',
+            formatDuration(data.reconciliation.oldestPendingAgeMs),
+            data.reconciliation.oldestPendingAgeMs !== null && data.reconciliation.oldestPendingAgeMs > 24 * 3600_000 ? 'bad' : null,
+          ),
+        ]),
+
+        h('h2', { text: 'Watchers', style: 'margin:1.25rem 0 .5rem' }),
+        h('p', { class: 'sub', style: 'margin:0 0 .5rem' },
+          ['A watcher that stops polling is not seeing payments, and nothing else looks wrong while it happens.']),
+        table(
+          ['Chain', 'Scanned to', 'Last poll', 'Settlements pending', 'Stuck', 'Blocking nonce', 'Spend (1h)', 'Last error'],
+          data.chains.map((chain) => {
+            const lagging = chain.staleForMs !== null && chain.staleForMs > 5 * 60_000;
+            const never = chain.lastPolledAt === null;
+            return h('tr', {}, [
+              h('td', {}, [h('strong', { text: chain.chain })]),
+              td(chain.scannedTo === null ? '—' : String(chain.scannedTo), 'num'),
+              h('td', { class: 'm' }, [
+                never
+                  ? tag('never polled', 'warn')
+                  : tag(formatDuration(chain.staleForMs), lagging ? 'bad' : 'ok'),
+              ]),
+              td(String(chain.settlements.pending), 'num'),
+              h('td', { class: 'num' }, [
+                chain.settlements.stuck > 0 ? tag(String(chain.settlements.stuck), 'bad') : h('span', { class: 'faint', text: '0' }),
+              ]),
+              td(chain.settlements.blockingNonce === null ? '—' : String(chain.settlements.blockingNonce), 'num'),
+              td(formatUsdMicros(chain.settlements.spentUsdMicros), 'num'),
+              h('td', { class: 'dim', text: chain.lastError ?? '—' }),
+            ]);
+          }),
+        ),
+
+        data.oracle.openAssets.length > 0
+          ? h('div', { class: 'notice bad', style: 'margin-top:1rem' }, [
+              h('span', {}, [
+                h('strong', { text: 'Quoting is suspended for: ' }),
+                data.oracle.openAssets.join(', '),
+              ]),
+            ])
+          : null,
+
+        h('div', { class: 'notice info', style: 'margin-top:1rem' }, [
+          h('span', {}, [
+            h('strong', { text: 'Not checked here: ' }),
+            data.unavailable.join(' · '),
+          ]),
+        ]),
+      );
+    },
+
+    async merchants() {
+      const search = el('merchant-search')?.value ?? '';
+      const filter = el('merchant-filter')?.value ?? 'all';
+      const query = new URLSearchParams({ filter, limit: '50' });
+      if (search) query.set('search', search);
+      const data = await api(`/admin/merchants?${query}`);
+
+      const searchBox = h('input', {
+        type: 'search', id: 'merchant-search', value: search, placeholder: 'Name or slug',
+      });
+      const filterBox = h('select', { id: 'merchant-filter' }, [
+        h('option', { value: 'all', text: 'All', selected: filter === 'all' }),
+        h('option', { value: 'active', text: 'Active', selected: filter === 'active' }),
+        h('option', { value: 'suspended', text: 'Suspended', selected: filter === 'suspended' }),
+      ]);
+      searchBox.addEventListener('keydown', (event) => { if (event.key === 'Enter') void refresh(); });
+      filterBox.addEventListener('change', () => void refresh());
+
+      render(view(), 
+        pageHead('Merchants', `${data.total} total`, [searchBox, filterBox,
+          h('button', { class: 'btn', type: 'button', text: 'Search', onclick: () => void refresh() })]),
+        table(
+          ['Merchant', 'State', 'Members', 'Invoices', 'Paid volume', 'Last invoice', ''],
+          data.items.map((item) =>
+            h('tr', { class: 'clickable', onclick: () => void openMerchant(item.id) }, [
+              h('td', {}, [
+                h('strong', { text: item.name }),
+                h('div', { class: 'faint', style: 'font-family:var(--mono);font-size:var(--s-2)', text: item.slug }),
+              ]),
+              h('td', {}, [item.suspendedAt ? tag('suspended', 'bad') : tag('active', 'ok')]),
+              td(String(item.memberCount), 'num'),
+              td(String(item.invoiceCount), 'num'),
+              // Smallest units without an asset context, so the raw figure is shown
+              // grouped rather than pretending to a decimal place it cannot know.
+              td(formatUnitsGrouped(item.paidVolume, 0), 'num'),
+              td(formatAgo(item.lastInvoiceAt), 'm'),
+              h('td', {}, [h('span', { class: 'faint', text: '→' })]),
+            ]),
+          ),
+        ),
+      );
+    },
+
+    async unmatched() {
+      const resolution = el('unmatched-filter')?.value ?? 'pending';
+      const data = await api(`/admin/unmatched?resolution=${resolution}&limit=100`);
+
+      const filterBox = h('select', { id: 'unmatched-filter' }, [
+        ['pending', 'Pending'], ['attached', 'Attached'], ['returned', 'Marked for return'],
+        ['ignored', 'Ignored'], ['all', 'All'],
+      ].map(([value, label]) => h('option', { value, text: label, selected: resolution === value })));
+      filterBox.addEventListener('change', () => void refresh());
+
+      render(view(), 
+        pageHead('Unmatched payments', `${data.pendingTotal} still unresolved — each one is somebody waiting.`, [filterBox]),
+        table(
+          ['Seen', 'Chain', 'Amount', 'To', 'From', 'Reason', 'State', ''],
+          data.rows.map((row) =>
+            h('tr', { class: 'clickable', onclick: () => void openUnmatched(row.id) }, [
+              td(formatAgo(row.seenAt), 'm'),
+              td(row.chain),
+              h('td', { class: 'num' }, [
+                row.assetDecimals === null
+                  ? h('span', { title: 'token unknown; showing smallest units' }, [
+                      formatUnitsGrouped(row.amount, 0), h('span', { class: 'faint', text: ' raw' }),
+                    ])
+                  : `${formatUnitsGrouped(row.amount, row.assetDecimals)} ${row.assetSymbol ?? ''}`,
+              ]),
+              td(shortenAddress(row.toAddress), 'm'),
+              td(row.fromAddress ? shortenAddress(row.fromAddress) : '—', 'm'),
+              h('td', {}, [tag(row.reason.replace(/_/g, ' '), row.reason === 'memo_missing' ? 'warn' : null)]),
+              h('td', {}, [
+                row.resolution === 'pending'
+                  ? tag('pending', 'warn')
+                  : tag(row.resolution, row.resolution === 'attached' ? 'ok' : null),
+              ]),
+              h('td', {}, [h('span', { class: 'faint', text: '→' })]),
+            ]),
+          ),
+        ),
+      );
+    },
+
+    async review() {
+      const data = await api('/admin/contracts/review?limit=100');
+
+      render(view(), 
+        pageHead('Contracts awaiting review', 'A merchant submitted these. Approving one lets it be credited as money.', []),
+        data.items.length === 0
+          ? empty('No contracts are waiting. Approved and blocked ones are not listed here.', '✅')
+          : h('div', { class: 'grid' }, data.items.map(reviewCard)),
+      );
+    },
+
+    async settlements() {
+      const data = await api('/admin/settlements?limit=60');
+      const chains = data.chains.filter((chain) => chain.pending + chain.confirmed + chain.reverted + chain.replaced > 0);
+
+      render(view(), 
+        pageHead('Settlements', 'Gas spent moving merchant funds out of forwarders.', [
+          h('button', { class: 'btn', type: 'button', text: 'Refresh', onclick: () => void refresh() }),
+        ]),
+
+        chains.length === 0
+          ? h('div', { class: 'notice info' }, ['No settlements recorded yet on any chain.'])
+          : h('div', { class: 'grid cols', style: 'margin-bottom:1rem' }, chains.map((chain) =>
+              h('div', { class: `metric ${chain.stuck.length > 0 ? 'bad' : ''}`.trim() }, [
+                h('div', { class: 'metric-value', text: String(chain.pending) }),
+                h('div', { class: 'metric-label', text: `${chain.chain} pending` }),
+                h('div', { class: 'metric-label', style: 'margin-top:.35rem' }, [
+                  `${formatUsdMicros(chain.spentUsdMicros)} of ${formatUsdMicros(chain.spendCapUsdMicros)} in the hour`,
+                ]),
+                chain.blockingNonce !== null
+                  ? h('div', { class: 'metric-label' }, [`blocking nonce `, h('span', { style: 'font-family:var(--mono)', text: String(chain.blockingNonce) })])
+                  : null,
+              ]),
+            )),
+
+        h('h2', { text: 'Recent transactions', style: 'margin:1.25rem 0 .5rem' }),
+        table(
+          ['Broadcast', 'Chain', 'Nonce', 'Transaction', 'Fee', 'Invoices', 'Status'],
+          data.recent.map((row) =>
+            h('tr', {}, [
+              td(formatAgo(row.broadcastAt), 'm'),
+              td(row.chain),
+              td(String(row.nonce), 'num'),
+              h('td', { class: 'm' }, [
+                h('span', { title: row.txHash, text: shortenHash(row.txHash) }),
+                row.replacedByTxHash
+                  ? h('div', { class: 'faint', style: 'font-size:var(--s-2)', text: `→ ${shortenHash(row.replacedByTxHash)}` })
+                  : null,
+              ]),
+              td(formatGwei(row.feePerGasWei), 'num'),
+              td(String(row.invoiceIds.length), 'num'),
+              h('td', {}, [
+                tag(row.status, row.status === 'confirmed' ? 'ok'
+                  : row.status === 'reverted' ? 'bad'
+                  : row.status === 'replaced' ? 'violet' : 'warn'),
+              ]),
+            ]),
+          ),
+        ),
+      );
+    },
+
+    async audit() {
+      const action = el('audit-action')?.value ?? '';
+      const query = new URLSearchParams({ limit: '60' });
+      if (action) query.set('action', action);
+      const data = await api(`/admin/audit?${query}`);
+
+      const actionBox = h('input', {
+        type: 'search', id: 'audit-action', value: action, class: 'mono-input',
+        placeholder: 'action prefix, e.g. merchant.',
+      });
+      actionBox.addEventListener('keydown', (event) => { if (event.key === 'Enter') void refresh(); });
+
+      render(view(), 
+        pageHead('Audit', 'Every configuration change and every staff read of a named merchant.', [
+          actionBox,
+          h('button', { class: 'btn', type: 'button', text: 'Search', onclick: () => void refresh() }),
+        ]),
+        table(
+          ['When', 'Actor', 'Action', 'Merchant', 'Target', 'IP'],
+          data.rows.map((row) =>
+            h('tr', {}, [
+              td(formatAgo(row.createdAt), 'm'),
+              h('td', {}, [
+                row.actor.kind === 'staff'
+                  ? h('span', {}, [tag('staff', 'lime'), ' ', h('span', { class: 'dim', text: row.actor.email })])
+                  : row.actor.kind === 'user'
+                    ? h('span', {}, [tag('merchant', null), ' ', h('span', { class: 'dim', text: row.actor.email })])
+                    : tag(row.actor.kind, null),
+              ]),
+              h('td', {}, [h('span', { title: row.action, text: humanizeAction(row.action) })]),
+              h('td', { class: 'dim', text: row.organizationName ?? '—' }),
+              td(row.targetId ? `${row.targetType ?? ''} ${shortenAddress(row.targetId, 8, 4)}`.trim() : '—', 'm'),
+              td(row.ip ?? '—', 'm'),
+            ]),
+          ),
+        ),
+      );
+    },
+  };
+
+  // ── merchant detail ─────────────────────────────────────────────────────
+
+  async function openMerchant(orgId) {
+    render(view(), h('div', { class: 'empty', text: 'Loading…' }));
+    const data = await api(`/admin/merchants/${orgId}`);
+    const org = data.organization;
+    const suspended = org.suspendedAt !== null;
+
+    const actions = [h('button', { class: 'btn ghost', type: 'button', text: '← Merchants', onclick: () => void go('merchants') })];
+    if (can(me.permissions, 'merchant:suspend')) {
+      actions.push(
+        suspended
+          ? h('button', { class: 'btn primary', type: 'button', text: 'Reinstate', onclick: () => reinstate(org) })
+          : h('button', { class: 'btn danger', type: 'button', text: 'Suspend', onclick: () => suspend(org) }),
+      );
+    }
+
+    render(view(), 
+      pageHead(org.name, org.slug, actions),
+
+      suspended
+        ? h('div', { class: 'notice bad', style: 'margin-bottom:1rem' }, [
+            h('span', {}, [h('strong', { text: 'Suspended. ' }), org.suspendedReason ?? '']),
+          ])
+        : null,
+
+      h('div', { class: 'grid cols', style: 'margin-bottom:1rem' },
+        Object.entries(data.invoicesByStatus).length === 0
+          ? [metric('Invoices', '0')]
+          : Object.entries(data.invoicesByStatus).map(([status, value]) =>
+              metric(status, String(value), status === 'underpaid' || status === 'overpaid' ? 'warn' : null)),
+      ),
+
+      h('h2', { text: 'Members', style: 'margin:1.25rem 0 .5rem' }),
+      table(['Email', 'Role', 'Verified', 'Two-factor', 'Joined'], data.members.map((member) =>
+        h('tr', {}, [
+          td(member.email, 'm'),
+          h('td', {}, [tag(member.role, member.role === 'owner' ? 'lime' : null)]),
+          h('td', {}, [member.emailVerifiedAt ? tag('yes', 'ok') : tag('no', 'warn')]),
+          // Absent two-factor on an owner is worth seeing: they hold payout_address:write.
+          h('td', {}, [member.totpEnabledAt ? tag('yes', 'ok') : tag('no', member.role === 'owner' ? 'bad' : 'warn')]),
+          td(formatAgo(member.joinedAt), 'm'),
+        ]),
+      )),
+
+      h('h2', { text: 'Payout addresses', style: 'margin:1.25rem 0 .5rem' }),
+      h('p', { class: 'sub', style: 'margin:0 0 .5rem', text: 'Superseded entries are kept — "it used to go here" is the question that gets asked.' }),
+      table(['Chain', 'Address', 'Active from', 'Superseded'], data.payoutAddresses.map((row) =>
+        h('tr', {}, [
+          td(row.chain),
+          h('td', { class: 'm' }, [h('span', { title: row.address, text: shortenAddress(row.address, 10, 6) })]),
+          td(formatAgo(row.createdAt), 'm'),
+          h('td', {}, [row.supersededAt ? tag(formatAgo(row.supersededAt), null) : tag('current', 'ok')]),
+        ]),
+      )),
+
+      h('h2', { text: 'API keys', style: 'margin:1.25rem 0 .5rem' }),
+      table(['Name', 'Mode', 'Prefix', 'Last used', 'State'], data.apiKeys.map((key) =>
+        h('tr', {}, [
+          h('td', { text: key.name }),
+          h('td', {}, [tag(key.mode, key.mode === 'live' ? 'lime' : null)]),
+          td(key.displayPrefix, 'm'),
+          td(formatAgo(key.lastUsedAt), 'm'),
+          h('td', {}, [key.revokedAt ? tag('revoked', 'bad') : tag('active', 'ok')]),
+        ]),
+      )),
+
+      h('h2', { text: 'Recent invoices', style: 'margin:1.25rem 0 .5rem' }),
+      table(['Created', 'Chain', 'Reference', 'Due', 'Paid', 'Status'], data.recentInvoices.map((invoice) =>
+        h('tr', {}, [
+          td(formatAgo(invoice.createdAt), 'm'),
+          td(invoice.chain),
+          h('td', { class: 'dim', text: invoice.reference ?? '—' }),
+          td(formatUnitsGrouped(invoice.amountDue, 0), 'num'),
+          td(formatUnitsGrouped(invoice.amountPaid, 0), 'num'),
+          h('td', {}, [
+            tag(invoice.status, invoice.status === 'paid' ? 'ok'
+              : invoice.status === 'underpaid' || invoice.status === 'overpaid' ? 'warn' : null),
+          ]),
+        ]),
+      )),
+    );
+  }
+
+  function suspend(org) {
+    prompt({
+      title: `Suspend ${org.name}?`,
+      note: 'Takes effect immediately: new invoices and API calls are refused. Funds already received still settle to the merchant — withholding them would be theft, not enforcement.',
+      permission: 'merchant:suspend',
+      danger: true,
+      confirmLabel: 'Suspend',
+      fields: [{
+        name: 'reason', label: 'Reason (shown to the merchant)', type: 'textarea',
+        placeholder: 'At least a sentence — this is what they read when they are refused.',
+      }],
+      onConfirm: async ({ reason }) => {
+        await api(`/admin/merchants/${org.id}/suspend`, { method: 'POST', body: { reason } });
+        showOk('Suspended.');
+        await openMerchant(org.id);
+      },
+    });
+  }
+
+  function reinstate(org) {
+    prompt({
+      title: `Reinstate ${org.name}?`,
+      note: 'The suspension reason is cleared from the record here but stays in the audit trail.',
+      permission: 'merchant:suspend',
+      confirmLabel: 'Reinstate',
+      fields: [{ name: 'note', label: 'Note (optional)', type: 'textarea', placeholder: 'What resolved it.' }],
+      onConfirm: async ({ note }) => {
+        await api(`/admin/merchants/${org.id}/reinstate`, { method: 'POST', body: note ? { note } : {} });
+        showOk('Reinstated.');
+        await openMerchant(org.id);
+      },
+    });
+  }
+
+  // ── contract review ─────────────────────────────────────────────────────
+
+  function reviewCard(item) {
+    const decide = (decision) =>
+      prompt({
+        title: `${decision === 'approved' ? 'Approve' : 'Block'} ${item.symbol}?`,
+        note: decision === 'approved'
+          ? 'Approving lets this contract be credited as money by any merchant who enables it.'
+          : 'Blocking prevents any merchant from enabling it.',
+        permission: 'contract:decide',
+        danger: decision === 'blocked',
+        confirmLabel: decision === 'approved' ? 'Approve' : 'Block',
+        fields: [{
+          name: 'note', label: 'Reason', type: 'textarea',
+          placeholder: 'What you checked and what convinced you. This is the only durable record of why.',
+        }],
+        onConfirm: async ({ note }) => {
+          await api(`/admin/contracts/${item.assetId}/decision`, { method: 'POST', body: { decision, note } });
+          showOk(decision === 'approved' ? 'Approved.' : 'Blocked.');
+          await refresh();
+        },
+      });
+
+    const findings = item.findings ?? [];
+    const worrying = findings.filter((finding) => finding && finding.result !== 'absent');
+
+    return h('div', { class: 'card' }, [
+      h('div', { class: 'card-head' }, [
+        h('div', {}, [
+          h('h2', {}, [item.symbol, ' ', h('span', { class: 'faint', style: 'font-family:var(--mono);font-size:var(--s-1)', text: item.chain })]),
+          h('p', { class: 'sub', text: `submitted ${formatAgo(item.createdAt)} by ${item.submittedByOrganizationName ?? 'unknown merchant'}` }),
+        ]),
+        can(me.permissions, 'contract:decide')
+          ? h('div', { class: 'row' }, [
+              h('button', { class: 'btn danger sm', type: 'button', text: 'Block', onclick: () => decide('blocked') }),
+              h('button', { class: 'btn primary sm', type: 'button', text: 'Approve', onclick: () => decide('approved') }),
+            ])
+          : tag('read only', null),
+      ]),
+      h('div', { class: 'card-body' }, [
+        h('dl', { class: 'kv', style: 'margin:0 0 .75rem' }, [
+          h('dt', { text: 'Contract' }), h('dd', { text: item.contract ?? 'native' }),
+          h('dt', { text: 'Decimals' }), h('dd', { text: String(item.decimals) }),
+          h('dt', { text: 'Kind' }), h('dd', { text: item.kind }),
+          h('dt', { text: 'Probed' }), h('dd', { text: formatAgo(item.probedAt) }),
+          h('dt', { text: 'Merchants waiting' }), h('dd', { text: String(item.waitingMerchants) }),
+        ]),
+
+        item.requiresFixedRate
+          ? h('div', { class: 'notice warn', style: 'margin-bottom:.75rem' }, [
+              'No price source can quote this, so the merchant must supply a fixed rate.',
+            ])
+          : null,
+
+        findings.length === 0
+          ? h('p', { class: 'sub', text: 'The probe returned no findings.' })
+          : h('div', { class: 'scroll' }, [
+              h('table', {}, [
+                h('thead', {}, [h('tr', {}, ['Check', 'Result', 'Detail'].map((label) => h('th', { text: label })))]),
+                h('tbody', {}, findings.map((finding) =>
+                  h('tr', {}, [
+                    td(String(finding?.check ?? '—'), 'm'),
+                    h('td', {}, [
+                      // `unknown` never reads as `absent`: a probe that could not tell
+                      // is not a probe that found nothing.
+                      tag(String(finding?.result ?? '—'),
+                        finding?.result === 'absent' ? 'ok'
+                        : finding?.result === 'unknown' ? 'warn' : 'bad'),
+                    ]),
+                    h('td', { class: 'dim', text: finding?.detail ?? '' }),
+                  ]),
+                )),
+              ]),
+            ]),
+
+        worrying.length > 0
+          ? h('div', { class: 'notice warn', style: 'margin-top:.75rem' }, [
+              `${worrying.length} finding${worrying.length === 1 ? '' : 's'} needs a human judgement before this can be credited as money.`,
+            ])
+          : null,
+      ]),
+    ]);
+  }
+
+  // ── unmatched detail ────────────────────────────────────────────────────
+
+  async function openUnmatched(id) {
+    render(view(), h('div', { class: 'empty', text: 'Loading…' }));
+    const row = await api(`/admin/unmatched/${id}`);
+    const decimals = row.assetDecimals;
+    const amount = decimals === null
+      ? `${formatUnitsGrouped(row.amount, 0)} (smallest units — token unknown)`
+      : `${formatUnitsGrouped(row.amount, decimals)} ${row.assetSymbol ?? ''}`;
+
+    const attach = (invoiceId) =>
+      prompt({
+        title: 'Attach this transfer to the invoice?',
+        note: 'The invoice is recomputed exactly as the watcher would have done, so a partial transfer lands as underpaid rather than paid.',
+        permission: 'payment:reassign',
+        confirmLabel: 'Attach and credit',
+        fields: [{
+          name: 'note', label: 'Why this invoice', type: 'textarea',
+          placeholder: 'What ties this transfer to that invoice.',
+        }],
+        onConfirm: async ({ note }) => {
+          const result = await api(`/admin/unmatched/${id}/attach`, { method: 'POST', body: { invoiceId, note } });
+          showOk(result.message);
+          await go('unmatched');
+        },
+      });
+
+    const resolve = (resolution) =>
+      prompt({
+        title: resolution === 'returned' ? 'Mark for return?' : 'Leave this as-is?',
+        note: resolution === 'returned'
+          ? 'This records the decision only. No transfer is made — returning crypto is a separate, confirmed action, because the sending address is often an exchange wallet where a return is simply lost.'
+          : 'Records that this was looked at and deliberately left alone.',
+        permission: 'payment:reassign',
+        danger: resolution === 'returned',
+        confirmLabel: resolution === 'returned' ? 'Mark for return' : 'Leave it',
+        fields: [{ name: 'note', label: 'Note', type: 'textarea', placeholder: 'What you decided and why.' }],
+        onConfirm: async ({ note }) => {
+          const result = await api(`/admin/unmatched/${id}/resolve`, { method: 'POST', body: { resolution, note } });
+          showOk(result.message);
+          await go('unmatched');
+        },
+      });
+
+    const mayAct = can(me.permissions, 'payment:reassign') && row.resolution === 'pending';
+
+    render(view(), 
+      pageHead('Unmatched payment', `${row.chain} · seen ${formatAgo(row.seenAt)}`, [
+        h('button', { class: 'btn ghost', type: 'button', text: '← Queue', onclick: () => void go('unmatched') }),
+        mayAct ? h('button', { class: 'btn', type: 'button', text: 'Mark for return', onclick: () => resolve('returned') }) : null,
+        mayAct ? h('button', { class: 'btn ghost', type: 'button', text: 'Ignore', onclick: () => resolve('ignored') }) : null,
+      ].filter(Boolean)),
+
+      h('div', { class: 'card', style: 'margin-bottom:1rem' }, [
+        h('div', { class: 'card-body' }, [
+          h('dl', { class: 'kv' }, [
+            h('dt', { text: 'Amount' }), h('dd', { text: amount }),
+            h('dt', { text: 'Reason' }), h('dd', { text: row.reason.replace(/_/g, ' ') }),
+            h('dt', { text: 'To' }), h('dd', { text: row.toAddress }),
+            h('dt', { text: 'From' }), h('dd', { text: row.fromAddress ?? 'unknown' }),
+            h('dt', { text: 'Memo' }), h('dd', { text: row.memo ?? 'none' }),
+            h('dt', { text: 'Transaction' }), h('dd', { text: `${row.txHash}:${row.transferIndex}` }),
+            h('dt', { text: 'Block' }), h('dd', { text: String(row.blockNumber) }),
+            h('dt', { text: 'State' }), h('dd', { text: row.resolution }),
+            row.note ? h('dt', { text: 'Note' }) : null,
+            row.note ? h('dd', { style: 'font-family:var(--sans)', text: row.note }) : null,
+          ].filter(Boolean)),
+        ]),
+      ]),
+
+      h('h2', { text: 'Invoices sharing this deposit address', style: 'margin:1.25rem 0 .5rem' }),
+      h('p', { class: 'sub', style: 'margin:0 0 .5rem', text: 'Candidates, not a decision. On a memo chain several invoices share one address.' }),
+      (row.candidates ?? []).length === 0
+        ? empty('No invoice claims this address. It may be a payment to an address we never issued.', '🕳️')
+        : table(['Invoice', 'Due', 'Paid', 'Status', 'Memo', 'Expires', ''], (row.candidates ?? []).map((candidate) =>
+            h('tr', {}, [
+              td(shortenAddress(candidate.id, 8, 4), 'm'),
+              td(formatUnitsGrouped(candidate.amountDue, 0), 'num'),
+              td(formatUnitsGrouped(candidate.amountPaid, 0), 'num'),
+              h('td', {}, [tag(candidate.status, candidate.status === 'paid' ? 'ok' : null)]),
+              td(candidate.memo ?? '—', 'm'),
+              td(formatAgo(candidate.expiresAt), 'm'),
+              h('td', {}, [
+                mayAct
+                  ? h('button', { class: 'btn primary sm', type: 'button', text: 'Attach', onclick: () => attach(candidate.id) })
+                  : null,
+              ]),
+            ]),
+          )),
+    );
+  }
+
+
+  // Nothing is fetched until a session exists.
+  el('signin-email').focus();
+})();
+</script>

@@ -62,6 +62,10 @@ jobs:
         working-directory: apps/checkout
         run: npm test
 
+      - name: Test admin panel
+        working-directory: apps/admin
+        run: npm test
+
       - name: Apply migrations
         working-directory: apps/api
         run: npx drizzle-kit migrate
