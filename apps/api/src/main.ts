@@ -19,6 +19,7 @@ import {
 
 import { AdminService } from './domain/admin-service.js';
 import { MerchantService } from './domain/merchant-service.js';
+import { SubscriptionService } from './domain/subscription-service.js';
 import { AuditService } from './domain/audit.js';
 import { AssetService } from './domain/asset-service.js';
 import { AuthService } from './domain/auth-service.js';
@@ -111,6 +112,26 @@ async function main(): Promise<void> {
   }, 10_000);
   webhookWorker.unref();
 
+  /**
+   * Billing runs hourly rather than daily.
+   *
+   * Hourly means a period that ended is charged within the hour, so grace windows and
+   * status changes are close to the truth whenever anyone looks. It is safe to run this
+   * often because the unique index on (subscription, period start) makes a repeated run
+   * a no-op rather than a double charge.
+   */
+  const billingWorker = setInterval(() => {
+    void subscriptions
+      .runBilling()
+      .then((report) => {
+        if (report.charged > 0 || report.markedUnpaid > 0) {
+          app.log.info(report, 'billing run complete');
+        }
+      })
+      .catch((error: unknown) => app.log.error({ err: error }, 'billing worker failed'));
+  }, 60 * 60_000);
+  billingWorker.unref();
+
   const payoutWorker = setInterval(() => {
     void payouts
       .applyDueChanges()
@@ -120,6 +141,8 @@ async function main(): Promise<void> {
       .catch((error: unknown) => app.log.error({ err: error }, 'payout worker failed'));
   }, 60_000);
   payoutWorker.unref();
+
+  const subscriptions = new SubscriptionService(db, audit);
 
   const staffAuth = new StaffAuthService(db, audit);
   const settlementStore = new SettlementStore(db);
@@ -140,6 +163,7 @@ async function main(): Promise<void> {
     reconciliation,
     merchant: new MerchantService(db),
     webhooks,
+    subscriptions,
     minPriceSources: env.PRICE_MIN_SOURCES,
     // A real transport still to come; the seam is what matters now.
     mailer,

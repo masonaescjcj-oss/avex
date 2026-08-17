@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { MerchantError } from '../../domain/merchant-service.js';
+import { SubscriptionError } from '../../domain/subscription-service.js';
 import { WebhookConfigError } from '../../domain/webhook-service.js';
 import {
   UnauthenticatedError,
@@ -93,6 +94,44 @@ export function registerMerchantRoutes(app: FastifyInstance, context: AppContext
         to: query.to,
       }),
     );
+  });
+
+  // ── billing ───────────────────────────────────────────────────────────────
+
+  app.get('/v1/organizations/:orgId/subscription', async (request, reply) => {
+    const granted = await access(request);
+    // `settings:read` rather than a billing-specific permission: everyone who can see
+    // the organisation's settings can see what it costs, including a viewer. Hiding the
+    // bill from the people who might chase it serves nobody.
+    requirePermission(granted, 'settings:read');
+
+    return reply.send(await context.subscriptions.forOrganization(granted.organizationId));
+  });
+
+  app.post('/v1/organizations/:orgId/subscription/cancel', async (request, reply) => {
+    const granted = await access(request);
+    requirePermission(granted, 'settings:write');
+
+    await context.subscriptions.cancelAtPeriodEnd(
+      granted.organizationId,
+      granted.principal.kind === 'session' ? granted.principal.session.userId : null,
+    );
+    return reply.send({
+      status: 'cancelling',
+      message:
+        'Scheduled. The gateway keeps working until the end of the period you have paid for.',
+    });
+  });
+
+  app.post('/v1/organizations/:orgId/subscription/resume', async (request, reply) => {
+    const granted = await access(request);
+    requirePermission(granted, 'settings:write');
+
+    await context.subscriptions.resume(
+      granted.organizationId,
+      granted.principal.kind === 'session' ? granted.principal.session.userId : null,
+    );
+    return reply.send({ status: 'active', message: 'Cancellation withdrawn.' });
   });
 
   // ── webhooks ──────────────────────────────────────────────────────────────
@@ -209,4 +248,18 @@ export function webhookConfigErrorResponse(error: WebhookConfigError): {
   body: Record<string, unknown>;
 } {
   return { status: 400, body: { error: 'invalid_webhook_url', message: error.message } };
+}
+
+export function subscriptionErrorResponse(error: SubscriptionError): {
+  status: number;
+  body: Record<string, unknown>;
+} {
+  switch (error.code) {
+    case 'not_found':
+      return { status: 404, body: { error: 'not_found', message: error.message } };
+    case 'already_paid':
+    case 'already_exists':
+    case 'no_charge_due':
+      return { status: 409, body: { error: error.code, message: error.message } };
+  }
 }

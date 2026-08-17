@@ -29,6 +29,7 @@ import { AdminService } from '../domain/admin-service.js';
 import { AuthService } from '../domain/auth-service.js';
 import { ReconciliationService } from '../domain/reconciliation-service.js';
 import { MerchantService } from '../domain/merchant-service.js';
+import { SubscriptionService } from '../domain/subscription-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
 import { totpCode } from '../auth/totp.js';
@@ -135,6 +136,7 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
+      subscriptions: new SubscriptionService(database.db, audit),
       // Deliveries go nowhere in these harnesses; the webhook suite has its own.
       webhooks: new WebhookService(
         database.db,
@@ -582,6 +584,7 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
+      subscriptions: new SubscriptionService(database.db, audit),
       // Deliveries go nowhere in these harnesses; the webhook suite has its own.
       webhooks: new WebhookService(
         database.db,
@@ -762,6 +765,7 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
+      subscriptions: new SubscriptionService(database.db, audit),
       // Deliveries go nowhere in these harnesses; the webhook suite has its own.
       webhooks: new WebhookService(
         database.db,
@@ -1061,6 +1065,7 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
+      subscriptions: new SubscriptionService(database.db, audit),
       // Deliveries go nowhere in these harnesses; the webhook suite has its own.
       webhooks: new WebhookService(
         database.db,

@@ -886,3 +886,123 @@ export const webhookDeliveries = pgTable(
     index('webhook_deliveries_org_idx').on(table.organizationId, table.createdAt),
   ],
 );
+
+// ── Phase 7: platform billing ────────────────────────────────────────────────
+
+/**
+ * What a merchant owes AVEX for using the gateway.
+ *
+ * Deliberately separate from every other status in this schema. A merchant suspended
+ * for abuse and a merchant who forgot to pay are different situations that call for
+ * different messages and different reversibility, and collapsing them into
+ * `organizations.suspendedAt` would mean an operator could not tell them apart.
+ *
+ * `past_due` is not the same as unusable. It begins a grace window during which the
+ * gateway keeps working, because cutting off a merchant's checkout the hour an invoice
+ * comes due punishes their customers for their accounting.
+ */
+export const subscriptionStatusEnum = pgEnum('subscription_status', [
+  'trialing',
+  'active',
+  /** Payment is late and the grace window is running. The gateway still works. */
+  'past_due',
+  /** Grace expired. New invoices are refused; existing ones still complete. */
+  'unpaid',
+  /** Ended by the merchant or by us. */
+  'cancelled',
+]);
+
+export const subscriptions = pgTable(
+  'subscriptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+
+    status: subscriptionStatusEnum('status').notNull().default('trialing'),
+
+    /**
+     * The price for this subscription, captured per row rather than read from config.
+     *
+     * A price change must not retroactively alter what someone already owes, and a
+     * merchant on a negotiated rate has that rate recorded where the charge is
+     * computed rather than in a lookup that could be edited later.
+     */
+    priceUsdMicros: numeric('price_usd_micros', { precision: 78, scale: 0 }).notNull(),
+    /** Months per period. One for now; the column exists so annual needs no migration. */
+    intervalMonths: integer('interval_months').notNull().default(1),
+
+    trialEndsAt: timestamp('trial_ends_at', { withTimezone: true }),
+    currentPeriodStart: timestamp('current_period_start', { withTimezone: true }),
+    currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
+    /** When a late payment stops being tolerated. Null unless past due. */
+    graceEndsAt: timestamp('grace_ends_at', { withTimezone: true }),
+
+    /** Set when the merchant asked to stop; takes effect at the period end. */
+    cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // One subscription per merchant. Two would mean two answers to "may they trade".
+    uniqueIndex('subscriptions_org_key').on(table.organizationId),
+    index('subscriptions_status_idx').on(table.status),
+  ],
+);
+
+export const subscriptionChargeStatusEnum = pgEnum('subscription_charge_status', [
+  'due',
+  'paid',
+  /** Written off by staff, with a reason. */
+  'waived',
+]);
+
+/**
+ * One row per billing period, created when the period begins.
+ *
+ * A row per period rather than a running balance, because "which months has this
+ * merchant paid for" is the question that gets asked, and a balance cannot answer it.
+ * Nothing here is ever deleted or rewritten.
+ */
+export const subscriptionCharges = pgTable(
+  'subscription_charges',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    subscriptionId: uuid('subscription_id')
+      .notNull()
+      .references(() => subscriptions.id, { onDelete: 'cascade' }),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+
+    periodStart: timestamp('period_start', { withTimezone: true }).notNull(),
+    periodEnd: timestamp('period_end', { withTimezone: true }).notNull(),
+    amountUsdMicros: numeric('amount_usd_micros', { precision: 78, scale: 0 }).notNull(),
+    status: subscriptionChargeStatusEnum('status').notNull().default('due'),
+
+    /**
+     * The gateway invoice this charge was paid through, when it was.
+     *
+     * AVEX charging itself through its own rails is the point: the subscription is
+     * payable in any asset the platform accepts, using the same forwarder, watcher and
+     * settlement path a merchant's customers use. If that path is broken we find out
+     * from our own billing before a merchant does.
+     */
+    invoiceId: uuid('invoice_id').references(() => invoices.id, { onDelete: 'set null' }),
+    /** For a payment settled outside the gateway — a bank transfer, a manual credit. */
+    externalReference: text('external_reference'),
+
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+    waivedByStaffId: uuid('waived_by_staff_id').references(() => staff.id, {
+      onDelete: 'set null',
+    }),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // One charge per period. A retried billing run must not double-charge.
+    uniqueIndex('subscription_charges_period_key').on(table.subscriptionId, table.periodStart),
+    index('subscription_charges_org_status_idx').on(table.organizationId, table.status),
+  ],
+);

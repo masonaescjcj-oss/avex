@@ -50,6 +50,13 @@
       "when": 1786989437972,
       "tag": "0006_steady_squadron_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786994965528,
+      "tag": "0007_condemned_jocasta",
+      "breakpoints": true
     }
   ]
 }

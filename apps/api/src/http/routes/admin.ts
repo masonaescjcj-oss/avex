@@ -483,6 +483,49 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
     );
   });
 
+  // ── billing ───────────────────────────────────────────────────────────────
+
+  app.get('/admin/billing/outstanding', async (request, reply) => {
+    await requireStaffPermission(context.audit, request.staff, 'merchant:read');
+    return reply.send({ merchants: await context.subscriptions.outstanding() });
+  });
+
+  app.post('/admin/billing/charges/:chargeId/waive', async (request, reply) => {
+    const params = z.object({ chargeId: z.string().uuid() }).parse(request.params);
+    const body = z.object({ note: z.string().trim().min(10).max(500) }).parse(request.body);
+    // Writing off revenue is elevation-gated for the same reason approving an asset is:
+    // quiet, durable, and attractive to anyone holding a stolen session.
+    const staff = await requireStaffPermission(context.audit, request.staff, 'staff:write', {
+      targetType: 'subscription_charge',
+      targetId: params.chargeId,
+      context: requestContext(request),
+    });
+
+    await context.subscriptions.waiveCharge(staff, params.chargeId, body.note);
+    return reply.send({ status: 'waived' });
+  });
+
+  app.post('/admin/billing/:orgId/price', async (request, reply) => {
+    const params = orgParams.parse(request.params);
+    const body = z
+      .object({
+        priceUsdMicros: z.coerce.bigint().nonnegative(),
+        note: z.string().trim().min(10).max(500),
+      })
+      .parse(request.body);
+    const staff = await requireStaffPermission(context.audit, request.staff, 'staff:write', {
+      targetType: 'organization',
+      targetId: params.orgId,
+      context: requestContext(request),
+    });
+
+    await context.subscriptions.setPrice(staff, params.orgId, body.priceUsdMicros, body.note);
+    return reply.send({
+      status: 'updated',
+      message: 'Applies from the next period; charges already raised keep their price.',
+    });
+  });
+
   // ── staff administration ──────────────────────────────────────────────────
 
   app.post('/admin/staff', async (request, reply) => {

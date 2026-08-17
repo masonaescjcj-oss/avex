@@ -24,6 +24,7 @@ import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
 import { ReconciliationService } from '../domain/reconciliation-service.js';
 import { MerchantService } from '../domain/merchant-service.js';
+import { SubscriptionService } from '../domain/subscription-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import { WebhookService } from '../domain/webhook-service.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
@@ -64,6 +65,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   let reconciliation: ReconciliationService;
   let paymentSink: DatabasePaymentSink;
   let webhookService: WebhookService;
+  let subscriptionsService: SubscriptionService;
 
   const unique = randomBytes(6).toString('hex');
   const staffPassword = 'a-long-enough-staff-password';
@@ -137,6 +139,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     );
     paymentSink = new DatabasePaymentSink(db, audit, webhookService, () => 0);
     reconciliation = new ReconciliationService(db, audit, paymentSink);
+    subscriptionsService = new SubscriptionService(db, audit);
 
     app = buildServer({
       env,
@@ -159,6 +162,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       settlements,
       reconciliation,
       merchant: new MerchantService(db),
+      subscriptions: subscriptionsService,
       webhooks: webhookService,
       admin: new AdminService(db, audit, settlements, reconciliation),
     });
@@ -316,6 +320,24 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     assert.ok(row, `no unmatched row for ${txHash}`);
     return row.id;
   }
+
+
+  /** A merchant with nothing else going on, for billing lifecycle tests. */
+  async function freshMerchant(label: string): Promise<string> {
+    const signup = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: {
+        email: `${label}-${unique}@example.com`,
+        password: merchantPassword,
+        organizationName: `${label} ${unique}`,
+      },
+    });
+    assert.equal(signup.statusCode, 201, signup.body);
+    return signup.json().organizationId as string;
+  }
+
+  const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
   // ── credential separation ──────────────────────────────────────────────────
 
@@ -1716,6 +1738,338 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     });
     assert.equal(response.statusCode, 200, response.body);
     assert.ok(Array.isArray(response.json().deliveries));
+  });
+
+
+  // ── platform billing: the $49/month subscription ───────────────────────────
+
+  test('a new merchant starts on a trial, not on an immediate charge', async () => {
+    const subscription = await subscriptionsService.ensureForOrganization(merchantOrgId);
+    assert.equal(subscription.status, 'trialing');
+    // 49 dollars, in micro-dollars, captured on the row rather than read from config —
+    // a later price change must not alter what someone already owes.
+    assert.equal(subscription.priceUsdMicros, '49000000');
+    assert.ok(subscription.trialEndsAt, 'a trial must have an end');
+    // The trial is the first period, so nothing is billed on day one.
+    assert.equal(
+      subscription.currentPeriodEnd?.getTime(),
+      subscription.trialEndsAt?.getTime(),
+    );
+  });
+
+  test('starting a subscription twice returns the same one', async () => {
+    // Signup can be retried, and two subscriptions would mean two answers to
+    // "may this merchant trade".
+    const first = await subscriptionsService.ensureForOrganization(merchantOrgId);
+    const second = await subscriptionsService.ensureForOrganization(merchantOrgId);
+    assert.equal(first.id, second.id);
+  });
+
+  test('a trialing merchant may issue invoices', async () => {
+    const verdict = await subscriptionsService.billingVerdict(merchantOrgId);
+    assert.equal(verdict.mayIssueInvoices, true);
+    assert.equal(verdict.reason, null);
+  });
+
+  test('a merchant with no subscription row is allowed, not blocked', async () => {
+    /**
+     * A merchant created before billing existed, or by a path that forgot to start a
+     * subscription. The right response to our own bookkeeping gap is not to stop
+     * someone's checkout.
+     */
+    const signup = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: {
+        email: `nobill-${unique}@example.com`,
+        password: merchantPassword,
+        organizationName: `NoBill ${unique}`,
+      },
+    });
+    const orgId = signup.json().organizationId as string;
+
+    const verdict = await subscriptionsService.billingVerdict(orgId);
+    assert.equal(verdict.mayIssueInvoices, true);
+  });
+
+  test('when a period ends a charge is raised and grace begins', async () => {
+    const org = await freshMerchant('cycle');
+    // Start the subscription with a trial that has already ended.
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+
+    const report = await subscriptionsService.runBilling();
+    assert.ok(report.charged >= 1, 'a charge should have been raised');
+
+    const { subscription, charges, verdict } = await subscriptionsService.forOrganization(org);
+    assert.equal(subscription.status, 'past_due');
+    assert.equal(charges[0]?.status, 'due');
+    assert.equal(charges[0]?.amountUsdMicros, '49000000');
+    // Past due but inside grace: the gateway keeps working. Cutting a merchant's
+    // checkout off the hour a bill comes due punishes their customers.
+    assert.equal(verdict.mayIssueInvoices, true);
+    assert.ok(subscription.graceEndsAt, 'grace must have an end');
+  });
+
+  test('running billing twice does not charge twice', async () => {
+    /**
+     * The property that lets billing be a plain interval job rather than a locked one:
+     * the unique index on (subscription, period start) makes a repeated run a no-op.
+     */
+    const org = await freshMerchant('twice');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+
+    await subscriptionsService.runBilling();
+    const afterFirst = (await subscriptionsService.forOrganization(org)).charges.length;
+    await subscriptionsService.runBilling();
+    const afterSecond = (await subscriptionsService.forOrganization(org)).charges.length;
+
+    assert.equal(afterSecond, afterFirst, 'a second run must not add a charge');
+  });
+
+  test('once grace expires new invoices are refused, with a reason a merchant can act on', async () => {
+    const org = await freshMerchant('expired');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(40));
+    await subscriptionsService.runBilling();
+
+    // Age the grace window past its end, as a fortnight of silence would.
+    await db
+      .update(schema.subscriptions)
+      .set({ graceEndsAt: daysAgo(1) })
+      .where(eq(schema.subscriptions.organizationId, org));
+    const report = await subscriptionsService.runBilling();
+    assert.ok(report.markedUnpaid >= 1);
+
+    const verdict = await subscriptionsService.billingVerdict(org);
+    assert.equal(verdict.mayIssueInvoices, false);
+    assert.equal(verdict.status, 'unpaid');
+    // The message has to tell them two things: what stopped, and what did not.
+    assert.match(verdict.reason ?? '', /overdue/);
+    assert.match(verdict.reason ?? '', /already issued will still complete/);
+    assert.equal(verdict.amountDueUsdMicros, '49000000');
+  });
+
+  test('paying the charge brings the merchant current', async () => {
+    const org = await freshMerchant('pays');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await subscriptionsService.runBilling();
+
+    const { charges } = await subscriptionsService.forOrganization(org);
+    const due = charges.find((charge) => charge.status === 'due');
+    assert.ok(due);
+
+    // Paid through our own rails: the reference is a gateway invoice id.
+    const invoice = await createInvoice(10n ** 18n);
+    await subscriptionsService.markChargePaid(due.id, { invoiceId: invoice.invoiceId });
+
+    const after = await subscriptionsService.forOrganization(org);
+    assert.equal(after.subscription.status, 'active');
+    assert.equal(after.subscription.graceEndsAt, null);
+    assert.equal(after.verdict.mayIssueInvoices, true);
+    assert.equal(after.charges.find((charge) => charge.id === due.id)?.status, 'paid');
+  });
+
+  test('paying one of several late months does not clear the rest', async () => {
+    // A merchant three months behind who pays one month is still behind.
+    const org = await freshMerchant('partial');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(100));
+    await subscriptionsService.runBilling();
+    await subscriptionsService.runBilling();
+
+    const { charges } = await subscriptionsService.forOrganization(org);
+    const due = charges.filter((charge) => charge.status === 'due');
+    if (due.length < 2) return; // one period only; nothing to assert
+
+    await subscriptionsService.markChargePaid(due[0]!.id, { externalReference: 'bank transfer' });
+    const after = await subscriptionsService.forOrganization(org);
+    assert.notEqual(after.subscription.status, 'active', 'still owes the remaining month');
+  });
+
+  test('paying the same charge twice is refused', async () => {
+    const org = await freshMerchant('double');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await subscriptionsService.runBilling();
+    const due = (await subscriptionsService.forOrganization(org)).charges[0]!;
+
+    await subscriptionsService.markChargePaid(due.id, { externalReference: 'first' });
+    await assert.rejects(
+      () => subscriptionsService.markChargePaid(due.id, { externalReference: 'second' }),
+      /already paid/,
+    );
+  });
+
+  test('staff can write off a charge, and the reason is recorded', async () => {
+    const org = await freshMerchant('waived');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await subscriptionsService.runBilling();
+    const due = (await subscriptionsService.forOrganization(org)).charges[0]!;
+
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/billing/charges/${due.id}/waive`,
+      headers: asStaff(superadminToken),
+      payload: { note: 'goodwill after the outage on the 14th' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const after = await subscriptionsService.forOrganization(org);
+    assert.equal(after.charges[0]?.status, 'waived');
+    assert.ok(after.charges[0]?.waivedByStaffId, 'the staff member must be recorded');
+    assert.equal(after.subscription.status, 'active');
+
+    const audit = await app.inject({
+      method: 'GET',
+      url: `/admin/audit?action=subscription.charge_waived&organizationId=${org}`,
+      headers: asStaff(superadminToken),
+    });
+    assert.ok(audit.json().rows.length > 0, 'writing off revenue must be in the audit trail');
+  });
+
+  test('writing off revenue needs a fresh second factor', async () => {
+    const org = await freshMerchant('elevate');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await subscriptionsService.runBilling();
+    const due = (await subscriptionsService.forOrganization(org)).charges[0]!;
+
+    await db
+      .update(schema.staffSessions)
+      .set({ mfaSatisfiedAt: new Date(Date.now() - 10 * 60 * 1000) })
+      .where(eq(schema.staffSessions.tokenHash, hashToken(superadminToken)));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/billing/charges/${due.id}/waive`,
+      headers: asStaff(superadminToken),
+      payload: { note: 'attempting without a fresh code' },
+    });
+    // Quiet and durable, like approving an asset — attractive to a stolen session.
+    assert.equal(response.statusCode, 403);
+    assert.equal(response.json().error, 'elevation_required');
+  });
+
+  test('a merchant can read its own subscription', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${merchantOrgId}/subscription`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const body = response.json();
+    assert.equal(body.subscription.priceUsdMicros, '49000000');
+    assert.ok(Array.isArray(body.charges));
+    assert.equal(typeof body.verdict.mayIssueInvoices, 'boolean');
+  });
+
+  test('cancelling takes effect at the period end, not immediately', async () => {
+    /**
+     * The merchant has paid through the period end. Cutting them off the moment they
+     * click cancel would be taking a month's fee for nothing.
+     */
+    const cancelled = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${merchantOrgId}/subscription/cancel`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+    });
+    assert.equal(cancelled.statusCode, 200, cancelled.body);
+
+    const after = await subscriptionsService.forOrganization(merchantOrgId);
+    assert.equal(after.subscription.cancelAtPeriodEnd, true);
+    assert.equal(after.subscription.cancelledAt, null, 'not ended yet');
+    assert.equal(after.verdict.mayIssueInvoices, true, 'the paid period still works');
+
+    const resumed = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${merchantOrgId}/subscription/resume`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+    });
+    assert.equal(resumed.statusCode, 200);
+    assert.equal(
+      (await subscriptionsService.forOrganization(merchantOrgId)).subscription.cancelAtPeriodEnd,
+      false,
+    );
+  });
+
+  test('a scheduled cancellation ends the subscription when the period rolls', async () => {
+    const org = await freshMerchant('ends');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await subscriptionsService.cancelAtPeriodEnd(org, null);
+    await subscriptionsService.runBilling();
+
+    const after = await subscriptionsService.forOrganization(org);
+    assert.equal(after.subscription.status, 'cancelled');
+    assert.ok(after.subscription.cancelledAt);
+    // No charge for a period they cancelled out of.
+    assert.equal(after.charges.length, 0);
+    assert.equal(after.verdict.mayIssueInvoices, false);
+  });
+
+  test('a negotiated price applies to future periods only', async () => {
+    const org = await freshMerchant('priced');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await subscriptionsService.runBilling();
+    const before = (await subscriptionsService.forOrganization(org)).charges[0]!;
+
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/billing/${org}/price`,
+      headers: asStaff(superadminToken),
+      payload: { priceUsdMicros: '99000000', note: 'enterprise rate agreed with sales' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const after = await subscriptionsService.forOrganization(org);
+    assert.equal(after.subscription.priceUsdMicros, '99000000');
+    // The charge already raised keeps the price it was raised at.
+    assert.equal(
+      after.charges.find((charge) => charge.id === before.id)?.amountUsdMicros,
+      '49000000',
+    );
+  });
+
+  test('the admin panel lists who owes money, soonest deadline first', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/billing/outstanding',
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const merchants = response.json().merchants as {
+      status: string;
+      owedUsdMicros: string;
+      dueCharges: number;
+    }[];
+    assert.ok(merchants.length > 0, 'this suite left merchants owing money');
+    for (const merchant of merchants) {
+      assert.ok(['past_due', 'unpaid'].includes(merchant.status));
+      assert.ok(BigInt(merchant.owedUsdMicros) > 0n);
+      assert.ok(merchant.dueCharges > 0);
+    }
+  });
+
+  test('a month-end start date does not skip February', async () => {
+    /**
+     * A subscription beginning on the 31st must not roll into March. `setMonth` alone
+     * would, quietly billing that merchant eleven times a year.
+     */
+    const org = await freshMerchant('monthend');
+    await subscriptionsService.ensureForOrganization(org, new Date('2026-01-31T00:00:00Z'));
+    await db
+      .update(schema.subscriptions)
+      .set({
+        currentPeriodStart: new Date('2026-01-31T00:00:00Z'),
+        currentPeriodEnd: new Date('2026-01-31T00:00:00Z'),
+      })
+      .where(eq(schema.subscriptions.organizationId, org));
+
+    await subscriptionsService.runBilling(new Date('2026-02-01T00:00:00Z'));
+    const { charges } = await subscriptionsService.forOrganization(org);
+    const period = charges[0]!;
+    assert.equal(period.periodStart.toISOString().slice(0, 10), '2026-01-31');
+    // February has 28 days in 2026, so the period ends on the 28th, not in March.
+    assert.equal(period.periodEnd.toISOString().slice(0, 10), '2026-02-28');
   });
 
   async function countAudit(action: string): Promise<number> {

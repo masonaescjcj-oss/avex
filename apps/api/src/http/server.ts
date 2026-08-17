@@ -32,6 +32,8 @@ import { ReconciliationError } from '../domain/reconciliation-service.js';
 import type { ReconciliationService } from '../domain/reconciliation-service.js';
 import type { SettlementStore } from '../domain/settlement-store.js';
 import { MerchantError } from '../domain/merchant-service.js';
+import { SubscriptionError } from '../domain/subscription-service.js';
+import type { SubscriptionService } from '../domain/subscription-service.js';
 import type { MerchantService } from '../domain/merchant-service.js';
 import { WebhookConfigError } from '../domain/webhook-service.js';
 import type { WebhookService } from '../domain/webhook-service.js';
@@ -60,6 +62,7 @@ import { registerPriceRoutes } from './routes/prices.js';
 import {
   merchantErrorResponse,
   registerMerchantRoutes,
+  subscriptionErrorResponse,
   webhookConfigErrorResponse,
 } from './routes/merchant.js';
 
@@ -93,6 +96,7 @@ export interface AppContext {
   readonly reconciliation: ReconciliationService;
   readonly merchant: MerchantService;
   readonly webhooks: WebhookService;
+  readonly subscriptions: SubscriptionService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */
   readonly minPriceSources: number;
 }
@@ -246,6 +250,11 @@ export function buildServer(context: AppContext): FastifyInstance {
 
     if (error instanceof AdminError) {
       const { status, body } = adminErrorResponse(error);
+      return reply.status(status).send(body);
+    }
+
+    if (error instanceof SubscriptionError) {
+      const { status, body } = subscriptionErrorResponse(error);
       return reply.status(status).send(body);
     }
 
