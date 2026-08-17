@@ -246,6 +246,55 @@ nobody revisits, and a stale one misprices every invoice without ever failing.
 A fee-on-transfer token needs its invoice tolerance raised above the observed fee,
 or every payment reads as underpaid.
 
+## The watcher
+
+Finds incoming transfers, credits them exactly once, and withdraws credits whose
+transactions have left the canonical chain.
+
+The second half is the part that is easy to skip and expensive to omit. A confirmed
+transaction can disappear in a reorg; if the credit stays, the merchant has been
+paid for a payment that no longer exists and nothing in the system will ever
+notice.
+
+- **Idempotent on `chain:txHash:transferIndex`.** Watchers rescan overlapping
+  ranges after a restart and providers replay logs, so crediting on every sighting
+  pays merchants twice.
+- **Reorg detection finds the *deepest* disagreement**, not the shallowest, and
+  rewinds to the last block whose hash still verifiably matches. Walking down from
+  the tip, the first mismatch found is the shallowest one — rewinding a fixed depth
+  below it leaves a deeper fork credited.
+- **Block memory is deeper than the rewind depth.** Remembering only as far as the
+  rewind would cap detection at that depth, so a fork below it would find no
+  remembered block to disagree with.
+- **Reversal happens before the cursor moves back.** If the process dies between
+  the two, re-scanning a range whose credits are already withdrawn is harmless
+  because crediting is idempotent; the opposite order leaves credits standing for
+  transactions never revisited.
+- **A reorg check runs before every forward scan**, because scanning from a cursor
+  sitting on an orphaned block would credit transfers from a chain that no longer
+  exists.
+- One transfer that fails to credit does not stall the chain behind it, and a
+  failed poll is recorded rather than thrown away.
+
+## Webhooks
+
+A merchant learns a payment succeeded through this path, so giving up quietly means
+they never ship the goods.
+
+- **Exponential backoff with full jitter.** Without jitter every delivery queued
+  during an outage retries at the same instant and knocks the recovering endpoint
+  over again.
+- **4xx fails immediately; 5xx, timeouts and network errors retry.** A wrong URL or
+  a rejected signature is the merchant's configuration, and retrying for hours only
+  delays them noticing. 408 and 429 are retried, since both ask to be.
+- **Exhausted deliveries are abandoned, not dropped.** A merchant who never
+  received a paid callback has a real problem that must be visible to an operator.
+- **Every attempt carries the same idempotency key**, so a merchant can discard a
+  duplicate they already processed. Retrying is only safe for us if it is also safe
+  for them.
+- Redirects are not followed — a redirecting endpoint is misconfigured, and
+  following one could replay a signed payload to a host that was never authorised.
+
 ## What is not built yet
 
 Phases 4 onward — the end-to-end payment slice on BNB Chain, hosted checkout,

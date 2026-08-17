@@ -460,3 +460,209 @@ export const payoutAddresses = pgTable(
     index('payout_addresses_org_idx').on(table.organizationId),
   ],
 );
+
+// ── Invoices and observed payments ────────────────────────────────────────────
+
+export const invoiceStatusEnum = pgEnum('invoice_status', [
+  'pending',
+  'confirming',
+  'paid',
+  'underpaid',
+  'overpaid',
+  'expired',
+]);
+
+export const invoices = pgTable(
+  'invoices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    assetId: uuid('asset_id')
+      .notNull()
+      .references(() => assets.id, { onDelete: 'restrict' }),
+    quoteId: uuid('quote_id').references(() => quotes.id, { onDelete: 'set null' }),
+
+    /** Merchant's own reference, for reconciliation on their side. */
+    reference: text('reference'),
+
+    amountDue: numeric('amount_due', { precision: 78, scale: 0 }).notNull(),
+    /** Recomputed from credited payments, never incremented blindly. */
+    amountPaid: numeric('amount_paid', { precision: 78, scale: 0 }).notNull().default('0'),
+    status: invoiceStatusEnum('status').notNull().default('pending'),
+
+    chain: text('chain').notNull(),
+    /**
+     * Where the payer sends. On EVM chains this is the CREATE2 forwarder, whose
+     * address commits to `payoutAddress` — so the two cannot drift apart.
+     */
+    depositAddress: text('deposit_address').notNull(),
+    /** Present only on shared-address chains, where it identifies the invoice. */
+    memo: text('memo'),
+    /** Captured at creation: the address active then, not whatever is active now. */
+    payoutAddress: text('payout_address').notNull(),
+
+    toleranceBps: integer('tolerance_bps').notNull().default(50),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+  },
+  (table) => [
+    // The watcher matches an arriving transfer by address, so this must be fast
+    // and must not collide across merchants.
+    uniqueIndex('invoices_chain_deposit_key').on(table.chain, table.depositAddress),
+    index('invoices_org_created_idx').on(table.organizationId, table.createdAt),
+    index('invoices_status_idx').on(table.status),
+    index('invoices_chain_memo_idx').on(table.chain, table.memo),
+  ],
+);
+
+/**
+ * Every transfer the watcher has credited.
+ *
+ * The unique key is the idempotency guarantee: a transfer is identified by where
+ * it happened, not by when we noticed. Watchers rescan overlapping ranges after a
+ * restart and RPC providers replay logs, so without this a merchant gets paid
+ * twice for one payment.
+ */
+export const payments = pgTable(
+  'payments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+
+    chain: text('chain').notNull(),
+    txHash: text('tx_hash').notNull(),
+    /** Position within the transaction; one transaction can carry many transfers. */
+    transferIndex: integer('transfer_index').notNull(),
+
+    amount: numeric('amount', { precision: 78, scale: 0 }).notNull(),
+    blockNumber: integer('block_number').notNull(),
+    blockHash: text('block_hash'),
+    /** The payer's address, needed to offer a refund anywhere sensible. */
+    fromAddress: text('from_address'),
+
+    creditedAt: timestamp('credited_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Set when a reorg removed the transaction and the credit was withdrawn. */
+    reversedAt: timestamp('reversed_at', { withTimezone: true }),
+    reversedReason: text('reversed_reason'),
+  },
+  (table) => [
+    uniqueIndex('payments_identity_key').on(table.chain, table.txHash, table.transferIndex),
+    index('payments_invoice_idx').on(table.invoiceId),
+    // Rewinding a reorg needs every payment above a block height.
+    index('payments_chain_block_idx').on(table.chain, table.blockNumber),
+  ],
+);
+
+// ── Watcher state ─────────────────────────────────────────────────────────────
+
+/**
+ * How far each chain has been scanned.
+ *
+ * Persisted so a restart resumes instead of rescanning from genesis, and so two
+ * instances cannot silently disagree about progress.
+ */
+export const watchCursors = pgTable('watch_cursors', {
+  chain: text('chain').primaryKey(),
+  cursor: text('cursor'),
+  /** Highest block whose contents have been credited. */
+  scannedTo: integer('scanned_to'),
+  lastPolledAt: timestamp('last_polled_at', { withTimezone: true }),
+  lastErrorAt: timestamp('last_error_at', { withTimezone: true }),
+  lastError: text('last_error'),
+});
+
+/**
+ * Recent block hashes per chain, kept only deep enough to spot a reorg.
+ *
+ * A reorg is detected by a block we already scanned reporting a different hash.
+ * Without this, a transaction that vanished from the canonical chain stays
+ * credited, and the merchant has been paid for a payment that no longer exists.
+ */
+export const seenBlocks = pgTable(
+  'seen_blocks',
+  {
+    chain: text('chain').notNull(),
+    number: integer('number').notNull(),
+    hash: text('hash').notNull(),
+    seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('seen_blocks_key').on(table.chain, table.number),
+    index('seen_blocks_chain_number_idx').on(table.chain, table.number),
+  ],
+);
+
+// ── Webhooks ──────────────────────────────────────────────────────────────────
+
+export const webhookEndpoints = pgTable(
+  'webhook_endpoints',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    url: text('url').notNull(),
+    /** Signing secret, shown once at creation. Stored hashed is not an option —
+     *  we must be able to sign with it — so this is the one recoverable secret,
+     *  and it grants nothing beyond forging our own callbacks to the merchant. */
+    secret: text('secret').notNull(),
+    events: jsonb('events').$type<string[]>().notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    disabledAt: timestamp('disabled_at', { withTimezone: true }),
+    disabledReason: text('disabled_reason'),
+  },
+  (table) => [index('webhook_endpoints_org_idx').on(table.organizationId)],
+);
+
+export const webhookDeliveryStatusEnum = pgEnum('webhook_delivery_status', [
+  'pending',
+  'delivered',
+  'failed',
+  'abandoned',
+]);
+
+export const webhookDeliveries = pgTable(
+  'webhook_deliveries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    endpointId: uuid('endpoint_id')
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: 'cascade' }),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+
+    event: text('event').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    /**
+     * Stable across retries, so a merchant can discard a duplicate they already
+     * processed. Retrying is safe for us and must be safe for them too.
+     */
+    idempotencyKey: text('idempotency_key').notNull(),
+
+    status: webhookDeliveryStatusEnum('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    lastStatusCode: integer('last_status_code'),
+    lastError: text('last_error'),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('webhook_deliveries_idempotency_key').on(
+      table.endpointId,
+      table.idempotencyKey,
+    ),
+    index('webhook_deliveries_due_idx').on(table.status, table.nextAttemptAt),
+    index('webhook_deliveries_org_idx').on(table.organizationId, table.createdAt),
+  ],
+);

@@ -28,3 +28,6 @@ export * from './assets/types.js';
 export * from './assets/risk.js';
 export * from './assets/probe.js';
 export * from './assets/registry.js';
+
+export * from './watch/Watcher.js';
+export * from './webhook/dispatcher.js';
