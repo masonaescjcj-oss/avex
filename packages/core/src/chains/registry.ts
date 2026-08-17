@@ -137,3 +137,24 @@ export function requiredConfirmations(chain: ChainId, valueUsd: number): number 
     ? confirmations.highValue
     : confirmations.standard;
 }
+
+/**
+ * EIP-155 chain ids, which a signed transaction must carry.
+ *
+ * Separate from the rest of the chain config because getting one wrong has a specific
+ * and nasty consequence: a transaction signed for the wrong chain id is a valid
+ * transaction on *that* chain, so it can be replayed there by anyone who sees it.
+ * They are written out rather than fetched from the node, so a misconfigured RPC
+ * endpoint cannot quietly change which chain we are signing for.
+ */
+export const EVM_CHAIN_IDS: Readonly<Record<string, number>> = {
+  ethereum: 1,
+  bsc: 56,
+  polygon: 137,
+};
+
+export function evmChainId(chain: string): number {
+  const id = EVM_CHAIN_IDS[chain];
+  if (id === undefined) throw new Error(`no EIP-155 chain id is known for ${chain}`);
+  return id;
+}

@@ -17,5 +17,7 @@
     "typecheck": "tsc -b --dry",
     "test": "npm run build && node --test \"dist/**/*.test.js\""
   },
-  "dependencies": {}
+  "dependencies": {
+    "@noble/curves": "^2.3.0"
+  }
 }

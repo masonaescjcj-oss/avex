@@ -9,6 +9,14 @@ import {
 } from '@avex/core';
 
 import { createDatabase } from './db/client.js';
+import type { ChainId } from '@avex/core';
+import {
+  EVM_CHAIN_IDS,
+  EvmChainSigner,
+  LocalKeyProvider,
+  evmChainId,
+} from '@avex/core';
+
 import { AdminService } from './domain/admin-service.js';
 import { AuditService } from './domain/audit.js';
 import { AssetService } from './domain/asset-service.js';
@@ -145,14 +153,64 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
+  /**
+   * Settlement signers, one per configured EVM chain.
+   *
+   * Built here rather than lazily so a misconfigured key stops the process at startup.
+   * The alternative — discovering it when the first settlement runs — means a merchant
+   * has already been told their payment succeeded.
+   *
+   * When no key is configured the map is empty and the runner simply has nothing to
+   * sign with: the gateway still accepts payments and credits invoices, it just does
+   * not move funds out of forwarders. That is a deliberate, visible degradation rather
+   * than a crash, because a missing settlement key must not stop the checkout.
+   */
+  const signers = new Map<string, EvmChainSigner>();
+  if (env.SETTLEMENT_KEY_HEX) {
+    const keys = new LocalKeyProvider(env.SETTLEMENT_KEY_HEX, { environment: env.NODE_ENV });
+
+    for (const [chain, urls] of Object.entries(env.EVM_RPC_URLS)) {
+      if (!(chain in EVM_CHAIN_IDS) || urls.length === 0) continue;
+
+      // One caller per chain, reusing the endpoint pool's fallback and timeouts.
+      const caller = new JsonRpcCaller({ [chain]: urls }, chain as ChainId);
+      const signer = new EvmChainSigner(
+        { call: (method, params) => caller.request(method, params) },
+        keys,
+        { chainId: evmChainId(chain), priorityFraction: env.SETTLEMENT_PRIORITY_FRACTION },
+      );
+      // Resolves the address, which is also the first proof the provider works.
+      await signer.initialise();
+      signers.set(chain, signer);
+    }
+  }
+
   await app.listen({ port: env.PORT, host: env.HOST });
   app.log.info({ seeded }, 'curated asset catalogue synchronised');
   app.log.info(
     { chains: await watchStore.status() },
     'watcher state loaded; per-chain watchers start with the settlement runner',
   );
+
+  if (signers.size === 0) {
+    app.log.warn(
+      'no settlement signer is configured: payments will be credited but funds will not be ' +
+        'swept out of forwarders. Set SETTLEMENT_KEY_HEX for development, or supply a ' +
+        'KMS-backed KeyProvider in production.',
+    );
+  } else {
+    for (const [chain, signer] of signers) {
+      const [balance, nonce] = await Promise.all([signer.balanceWei(), signer.pendingNonce()]);
+      app.log.info(
+        { chain, address: signer.address, balanceWei: balance.toString(), nonce },
+        'settlement signer ready',
+      );
+    }
+  }
+
   // Referenced so the wiring is obviously live rather than dead configuration.
   void paymentSink;
+  void settlementStore;
 }
 
 main().catch((error: unknown) => {

@@ -50,6 +50,19 @@ const schema = z.object({
    * single endpoint is a single point of failure for contract vetting and for
    * every settlement that follows.
    */
+  /**
+   * Settlement signing key, hex, for development only.
+   *
+   * `LocalKeyProvider` refuses to hold a key in process memory when NODE_ENV is
+   * production, so setting this there fails at startup rather than running with the
+   * key in a heap dump. Production supplies a KMS-backed provider instead — the seam
+   * is `KeyProvider` in @avex/core.
+   */
+  SETTLEMENT_KEY_HEX: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
+
+  /** Fraction of the fee ceiling offered as a tip. Integer basis points internally. */
+  SETTLEMENT_PRIORITY_FRACTION: z.coerce.number().min(0).max(1).default(0.1),
+
   EVM_RPC_URLS: z
     .string()
     .default('bsc=https://bsc-dataseed.binance.org')

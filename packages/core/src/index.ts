@@ -16,6 +16,12 @@ export * from './invoice/InvoiceService.js';
 export * from './webhook/signer.js';
 export { keccak256, keccak256Hex, toHex, fromHex, concatBytes } from './crypto/keccak256.js';
 
+// ── Transaction signing for EVM chains ───────────────────────────────────────
+export * from './crypto/secp256k1.js';
+export * from './chains/evm/rlp.js';
+export * from './chains/evm/transaction.js';
+export * from './settle/EvmChainSigner.js';
+
 export * from './pricing/rate.js';
 export * from './pricing/aggregate.js';
 export * from './pricing/breaker.js';

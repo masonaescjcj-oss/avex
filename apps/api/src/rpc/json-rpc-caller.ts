@@ -72,6 +72,19 @@ export class JsonRpcCaller implements EvmCaller, BlockSource {
     return this.rpc<string>('eth_call', [{ to, data }, 'latest', overrides]);
   }
 
+  /**
+   * A raw JSON-RPC call, for callers that need a method this class does not wrap.
+   *
+   * Public so the settlement signer can reach `eth_sendRawTransaction` and the nonce
+   * and receipt calls through the same endpoint pool with the same fallback and
+   * timeout behaviour. Giving the signer its own HTTP client would mean a second place
+   * where an unreachable node is handled, and the settlement path is the worst place
+   * for that logic to differ.
+   */
+  async request<T>(method: string, params: readonly unknown[]): Promise<T> {
+    return this.rpc<T>(method, [...params]);
+  }
+
   private async rpc<T>(method: string, params: unknown[]): Promise<T> {
     const urls = this.endpoints[this.chain] ?? [];
     if (urls.length === 0) {
