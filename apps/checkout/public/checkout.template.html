@@ -297,6 +297,69 @@
   }
   .net-cost.free { background: var(--teal-wash); color: var(--teal); }
 
+  /* ── primary action ─────────────────────────────────────────────────── */
+
+  .primary {
+    align-self: flex-start;
+    padding: 0.7rem 1.5rem;
+    border: none;
+    border-radius: var(--pill);
+    background: var(--lime);
+    color: var(--lime-ink);
+    font: inherit;
+    font-size: var(--s0);
+    font-weight: 700;
+    cursor: pointer;
+    transition: filter 140ms ease;
+  }
+  .primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .primary:focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; }
+  .primary:disabled { background: var(--card-3); color: var(--faint); cursor: default; }
+
+  .hint { font-size: var(--s-1); color: var(--faint); margin: 0; }
+
+  /* ── the chosen network, carried onto the second screen ─────────────── */
+
+  /* Sending on the wrong chain cannot be undone, so which chain the payer is on
+     is restated beside the address rather than left behind on the first screen. */
+  .chosen {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    background: var(--lime-wash);
+    border: 1px solid var(--lime-edge);
+    border-radius: var(--r-md);
+    padding: 0.6rem 0.875rem;
+    font-size: var(--s-1);
+  }
+  .chosen-label { color: var(--muted); }
+  .chosen-net { font-weight: 700; font-size: var(--s0); }
+  .chosen-time {
+    font-family: var(--mono);
+    font-size: var(--s-2);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .link-btn {
+    margin-inline-start: auto;
+    padding: 0.2rem 0.7rem;
+    border: 1px solid var(--lime-edge);
+    border-radius: var(--pill);
+    background: transparent;
+    color: var(--lime);
+    font: inherit;
+    font-size: var(--s-1);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .link-btn:hover { background: var(--lime-wash); }
+  .link-btn:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+  .link-btn:disabled { border-color: var(--line-2); color: var(--faint); cursor: default; }
+
+  .screen { display: flex; flex-direction: column; gap: 1rem; }
+  .screen[hidden] { display: none; }
+
   /* ── address + qr ───────────────────────────────────────────────────── */
 
   .send-to {
@@ -375,6 +438,7 @@
   /* ── rate lock: a depleting rule, not a clock ───────────────────────── */
 
   .lock { display: flex; flex-direction: column; gap: 0.4rem; }
+  .lock[hidden] { display: none; }
   .lock-line {
     display: flex;
     align-items: center;
@@ -413,6 +477,7 @@
     background: var(--amber-wash);
     color: var(--ink);
   }
+  .status[hidden] { display: none; }
   .status[data-state="paid"] { background: var(--teal-wash); }
   .status[data-state="underpaid"], .status[data-state="expired"] { background: var(--coral-wash); }
 
@@ -581,10 +646,13 @@
         <section class="amount-card">
           <p class="eyebrow">💳 Amount due</p>
           <div class="amount">
-            <span class="amount-value" id="amount">20.100000</span>
-            <span class="amount-unit" id="amount-unit">USDT</span>
+            <span class="amount-value" id="amount">20.00</span>
+            <span class="amount-unit" id="amount-unit">USD</span>
           </div>
-          <p class="amount-fiat">Equal to <span>$20.00</span> — the rate holds until the countdown below runs out</p>
+          <p class="amount-fiat" id="amount-note">
+            The exact amount depends on the network you choose — each one costs a
+            different amount to settle.
+          </p>
         </section>
 
         <section class="lock" id="lock">
@@ -595,35 +663,50 @@
           <div class="lock-track"><div class="lock-fill" id="lock-fill"></div></div>
         </section>
 
-        <section class="chooser">
-          <p class="section-label">🌐 Choose a network</p>
-          <p class="chooser-note">
-            We show what settling on each network costs — the cheapest option is at the top.
-          </p>
-          <div class="net-table" role="radiogroup" aria-label="Payment network" id="networks"></div>
+        <!-- ── screen 1: pick the network ──────────────────────────────── -->
+        <section class="screen" id="screen-network">
+          <div class="chooser">
+            <p class="section-label">🌐 Choose a network</p>
+            <p class="chooser-note">
+              We show what settling on each network costs — the cheapest option is at the top.
+            </p>
+            <div class="net-table" role="radiogroup" aria-label="Payment network" id="networks"></div>
+          </div>
+          <button class="primary" type="button" id="to-pay" disabled>Continue</button>
+          <p class="hint" id="choose-hint">Pick a network to continue.</p>
         </section>
 
-        <section class="send-to">
-          <div class="qr-frame" id="qr" aria-label="QR code of the deposit address"></div>
+        <!-- ── screen 2: pay ──────────────────────────────────────────── -->
+        <section class="screen" id="screen-pay" hidden>
+          <div class="chosen">
+            <span class="chosen-label">Paying on</span>
+            <span class="chosen-net" id="chosen-net">—</span>
+            <span class="chosen-time" id="chosen-time"></span>
+            <button class="link-btn" type="button" id="back-to-network">Change</button>
+          </div>
 
-          <div class="field">
-            <span class="field-label">📥 Deposit address</span>
-            <div class="copyable">
-              <code id="address">—</code>
-              <button class="copy-btn" type="button" data-copy="address">Copy</button>
-            </div>
+          <div class="send-to">
+            <div class="qr-frame" id="qr" aria-label="QR code of the deposit address"></div>
 
-            <div id="memo-block" hidden>
-              <div class="field" style="margin-top:.75rem">
-                <span class="field-label">🏷️ Memo</span>
-                <div class="copyable">
-                  <code id="memo">—</code>
-                  <button class="copy-btn" type="button" data-copy="memo">Copy</button>
-                </div>
+            <div class="field">
+              <span class="field-label">📥 Deposit address</span>
+              <div class="copyable">
+                <code id="address">—</code>
+                <button class="copy-btn" type="button" data-copy="address">Copy</button>
               </div>
-              <div class="memo-warning" style="margin-top:.5rem">
-                <span aria-hidden="true">⚠️</span>
-                <span><strong>The memo is required.</strong> Without it your payment cannot be matched to this invoice and has to be traced by hand.</span>
+
+              <div id="memo-block" hidden>
+                <div class="field" style="margin-top:.75rem">
+                  <span class="field-label">🏷️ Memo</span>
+                  <div class="copyable">
+                    <code id="memo">—</code>
+                    <button class="copy-btn" type="button" data-copy="memo">Copy</button>
+                  </div>
+                </div>
+                <div class="memo-warning" style="margin-top:.5rem">
+                  <span aria-hidden="true">⚠️</span>
+                  <span><strong>The memo is required.</strong> Without it your payment cannot be matched to this invoice and has to be traced by hand.</span>
+                </div>
               </div>
             </div>
           </div>
@@ -641,9 +724,10 @@
           <dl class="summary">
             <div class="summary-row"><dt>Item</dt><dd class="prose">Annual subscription</dd></div>
             <div class="summary-row"><dt>Amount</dt><dd>$20.00</dd></div>
-            <div class="summary-row"><dt>Settlement cost</dt><dd id="summary-cost">$0.0000</dd></div>
+            <div class="summary-row"><dt>Network</dt><dd id="summary-network">—</dd></div>
+            <div class="summary-row"><dt>Settlement cost</dt><dd id="summary-cost">—</dd></div>
             <div class="summary-row"><dt>Rate</dt><dd id="summary-rate">1 USDT = $1.00</dd></div>
-            <div class="summary-row total"><dt>You send</dt><dd id="summary-total">20.100000 USDT</dd></div>
+            <div class="summary-row total"><dt>You send</dt><dd id="summary-total">—</dd></div>
           </dl>
         </div>
       </section>
@@ -652,11 +736,11 @@
         <div class="panel-head"><h2>⚡ What happens next</h2></div>
         <div class="body">
           <ol class="steps" id="steps">
-            <li class="step" data-state="done">
-              <span class="step-num">1</span>
-              <span>Invoice created and the rate locked</span>
-            </li>
             <li class="step" data-state="active">
+              <span class="step-num">1</span>
+              <span>Choose the network you want to pay on</span>
+            </li>
+            <li class="step">
               <span class="step-num">2</span>
               <span>Send the exact amount to the address shown</span>
             </li>
@@ -753,10 +837,23 @@
 
   const el = (id) => document.getElementById(id);
 
-  let selected = NETWORKS[0];
+  /**
+   * Nothing is selected to begin with, on purpose.
+   *
+   * Paying on the wrong chain cannot be reversed, so the network is an explicit
+   * choice rather than a default the payer can walk past without noticing. It also
+   * means the amount due can honestly stay hidden until there is a network to
+   * compute it for — the settlement cost differs per chain.
+   */
+  let selected = null;
+  let screen = 'network';
   let state = 'awaiting';
   let remaining = LOCK_SECONDS;
   let confirmations = 0;
+
+  // Once a transfer has been seen, the address it went to is fixed and the network
+  // can no longer be changed.
+  const paymentSeen = () => state === 'confirming' || state === 'paid' || state === 'underpaid';
 
   // ── network chooser ─────────────────────────────────────────────────────
 
@@ -774,7 +871,7 @@
       row.type = 'button';
       row.className = 'net-row';
       row.setAttribute('role', 'radio');
-      row.setAttribute('aria-checked', String(network.id === selected.id));
+      row.setAttribute('aria-checked', String(selected !== null && network.id === selected.id));
 
       const dot = document.createElement('span');
       dot.className = 'dot';
@@ -799,10 +896,42 @@
         confirmations = 0;
         renderNetworks();
         renderSelection();
+        // Choosing is what enables Continue, so the screen has to be re-evaluated
+        // here — rendering the selection alone leaves the button disabled.
+        renderScreen();
       });
       container.append(row);
     }
   }
+
+  // ── screens ─────────────────────────────────────────────────────────────
+
+  function renderScreen() {
+    el('screen-network').hidden = screen !== 'network';
+    el('screen-pay').hidden = screen !== 'pay';
+
+    // On the first screen there is no address yet, so there is nothing to be
+    // waiting for. An expired rate lock is the exception — that the payer must see
+    // wherever they are.
+    el('status').hidden = screen === 'network' && state !== 'expired';
+
+    el('to-pay').disabled = selected === null;
+    el('choose-hint').hidden = selected !== null;
+    el('back-to-network').disabled = paymentSeen();
+    el('back-to-network').textContent = paymentSeen() ? 'Locked in' : 'Change';
+  }
+
+  el('to-pay').addEventListener('click', () => {
+    if (selected === null) return;
+    screen = 'pay';
+    setState(state);
+  });
+
+  el('back-to-network').addEventListener('click', () => {
+    if (paymentSeen()) return;
+    screen = 'network';
+    setState(state);
+  });
 
   // ── address, QR, amounts ────────────────────────────────────────────────
 
@@ -845,12 +974,43 @@
   }
 
   function renderSelection() {
-    el('address').textContent = selected.address;
+    if (selected === null) {
+      // The hero stays on the fiat figure, which is the only amount that is true
+      // before a network is picked.
+      el('amount').textContent = '20.00';
+      el('amount-unit').textContent = 'USD';
+      el('amount-note').textContent =
+        'The exact amount depends on the network you choose — each one costs a ' +
+        'different amount to settle.';
+      for (const id of ['summary-network', 'summary-cost', 'summary-total']) {
+        el(id).textContent = '—';
+      }
+
+      // Clear the previous network's address, memo and QR rather than leaving them
+      // on the hidden screen. A stale deposit address is the one piece of state that
+      // must never survive a change of network.
+      el('address').textContent = '—';
+      el('memo').textContent = '—';
+      el('memo-block').hidden = true;
+      el('chosen-net').textContent = '—';
+      el('chosen-time').textContent = '';
+      el('qr').textContent = '';
+      return;
+    }
+
     el('amount').textContent = selected.amount;
     el('amount-unit').textContent = selected.asset;
-    el('summary-total').textContent = selected.amount + ' ' + selected.asset;
+    el('amount-note').textContent =
+      'Equal to $20.00 — the rate holds until the countdown below runs out.';
 
-    el('summary-cost').textContent = selected.cost === 0 ? '$0.0000' : '$' + selected.cost.toFixed(4);
+    el('chosen-net').textContent = selected.label;
+    el('chosen-time').textContent = 'confirms in ' + selected.confirm;
+
+    el('address').textContent = selected.address;
+    el('summary-network').textContent = selected.label;
+    el('summary-total').textContent = selected.amount + ' ' + selected.asset;
+    el('summary-cost').textContent =
+      selected.cost === 0 ? '$0.0000' : '$' + selected.cost.toFixed(4);
 
     el('memo-block').hidden = !selected.memo;
     el('memo').textContent = MEMO;
@@ -906,21 +1066,34 @@
   // ── state ───────────────────────────────────────────────────────────────
 
   const STATES = {
-    awaiting: { text: 'Waiting for your payment', step: 2 },
-    confirming: { text: 'Payment seen — waiting for the network to confirm', step: 3 },
-    paid: { text: 'Payment confirmed. You can close this page.', step: 4 },
-    underpaid: { text: 'Less than the amount due arrived — send the difference', step: 2 },
-    expired: { text: 'The rate lock expired — reload the page for a fresh rate', step: 2 },
+    awaiting: 'Waiting for your payment',
+    confirming: 'Payment seen — waiting for the network to confirm',
+    paid: 'Payment confirmed. You can close this page.',
+    underpaid: 'Less than the amount due arrived — send the difference',
+    expired: 'The rate lock expired — reload the page for a fresh rate',
   };
+
+  /**
+   * Which of the three steps the payer is on.
+   *
+   * It is a function of the screen as well as the payment state: choosing a network
+   * is step 1, sending is step 2, and confirming is step 3. Reading it off the
+   * state alone would show step 2 while the payer is still picking a chain.
+   */
+  function currentStep() {
+    if (state === 'paid') return 4;
+    if (state === 'confirming') return 3;
+    return screen === 'network' ? 1 : 2;
+  }
 
   function setState(next) {
     state = next;
-    const info = STATES[next];
+    const step = currentStep();
 
     el('status').dataset.state = next;
-    el('status-text').textContent = info.text;
+    el('status-text').textContent = STATES[next];
     el('lock').parentElement.classList.toggle('is-expired', next === 'expired');
-    el('step-of').textContent = String(Math.min(3, info.step));
+    el('step-of').textContent = String(Math.min(3, step));
 
     // Once the payment is confirmed the rate lock means nothing and the network
     // can no longer be changed, so neither should still look live.
@@ -935,11 +1108,11 @@
     const steps = el('steps').children;
     for (let i = 0; i < steps.length; i++) {
       const position = i + 1;
-      steps[i].dataset.state =
-        position < info.step ? 'done' : position === info.step ? 'active' : '';
+      steps[i].dataset.state = position < step ? 'done' : position === step ? 'active' : '';
     }
     if (next === 'paid') for (const step of steps) step.dataset.state = 'done';
 
+    renderScreen();
     renderLock();
   }
 
@@ -950,12 +1123,28 @@
       clearInterval(confirmTimer);
 
       if (target === 'awaiting') {
+        // Back to the very start, including the network choice.
         remaining = LOCK_SECONDS;
         confirmations = 0;
+        selected = null;
+        screen = 'network';
+        renderNetworks();
+        renderSelection();
+        setState('awaiting');
+        return;
       }
       // Reached by the timer the lock is already at zero; jumped to by a button it
       // is not, and an "expired" banner beside 14:59 left reads as a broken page.
       if (target === 'expired') remaining = 0;
+
+      // Every other state presupposes money already sent to an address, which means
+      // a network was chosen and the payer is past the first screen.
+      if (target !== 'expired') {
+        if (selected === null) selected = NETWORKS[0];
+        screen = 'pay';
+        renderNetworks();
+        renderSelection();
+      }
 
       if (target === 'confirming') {
         confirmations = 0;
