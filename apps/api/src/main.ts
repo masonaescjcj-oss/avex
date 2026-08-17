@@ -18,6 +18,7 @@ import {
 } from '@avex/core';
 
 import { AdminService } from './domain/admin-service.js';
+import { MerchantService } from './domain/merchant-service.js';
 import { AuditService } from './domain/audit.js';
 import { AssetService } from './domain/asset-service.js';
 import { AuthService } from './domain/auth-service.js';
@@ -137,6 +138,8 @@ async function main(): Promise<void> {
     admin,
     settlements: settlementStore,
     reconciliation,
+    merchant: new MerchantService(db),
+    webhooks,
     minPriceSources: env.PRICE_MIN_SOURCES,
     // A real transport still to come; the seam is what matters now.
     mailer,

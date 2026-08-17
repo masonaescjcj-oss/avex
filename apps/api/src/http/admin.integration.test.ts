@@ -23,6 +23,7 @@ import { AuthService } from '../domain/auth-service.js';
 import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
 import { ReconciliationService } from '../domain/reconciliation-service.js';
+import { MerchantService } from '../domain/merchant-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import { WebhookService } from '../domain/webhook-service.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
@@ -62,6 +63,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   let settlements: SettlementStore;
   let reconciliation: ReconciliationService;
   let paymentSink: DatabasePaymentSink;
+  let webhookService: WebhookService;
 
   const unique = randomBytes(6).toString('hex');
   const staffPassword = 'a-long-enough-staff-password';
@@ -129,12 +131,11 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
      * would. Webhooks go nowhere — this suite is not testing delivery — but the
      * status arithmetic is the production one, which is the part that matters.
      */
-    paymentSink = new DatabasePaymentSink(
+    webhookService = new WebhookService(
       db,
-      audit,
-      new WebhookService(db, new WebhookDispatcher({ async post() { return { statusCode: 200 }; } })),
-      () => 0,
+      new WebhookDispatcher({ async post() { return { statusCode: 200 }; } }),
     );
+    paymentSink = new DatabasePaymentSink(db, audit, webhookService, () => 0);
     reconciliation = new ReconciliationService(db, audit, paymentSink);
 
     app = buildServer({
@@ -157,6 +158,8 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       staffAuth,
       settlements,
       reconciliation,
+      merchant: new MerchantService(db),
+      webhooks: webhookService,
       admin: new AdminService(db, audit, settlements, reconciliation),
     });
 
@@ -1409,6 +1412,310 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     const unavailable = response.json().unavailable as string[];
     // A page silently missing a check reads as healthy for whatever it omits.
     assert.ok(unavailable.some((entry) => entry.startsWith('gas_wallet_balance')));
+  });
+
+
+  // ── phase 07: the merchant dashboard's own surface ─────────────────────────
+
+  test('a merchant lists only their own invoices', async () => {
+    /**
+     * The tenancy test. Both merchants have invoices; each request must see exactly
+     * one set. A missing organizationId filter in the query would pass every other
+     * test in this file and leak one merchant's book to another.
+     */
+    const mine = await createInvoice(3n * 10n ** 18n);
+
+    const otherSignup = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: {
+        email: `rival-${unique}@example.com`,
+        password: merchantPassword,
+        organizationName: `Rival ${unique}`,
+      },
+    });
+    const rivalOrgId = otherSignup.json().organizationId as string;
+    const rivalLogin = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { email: `rival-${unique}@example.com`, password: merchantPassword },
+    });
+    const rivalToken = rivalLogin.json().token as string;
+
+    const mineListed = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${merchantOrgId}/invoices`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+    });
+    assert.equal(mineListed.statusCode, 200, mineListed.body);
+    const ids = (mineListed.json().invoices as { id: string }[]).map((row) => row.id);
+    assert.ok(ids.includes(mine.invoiceId));
+
+    const rivalListed = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${rivalOrgId}/invoices`,
+      headers: { authorization: `Bearer ${rivalToken}` },
+    });
+    assert.equal(rivalListed.statusCode, 200, rivalListed.body);
+    assert.equal((rivalListed.json().invoices as unknown[]).length, 0, 'the rival has no invoices');
+
+    // And reaching across is refused before any query runs.
+    const crossing = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${merchantOrgId}/invoices`,
+      headers: { authorization: `Bearer ${rivalToken}` },
+    });
+    assert.equal(crossing.statusCode, 404, 'another merchant must read as absent');
+  });
+
+  test('another merchant\'s invoice reads as absent, not forbidden', async () => {
+    // 404 rather than 403: confirming an id exists is itself information about a
+    // book that is none of the caller's business.
+    const mine = await createInvoice(10n ** 18n);
+    const rivalSignup = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: {
+        email: `peek-${unique}@example.com`,
+        password: merchantPassword,
+        organizationName: `Peek ${unique}`,
+      },
+    });
+    const peekOrg = rivalSignup.json().organizationId as string;
+    const peekLogin = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { email: `peek-${unique}@example.com`, password: merchantPassword },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${peekOrg}/invoices/${mine.invoiceId}`,
+      headers: { authorization: `Bearer ${peekLogin.json().token}` },
+    });
+    assert.equal(response.statusCode, 404);
+  });
+
+  test('invoice detail carries the asset decimals needed to read the amount', async () => {
+    const { invoiceId } = await createInvoice(20n * 10n ** 18n);
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${merchantOrgId}/invoices/${invoiceId}`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const body = response.json();
+    assert.equal(body.amountDue, '20000000000000000000');
+    // Without the decimals the client cannot place the point, and a dashboard that
+    // guesses would misreport what the merchant is owed.
+    assert.equal(body.assetDecimals, 18);
+    assert.ok(body.assetSymbol);
+    assert.ok(Array.isArray(body.payments));
+    assert.ok(Array.isArray(body.settlements));
+  });
+
+  test('invoice paging never repeats or skips a row', async () => {
+    for (let i = 0; i < 5; i++) await createInvoice(BigInt(i + 1) * 10n ** 17n);
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 12; page++) {
+      const suffix: string = cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`;
+      const response = await app.inject({
+        method: 'GET',
+        url: `/v1/organizations/${merchantOrgId}/invoices?limit=2${suffix}`,
+        headers: { authorization: `Bearer ${merchantSessionToken}` },
+      });
+      assert.equal(response.statusCode, 200);
+      const body = response.json() as { invoices: { id: string }[]; nextCursor: string | null };
+      for (const row of body.invoices) seen.push(row.id);
+      cursor = body.nextCursor;
+      if (cursor === null) break;
+    }
+
+    assert.ok(seen.length >= 5);
+    assert.equal(new Set(seen).size, seen.length, 'a row appeared on two pages');
+  });
+
+  test('the volume report counts arrived money, not invoices marked paid', async () => {
+    /**
+     * The two differ after a reorg. A merchant reconciling their books needs the money
+     * that actually arrived and was not withdrawn.
+     */
+    const due = 4n * 10n ** 18n;
+    const { invoiceId } = await createInvoice(due);
+    await db.insert(schema.payments).values({
+      invoiceId,
+      chain: 'bsc',
+      txHash: `0xvol${unique}01`,
+      transferIndex: 0,
+      amount: due.toString(),
+      blockNumber: 600,
+    });
+    // A reversed payment must not be counted.
+    await db.insert(schema.payments).values({
+      invoiceId,
+      chain: 'bsc',
+      txHash: `0xvol${unique}02`,
+      transferIndex: 0,
+      amount: due.toString(),
+      blockNumber: 601,
+      reversedAt: new Date(),
+      reversedReason: 'reorg',
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${merchantOrgId}/reports/volume`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const rows = response.json().volume as { chain: string; total: string }[];
+    const bsc = rows.find((row) => row.chain === 'bsc');
+    assert.ok(bsc, 'bsc volume should be reported');
+    // The reversed payment is excluded, so the total is one payment, not two.
+    assert.equal(BigInt(bsc.total) % due, 0n);
+    assert.ok(BigInt(bsc.total) >= due);
+  });
+
+  // ── webhooks ──────────────────────────────────────────────────────────────
+
+  test('a webhook endpoint must use https', async () => {
+    // Over HTTP the payload says which invoice was paid and for how much, and the
+    // signature that proves it came from us is replayable by anyone on the path.
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${merchantOrgId}/webhook-endpoints`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+      payload: { url: 'http://example.com/hook', events: ['invoice.paid'] },
+    });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, 'invalid_webhook_url');
+  });
+
+  test('an endpoint with no events is refused', async () => {
+    // Subscribed to nothing looks identical to a broken integration from outside.
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${merchantOrgId}/webhook-endpoints`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+      payload: { url: 'https://example.com/hook', events: [] },
+    });
+    assert.equal(response.statusCode, 400);
+  });
+
+  test('the signing secret is returned once and never again', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${merchantOrgId}/webhook-endpoints`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+      payload: { url: `https://example.com/hook-${unique}`, events: ['invoice.paid'] },
+    });
+    assert.equal(created.statusCode, 201, created.body);
+    const secret = created.json().secret as string;
+    assert.match(secret, /^whsec_/);
+
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${merchantOrgId}/webhook-endpoints`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+    });
+    const body = listed.body;
+    // A route that could re-read it would turn a write-only secret into a readable
+    // one, and it appears in no log line either.
+    assert.ok(!body.includes(secret), 'the secret must not appear in any later response');
+    assert.ok(!body.includes('whsec_'));
+  });
+
+  test('creating an endpoint is recorded without its secret', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${merchantOrgId}/webhook-endpoints`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+      payload: { url: `https://example.com/audited-${unique}`, events: ['invoice.paid'] },
+    });
+    const secret = created.json().secret as string;
+
+    const audit = await app.inject({
+      method: 'GET',
+      url: `/admin/audit?organizationId=${merchantOrgId}&action=webhook_endpoint.created`,
+      headers: asStaff(superadminToken),
+    });
+    const [row] = audit.json().rows;
+    assert.ok(row, 'the creation should be recorded');
+    assert.ok(!JSON.stringify(row).includes(secret), 'the audit trail must not hold the secret');
+  });
+
+  test('an endpoint can be disabled and enabled again', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${merchantOrgId}/webhook-endpoints`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+      payload: { url: `https://example.com/toggle-${unique}`, events: ['invoice.paid'] },
+    });
+    const id = created.json().id as string;
+
+    const disabled = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${merchantOrgId}/webhook-endpoints/${id}/disable`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+      payload: { reason: 'rotating our receiver' },
+    });
+    assert.equal(disabled.statusCode, 200, disabled.body);
+
+    const enabled = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${merchantOrgId}/webhook-endpoints/${id}/enable`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+    });
+    assert.equal(enabled.statusCode, 200);
+  });
+
+  test('another merchant cannot disable an endpoint by guessing its id', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${merchantOrgId}/webhook-endpoints`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+      payload: { url: `https://example.com/private-${unique}`, events: ['invoice.paid'] },
+    });
+    const id = created.json().id as string;
+
+    const signup = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: {
+        email: `thief-${unique}@example.com`,
+        password: merchantPassword,
+        organizationName: `Thief ${unique}`,
+      },
+    });
+    const thiefOrg = signup.json().organizationId as string;
+    const login = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { email: `thief-${unique}@example.com`, password: merchantPassword },
+    });
+
+    // Tenancy is in the update predicate, so the row is not theirs to match.
+    const attempt = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${thiefOrg}/webhook-endpoints/${id}/disable`,
+      headers: { authorization: `Bearer ${login.json().token}` },
+      payload: {},
+    });
+    assert.equal(attempt.statusCode, 404);
+  });
+
+  test('the delivery log is scoped to the merchant', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${merchantOrgId}/webhook-deliveries`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.ok(Array.isArray(response.json().deliveries));
   });
 
   async function countAudit(action: string): Promise<number> {

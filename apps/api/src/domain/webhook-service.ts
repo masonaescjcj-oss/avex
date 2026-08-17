@@ -1,6 +1,6 @@
 import { WebhookDispatcher, type PendingDelivery } from '@avex/core';
 import { and, asc, eq, isNull, lte } from 'drizzle-orm';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import type { Database } from '../db/client.js';
 import { webhookDeliveries, webhookEndpoints } from '../db/schema.js';
@@ -12,6 +12,13 @@ import { webhookDeliveries, webhookEndpoints } from '../db/schema.js';
  * must not delay crediting a payment, and a payment must not fail to be credited
  * because their server is down.
  */
+export class WebhookConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WebhookConfigError';
+  }
+}
+
 export class WebhookService {
   constructor(
     private readonly db: Database,
@@ -27,6 +34,68 @@ export class WebhookService {
    * the unique constraint collapses the duplicates instead of the merchant seeing
    * both.
    */
+  /**
+   * Register an endpoint and mint its signing secret.
+   *
+   * The secret is returned here and never again. It cannot be stored hashed — we must
+   * sign with it — so it is the one recoverable secret in the system, and the
+   * compensating control is that it grants nothing beyond forging our own callbacks to
+   * this merchant. Showing it once keeps it out of every later response and log line.
+   */
+  async createEndpoint(
+    organizationId: string,
+    url: string,
+    events: readonly string[],
+  ): Promise<{ readonly id: string; readonly secret: string }> {
+    const parsed = new URL(url);
+    /**
+     * Plain HTTP is refused.
+     *
+     * The payload says which invoice was paid and for how much, and the signature
+     * proves it came from us — over HTTP both are readable and the signature is
+     * replayable by anyone on the path. A merchant who wants HTTP wants something that
+     * cannot be made safe.
+     */
+    if (parsed.protocol !== 'https:') {
+      throw new WebhookConfigError('A webhook URL must use https.');
+    }
+
+    const secret = `whsec_${randomBytes(24).toString('base64url')}`;
+    const [row] = await this.db
+      .insert(webhookEndpoints)
+      .values({ organizationId, url, events: [...events], secret })
+      .returning({ id: webhookEndpoints.id });
+
+    return { id: row!.id, secret };
+  }
+
+  /** Enable or disable an endpoint, scoped to its owner. */
+  async setEndpointEnabled(
+    organizationId: string,
+    endpointId: string,
+    enabled: boolean,
+    reason: string | null = null,
+  ): Promise<boolean> {
+    const result = await this.db
+      .update(webhookEndpoints)
+      .set(
+        enabled
+          ? { enabled: true, disabledAt: null, disabledReason: null }
+          : { enabled: false, disabledAt: new Date(), disabledReason: reason },
+      )
+      // Tenancy in the predicate, so a guessed uuid from another merchant matches
+      // nothing rather than being disabled.
+      .where(
+        and(
+          eq(webhookEndpoints.id, endpointId),
+          eq(webhookEndpoints.organizationId, organizationId),
+        ),
+      )
+      .returning({ id: webhookEndpoints.id });
+
+    return result.length > 0;
+  }
+
   async enqueue(
     organizationId: string,
     event: string,

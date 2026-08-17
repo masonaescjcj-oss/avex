@@ -31,6 +31,10 @@ import type { AdminService } from '../domain/admin-service.js';
 import { ReconciliationError } from '../domain/reconciliation-service.js';
 import type { ReconciliationService } from '../domain/reconciliation-service.js';
 import type { SettlementStore } from '../domain/settlement-store.js';
+import { MerchantError } from '../domain/merchant-service.js';
+import type { MerchantService } from '../domain/merchant-service.js';
+import { WebhookConfigError } from '../domain/webhook-service.js';
+import type { WebhookService } from '../domain/webhook-service.js';
 import { StaffAuthError } from '../domain/staff-auth.js';
 import type { StaffAuthService, StaffPrincipal } from '../domain/staff-auth.js';
 import {
@@ -53,6 +57,11 @@ import { registerAuthRoutes } from './routes/auth.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerPayoutRoutes, payoutErrorResponse } from './routes/payouts.js';
 import { registerPriceRoutes } from './routes/prices.js';
+import {
+  merchantErrorResponse,
+  registerMerchantRoutes,
+  webhookConfigErrorResponse,
+} from './routes/merchant.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -82,6 +91,8 @@ export interface AppContext {
   readonly admin: AdminService;
   readonly settlements: SettlementStore;
   readonly reconciliation: ReconciliationService;
+  readonly merchant: MerchantService;
+  readonly webhooks: WebhookService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */
   readonly minPriceSources: number;
 }
@@ -238,6 +249,16 @@ export function buildServer(context: AppContext): FastifyInstance {
       return reply.status(status).send(body);
     }
 
+    if (error instanceof MerchantError) {
+      const { status, body } = merchantErrorResponse(error);
+      return reply.status(status).send(body);
+    }
+
+    if (error instanceof WebhookConfigError) {
+      const { status, body } = webhookConfigErrorResponse(error);
+      return reply.status(status).send(body);
+    }
+
     if (error instanceof ReconciliationError) {
       const { status, body } = reconciliationErrorResponse(error);
       return reply.status(status).send(body);
@@ -334,6 +355,7 @@ export function buildServer(context: AppContext): FastifyInstance {
   registerPriceRoutes(app, context);
   registerAssetRoutes(app, context);
   registerPayoutRoutes(app, context);
+  registerMerchantRoutes(app, context);
   registerAdminRoutes(app, context);
 
   return app;
