@@ -6,13 +6,20 @@
  * a balance, an amount due, or anything that lands in the ledger.
  */
 
-/** The seven chains AVEX Pay supports. */
+/**
+ * The chains AVEX Pay supports.
+ *
+ * Bitcoin is deliberately absent. It has no equivalent of the Forwarder's
+ * immutable destination, so consolidating deposits would require holding
+ * spending keys — making that one path custodial while every other path is not.
+ * Rather than ship a gateway whose non-custodial claim has an asterisk, Bitcoin
+ * is out of v1. See docs/ARCHITECTURE.md.
+ */
 export type ChainId =
   | 'ethereum'
   | 'polygon'
   | 'bsc'
   | 'tron'
-  | 'bitcoin'
   | 'solana'
   | 'ton';
 
@@ -121,8 +128,6 @@ export interface GasSnapshot {
   readonly nativePriceUsd: number;
   /** EVM: base fee + priority, in wei. */
   readonly feePerGasWei?: bigint;
-  /** Bitcoin: current sat/vB for the target confirmation window. */
-  readonly satPerVByte?: number;
   /** Tron: SUN per unit of energy when not covered by delegation. */
   readonly sunPerEnergy?: number;
   /** Solana: lamports per signature. */

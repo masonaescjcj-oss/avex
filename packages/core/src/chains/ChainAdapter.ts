@@ -82,8 +82,8 @@ export interface ChainAdapter {
 
   /**
    * Move funds to the merchants' payout addresses, batching where the chain
-   * allows it (one Bitcoin transaction consolidating many inputs, one EVM
-   * multicall, ...).
+   * allows it — one EVM transaction deploying and flushing many forwarders, one
+   * TRON batch under delegated energy, and so on.
    *
    * `shared-memo` chains have nothing to do here — the payer's own transfer
    * already delivered the funds — and return an empty array.

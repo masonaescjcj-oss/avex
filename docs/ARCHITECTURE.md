@@ -52,8 +52,8 @@ we choose when that happens. So expense is not an argument against unique
 addresses; it is an argument for deferring settlement.
 
 Meanwhile "shared" only works cleanly where the chain carries a native memo
-field. TON, XRP and Stellar do. Ethereum, TRON and Bitcoin — precisely the
-expensive ones — do not, leaving amount-matching as the only option, which breaks
+field. TON, XRP and Stellar do. Ethereum and TRON — precisely the expensive ones
+— do not, leaving amount-matching as the only option, which breaks
 as soon as an exchange rounds a withdrawal amount, two payers send similar
 amounts concurrently, or a payer rounds by hand.
 
@@ -62,7 +62,7 @@ Hence:
 | Model | Chains | Reason |
 |---|---|---|
 | `shared-memo` | TON | Native comment field. Zero settlement cost — the payer's own transfer reaches the merchant. Strictly better where available. |
-| `unique` | Ethereum, Polygon, BNB, TRON, Bitcoin, Solana | Reliable matching. Free to derive. Settlement cost controlled by deferral and batching. |
+| `unique` | Ethereum, Polygon, BNB, TRON, Solana | Reliable matching. Free to derive. Settlement cost controlled by deferral and batching. |
 
 On TON the tradeoff is that correctness depends on the payer including the memo.
 An unmatched transfer is not lost, but it must go to operator reconciliation and
@@ -109,9 +109,9 @@ Two bounds keep it honest:
   than looping forever.
 
 Batching is where the money is. `ForwarderFactory.settleBatch` deploys and
-flushes many forwarders in one transaction; on Bitcoin, consolidating 50 inputs
-into one output amortises overhead to near nothing. Combined, deferral and
-batching are worth roughly an order of magnitude on the expensive chains.
+flushes many forwarders in one transaction, amortising the fixed overhead across
+every invoice in the batch. Combined, deferral and batching are worth roughly an
+order of magnitude on Ethereum during a gas spike.
 
 ## 6. Correctness rules that are not negotiable
 
@@ -134,6 +134,23 @@ Anyone can deploy a token called USDT.
 **Confirmations scaled by value.** A $5 invoice does not need the reorg
 protection of a $50,000 one. Polygon PoS stays conservative at 64/128 given its
 history of deep reorgs; TRON uses 19, where blocks become irreversible.
+
+## 6a. Bitcoin is excluded, and why
+
+Bitcoin has no equivalent of the Forwarder's immutable destination. Consolidating
+UTXOs from per-invoice deposit addresses requires spending keys for those
+addresses, which means AVEX holds them — so the Bitcoin path would be custodial
+while every other path is not.
+
+Two alternatives were considered. Deriving deposit addresses from the merchant's
+own xpub with merchant co-signing preserves the guarantee but makes settlement
+interactive, which is a poor fit for a gateway. Disclosing the difference to
+merchants keeps it simple but means "non-custodial" needs an asterisk in the one
+place a reader is least likely to look.
+
+Given Bitcoin's small share of small-value payments, it is out of v1 entirely.
+`ChainId` does not include it, so the exclusion is enforced by the type system
+rather than by remembering.
 
 **Money is `bigint`.** Smallest units, always. Floating point appears only in fee
 heuristics, never in a balance or an amount due.

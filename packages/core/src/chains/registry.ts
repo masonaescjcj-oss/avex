@@ -14,13 +14,6 @@ export type SettlementProfile =
       readonly gasFlushNative: number;
     }
   | {
-      readonly kind: 'bitcoin';
-      /** vBytes added per consolidated input (P2WPKH). */
-      readonly vBytesPerInput: number;
-      /** vBytes of transaction overhead + the single destination output. */
-      readonly vBytesOverhead: number;
-    }
-  | {
       readonly kind: 'tron';
       /** Energy burned by a TRC-20 transfer. Covered by delegation when enabled. */
       readonly energyPerTransfer: number;
@@ -90,6 +83,10 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     settlement: { kind: 'evm', gasDeployAndFlushToken: 150_000, gasFlushNative: 60_000 },
   },
 
+  // Highest stablecoin volume of any chain here, and the one Iranian payers
+  // reach for first — but the last to be built, because energy delegation is a
+  // prerequisite and it is the only chain whose adapter shares nothing with the
+  // EVM implementation.
   tron: {
     chain: 'tron',
     displayName: 'TRON',
@@ -99,16 +96,6 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     // TRON blocks are irreversible after 19 confirmations (2/3+1 of 27 SRs).
     confirmations: { standard: 19, highValue: 19, highValueThresholdUsd: 10_000 },
     settlement: { kind: 'tron', energyPerTransfer: 65_000, bandwidthPerTransfer: 350 },
-  },
-
-  bitcoin: {
-    chain: 'bitcoin',
-    displayName: 'Bitcoin',
-    addressModel: 'unique',
-    nativeSymbol: 'BTC',
-    nativeDecimals: 8,
-    confirmations: { standard: 2, highValue: 6, highValueThresholdUsd: 10_000 },
-    settlement: { kind: 'bitcoin', vBytesPerInput: 68, vBytesOverhead: 42 },
   },
 
   solana: {

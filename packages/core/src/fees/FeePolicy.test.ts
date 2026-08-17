@@ -79,23 +79,6 @@ test('TRON costs nothing per transfer under energy delegation', () => {
   assert.ok(burning.minInvoiceUsd(snapshot) > delegated.minInvoiceUsd(snapshot));
 });
 
-test('Bitcoin batching is what makes Bitcoin viable', () => {
-  const snapshot: GasSnapshot = {
-    chain: 'bitcoin',
-    nativePriceUsd: 60_000,
-    satPerVByte: 10,
-    observedAt: 0,
-  };
-
-  const unbatched = new FeePolicy({ ...DEFAULT_FEE_POLICY, bitcoinBatchInputs: 1 });
-  const batched = new FeePolicy({ ...DEFAULT_FEE_POLICY, bitcoinBatchInputs: 50 });
-
-  assert.ok(
-    batched.settlementCostUsd(snapshot).usd < unbatched.settlementCostUsd(snapshot).usd,
-    'consolidating inputs must lower the per-invoice cost',
-  );
-});
-
 test('checkout ranking puts the cheapest chain first and drops the unaffordable', () => {
   const snapshots: GasSnapshot[] = [
     ethereumAt(9),

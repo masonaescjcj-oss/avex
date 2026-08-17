@@ -42,7 +42,7 @@ export type QueueLogger = (message: string) => void;
  * This is the single highest-leverage cost control in the system. Funds sit at
  * an address that can only pay their merchant, so deferring is safe, and the
  * difference between settling at the moment of payment and settling at a moment
- * of our choosing is roughly an order of magnitude on Ethereum and Bitcoin.
+ * of our choosing is roughly an order of magnitude on Ethereum during a spike.
  */
 export class SettlementQueue {
   private readonly pending = new Map<ChainId, QueueItem[]>();

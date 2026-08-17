@@ -9,7 +9,6 @@ export { TonAdapter, tonMemo } from './chains/ton/TonAdapter.js';
 export type { TonAdapterConfig } from './chains/ton/TonAdapter.js';
 export { TronAdapter } from './chains/tron/TronAdapter.js';
 export { SolanaAdapter } from './chains/solana/SolanaAdapter.js';
-export { BitcoinAdapter } from './chains/bitcoin/BitcoinAdapter.js';
 
 export * from './fees/FeePolicy.js';
 export * from './sweep/SettlementQueue.js';

@@ -30,9 +30,6 @@ export interface FeePolicyConfig {
    */
   readonly deferAboveUsd: Readonly<Record<ChainId, number>>;
 
-  /** Inputs assumed per Bitcoin consolidation, for amortising overhead. */
-  readonly bitcoinBatchInputs: number;
-
   /**
    * Whether TRON energy is supplied by delegation from a staked account. When
    * true a TRC-20 settlement burns nothing — the cost has been paid once, as
@@ -49,11 +46,9 @@ export const DEFAULT_FEE_POLICY: FeePolicyConfig = {
     polygon: 0.05,
     bsc: 0.05,
     tron: 0.5,
-    bitcoin: 0.3,
     solana: 0.01,
     ton: 0,
   },
-  bitcoinBatchInputs: 50,
   tronEnergyDelegation: true,
 };
 
@@ -102,25 +97,6 @@ export class FeePolicy {
           detail:
             `${profile.gasDeployAndFlushToken} gas (CREATE2 deploy + flush) ` +
             `@ ${gwei.toFixed(4)} gwei`,
-        };
-      }
-
-      case 'bitcoin': {
-        const satPerVByte = snapshot.satPerVByte;
-        if (satPerVByte === undefined) {
-          throw new Error('bitcoin: GasSnapshot.satPerVByte required');
-        }
-        // Consolidating many inputs into one output spreads the overhead, which
-        // is why deferred batching moves Bitcoin from unusable to viable.
-        const vBytes =
-          profile.vBytesPerInput + profile.vBytesOverhead / this.config.bitcoinBatchInputs;
-        const sats = vBytes * satPerVByte;
-        return {
-          chain: 'bitcoin',
-          usd: (sats / 1e8) * price,
-          detail:
-            `${vBytes.toFixed(1)} vB amortised over ` +
-            `${this.config.bitcoinBatchInputs} inputs @ ${satPerVByte} sat/vB`,
         };
       }
 

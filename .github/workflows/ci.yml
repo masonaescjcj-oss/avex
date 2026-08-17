@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: avex
+          POSTGRES_PASSWORD: avex
+          POSTGRES_DB: avex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U avex -d avex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://avex:avex@localhost:5432/avex
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # Core builds first: the API references it as a composite project.
+      - name: Typecheck and build
+        run: |
+          npx tsc -p packages/core/tsconfig.json
+          npx tsc -p apps/api/tsconfig.json
+
+      - name: Apply migrations
+        working-directory: apps/api
+        run: npx drizzle-kit migrate
+
+      - name: Test core
+        working-directory: packages/core
+        run: node --test "dist/**/*.test.js"
+
+      # DATABASE_URL is set, so the integration suite runs rather than skipping.
+      - name: Test api
+        working-directory: apps/api
+        run: node --test "dist/**/*.test.js"

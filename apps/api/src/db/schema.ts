@@ -1,0 +1,242 @@
+import {
+  index,
+  jsonb,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
+
+/**
+ * Phase 1 schema: identity, organisations, credentials, audit.
+ *
+ * Two conventions run throughout.
+ *
+ * Nothing is hard-deleted. Sessions, keys and memberships are revoked with a
+ * timestamp instead of removed, because "when did this key stop working" is a
+ * question that gets asked during incidents and a deleted row cannot answer it.
+ *
+ * No secret is stored in recoverable form. Passwords are scrypt hashes; session
+ * tokens, email tokens, API keys and recovery codes are SHA-256 hashes. A dump of
+ * this database grants an attacker no working credential.
+ */
+
+/**
+ * Role values are written out here rather than imported from the domain module.
+ *
+ * The migration tool loads this file through a CommonJS resolver that cannot
+ * follow the project's ESM import extensions, and a schema that pulls in
+ * application code would drag half the app into every migration run. The
+ * duplication is guarded by a test that fails if the two lists diverge — see
+ * schema.test.ts. Order is fixed: changing it rewrites the Postgres enum.
+ */
+export const ROLE_VALUES = ['owner', 'admin', 'developer', 'viewer'] as const;
+
+export const roleEnum = pgEnum('role', ROLE_VALUES);
+export const apiKeyModeEnum = pgEnum('api_key_mode', ['test', 'live']);
+export const emailTokenPurposeEnum = pgEnum('email_token_purpose', [
+  'verify_email',
+  'reset_password',
+  'confirm_sensitive_change',
+]);
+
+export const organizations = pgTable(
+  'organizations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    slug: text('slug').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Set by an AVEX operator; blocks all money movement while present. */
+    suspendedAt: timestamp('suspended_at', { withTimezone: true }),
+    suspendedReason: text('suspended_reason'),
+  },
+  (table) => [uniqueIndex('organizations_slug_key').on(table.slug)],
+);
+
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
+    passwordHash: text('password_hash').notNull(),
+    /** Base32 shared secret. Present once enrolment starts, before confirmation. */
+    totpSecret: text('totp_secret'),
+    /** Only a confirmed enrolment counts as two-factor being active. */
+    totpEnabledAt: timestamp('totp_enabled_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    disabledAt: timestamp('disabled_at', { withTimezone: true }),
+  },
+  (table) => [uniqueIndex('users_email_key').on(table.email)],
+);
+
+export const recoveryCodes = pgTable(
+  'recovery_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    codeHash: text('code_hash').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+  },
+  (table) => [index('recovery_codes_user_idx').on(table.userId)],
+);
+
+export const memberships = pgTable(
+  'memberships',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: roleEnum('role').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('memberships_org_user_key').on(table.organizationId, table.userId),
+    index('memberships_user_idx').on(table.userId),
+  ],
+);
+
+export const sessions = pgTable(
+  'sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    /**
+     * When the second factor was last proven. Elevated actions require this to be
+     * recent, so a stolen session alone cannot move a payout address.
+     */
+    mfaSatisfiedAt: timestamp('mfa_satisfied_at', { withTimezone: true }),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('sessions_token_hash_key').on(table.tokenHash),
+    index('sessions_user_idx').on(table.userId),
+  ],
+);
+
+export const emailTokens = pgTable(
+  'email_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    purpose: emailTokenPurposeEnum('purpose').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('email_tokens_token_hash_key').on(table.tokenHash),
+    index('email_tokens_user_purpose_idx').on(table.userId, table.purpose),
+  ],
+);
+
+export const apiKeys = pgTable(
+  'api_keys',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    mode: apiKeyModeEnum('mode').notNull(),
+    /** Leading segment, in the clear, so a key can be identified without being held. */
+    displayPrefix: text('display_prefix').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    /** Permission subset this key may exercise; never wider than its creator's role. */
+    scopes: jsonb('scopes').$type<string[]>().notNull(),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('api_keys_token_hash_key').on(table.tokenHash),
+    index('api_keys_org_idx').on(table.organizationId),
+  ],
+);
+
+/**
+ * Append-only record of every action that changes configuration or moves money.
+ *
+ * Nothing in the application updates or deletes a row here. When a merchant asks
+ * why their payout address changed, this is the only answer that can be trusted.
+ */
+export const auditLog = pgTable(
+  'audit_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id').references(() => organizations.id, {
+      onDelete: 'set null',
+    }),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    actorApiKeyId: uuid('actor_api_key_id').references(() => apiKeys.id, {
+      onDelete: 'set null',
+    }),
+    action: text('action').notNull(),
+    targetType: text('target_type'),
+    targetId: text('target_id'),
+    /** Before/after values and request context. Never credentials. */
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('audit_log_org_created_idx').on(table.organizationId, table.createdAt),
+    index('audit_log_actor_idx').on(table.actorUserId),
+  ],
+);
+
+/**
+ * Changes that take effect after a delay instead of immediately.
+ *
+ * Built generically in Phase 1 and used first in Phase 4 for payout addresses.
+ * The delay is the protection: it turns a silent redirect of a merchant's revenue
+ * into something they have a window to notice and cancel.
+ */
+export const pendingChanges = pgTable(
+  'pending_changes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    requestedByUserId: uuid('requested_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+    appliedAt: timestamp('applied_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelledByUserId: uuid('cancelled_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+  },
+  (table) => [index('pending_changes_org_effective_idx').on(table.organizationId, table.effectiveAt)],
+);
