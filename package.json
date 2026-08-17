@@ -1,0 +1,20 @@
+{
+  "name": "avex-pay",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Non-custodial crypto payment gateway — Telegram Stars + multi-chain",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test \"dist/**/*.test.js\""
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
