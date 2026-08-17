@@ -31,3 +31,4 @@ export * from './assets/registry.js';
 
 export * from './watch/Watcher.js';
 export * from './webhook/dispatcher.js';
+export * from './settle/SettlementRunner.js';

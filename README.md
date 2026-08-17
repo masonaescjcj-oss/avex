@@ -316,14 +316,41 @@ endpoint must not delay crediting a payment, and a payment must not fail to be
 credited because their server is down. Only status *transitions* notify, so a
 re-scan that changes nothing does not tell the merchant the same news twice.
 
+## Settlement
+
+Payer funds are protected by the forwarder's immutable destination. The account
+that pays *gas* is an ordinary hot key — it cannot redirect anyone's money, but it
+can be drained, and if it empties or jams then every settlement stops and funds sit
+at their deposit addresses unpaid.
+
+So `SettlementRunner` is mostly limits:
+
+- **A nonce that is never reused and never gapped.** The starting value comes from
+  the chain, because guessing zero would collide with every transaction the account
+  already sent and each collision is a settlement the mempool silently drops. The
+  counter advances only after a successful broadcast — advancing first would leave
+  a gap, and everything behind it would sit unmined.
+- **A per-transaction cost ceiling**, bounding what a mispriced gas estimate or a
+  runaway loop can do to the wallet. Separate from `FeePolicy`, which decides
+  whether settling is *economic*; this decides whether it is *safe*.
+- **A spend cap per rolling window.**
+- **Stuck-transaction replacement** at the same nonce with a higher fee. A
+  transaction that never confirms blocks every later nonce, so the pipeline halts
+  until it is replaced. The bump must clear the node's minimum increase or the
+  replacement is silently discarded and nothing changes.
+- **Balance alerting with runway, not a fixed threshold** — warned while there is
+  still time to top up, rather than once settlement has already stopped.
+- **A reverted settlement is surfaced, never retried.** Gas was spent and nothing
+  moved; repeating it usually just burns more.
+
+Signing is delegated to an injected `ChainSigner`, so the key lives in a KMS rather
+than in this repository. If a replacement would exceed the cost ceiling, the runner
+refuses and alerts instead of bumping — leaving settlement blocked is bad, but
+quietly spending past a safety limit is worse, so an operator decides.
+
 ## What is not built yet
 
-The settlement runner — nonce sequencing, gas ceilings, replacing a stuck
-transaction, and gas-wallet balance alerting — is the last piece of the payment
-slice. Signing itself is delegated to an injected `EvmSigner` so the key lives in
-a KMS rather than this repository.
-
-Then phases 5 onward: hosted checkout, merchant dashboard, public API and SDKs,
+Phases 5 onward: hosted checkout, merchant dashboard, public API and SDKs,
 the Telegram surface, admin panel, remaining chains, hardening. See the roadmap.
 
 The reviewer-facing side of vetting is Phase 9: the probe, verdicts and audit
