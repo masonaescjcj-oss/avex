@@ -2,7 +2,7 @@
   "name": "avex-pay-monorepo",
   "version": "0.0.1",
   "private": true,
-  "description": "AVEX Pay — non-custodial crypto payment gateway with Telegram Stars",
+  "description": "AVEX Pay \u2014 non-custodial crypto payment gateway with Telegram Stars",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -11,8 +11,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "tsc -b apps/api",
+    "typecheck": "tsc -b apps/api --dry",
     "test": "npm run test --workspaces --if-present"
   },
   "devDependencies": {

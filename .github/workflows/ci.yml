@@ -37,11 +37,19 @@ jobs:
 
       - run: npm ci
 
-      # Core builds first: the API references it as a composite project.
-      - name: Typecheck and build
+      # Build mode resolves project references in dependency order, so the API
+      # cannot be compiled before the package it depends on.
+      - name: Build
+        run: npx tsc -b apps/api --verbose
+
+      # TypeScript's incremental cache can report a build as current and emit
+      # nothing, which surfaces far away as "Cannot find module '@avex/core'".
+      # Assert the outputs exist so that failure is caught here instead.
+      - name: Verify build output
         run: |
-          npx tsc -p packages/core/tsconfig.json
-          npx tsc -p apps/api/tsconfig.json
+          for artifact in packages/core/dist/index.js packages/core/dist/index.d.ts apps/api/dist/main.js; do
+            test -f "$artifact" || { echo "::error::build produced no $artifact"; exit 1; }
+          done
 
       - name: Apply migrations
         working-directory: apps/api
