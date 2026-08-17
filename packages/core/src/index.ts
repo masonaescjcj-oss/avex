@@ -15,3 +15,10 @@ export * from './sweep/SettlementQueue.js';
 export * from './invoice/InvoiceService.js';
 export * from './webhook/signer.js';
 export { keccak256, keccak256Hex, toHex, fromHex, concatBytes } from './crypto/keccak256.js';
+
+export * from './pricing/rate.js';
+export * from './pricing/aggregate.js';
+export * from './pricing/breaker.js';
+export * from './pricing/quote.js';
+export * from './pricing/PriceService.js';
+export * from './pricing/sources/index.js';

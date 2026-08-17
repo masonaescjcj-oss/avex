@@ -20,6 +20,28 @@ const schema = z.object({
 
   /** Requests per minute per client, before rate limiting kicks in. */
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),
+
+  /**
+   * Enabled price sources, in no particular order.
+   *
+   * Configuration rather than code because reachability varies by deployment: an
+   * exchange unreachable from where this runs would fail every request and hold
+   * the circuit breaker open, blocking invoices for a reason unrelated to the
+   * market. Swapping one out must not require a release.
+   */
+  PRICE_SOURCES: z
+    .string()
+    .default('coingecko,binance,kraken')
+    .transform((value) => value.split(',').map((entry) => entry.trim()).filter(Boolean)),
+
+  /** Usable sources required before a rate is trusted. */
+  PRICE_MIN_SOURCES: z.coerce.number().int().min(1).default(2),
+  /** A source further than this from the median is discarded. */
+  PRICE_OUTLIER_TOLERANCE_BPS: z.coerce.number().int().positive().default(200),
+  /** Surviving sources spanning more than this produce no rate at all. */
+  PRICE_MAX_DISPERSION_BPS: z.coerce.number().int().positive().default(300),
+  PRICE_MAX_STALENESS_MS: z.coerce.number().int().positive().default(120_000),
+  PRICE_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(10_000),
 });
 
 export type Env = z.infer<typeof schema>;

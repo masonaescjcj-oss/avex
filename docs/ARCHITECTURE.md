@@ -135,6 +135,12 @@ Anyone can deploy a token called USDT.
 protection of a $50,000 one. Polygon PoS stays conservative at 64/128 given its
 history of deep reorgs; TRON uses 19, where blocks become irreversible.
 
+**Money is `bigint`.** Smallest units, always. Floating point appears only in fee
+heuristics, never in a balance or an amount due.
+
+**Signed webhooks.** HMAC over `timestamp.body`, with a replay window. Signing
+only the body would let an attacker replay a genuine `paid` callback forever.
+
 ## 6a. Bitcoin is excluded, and why
 
 Bitcoin has no equivalent of the Forwarder's immutable destination. Consolidating
@@ -151,12 +157,6 @@ place a reader is least likely to look.
 Given Bitcoin's small share of small-value payments, it is out of v1 entirely.
 `ChainId` does not include it, so the exclusion is enforced by the type system
 rather than by remembering.
-
-**Money is `bigint`.** Smallest units, always. Floating point appears only in fee
-heuristics, never in a balance or an amount due.
-
-**Signed webhooks.** HMAC over `timestamp.body`, with a replay window. Signing
-only the body would let an attacker replay a genuine `paid` callback forever.
 
 ## 7. Telegram Stars is a separate surface, not a chain adapter
 

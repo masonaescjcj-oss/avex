@@ -1,6 +1,7 @@
 import {
   index,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   text,
@@ -239,4 +240,78 @@ export const pendingChanges = pgTable(
     }),
   },
   (table) => [index('pending_changes_org_effective_idx').on(table.organizationId, table.effectiveAt)],
+);
+
+/**
+ * Phase 2: pricing.
+ *
+ * Convention for large integers: stored as `numeric(78, 0)`, which is exact and
+ * orderable, and converted with `BigInt(...)` at the repository boundary. Postgres
+ * `bigint` is too narrow — an 18-decimal token amount overflows 2^63 at 9.2
+ * tokens — and `text` would sort lexicographically, making "10" precede "9".
+ */
+
+export const pricingModeEnum = pgEnum('pricing_mode', ['fiat', 'token', 'fixed_rate']);
+
+/**
+ * Every observation from every source, successes and failures alike.
+ *
+ * The failures matter as much as the prices: reconstructing why a quote was
+ * refused, or why a breaker opened, is impossible from successes alone.
+ */
+export const priceTicks = pgTable(
+  'price_ticks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    symbol: text('symbol').notNull(),
+    source: text('source').notNull(),
+    /** USD per whole unit, scaled by 1e18. Null when the source failed. */
+    priceScaled: numeric('price_scaled', { precision: 78, scale: 0 }),
+    /** When the source observed it, not when we stored it. */
+    observedAt: timestamp('observed_at', { withTimezone: true }),
+    error: text('error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('price_ticks_symbol_created_idx').on(table.symbol, table.createdAt)],
+);
+
+/**
+ * A locked price. Created before an invoice and referenced by it, so the rate a
+ * payer was shown is recoverable long after the market has moved.
+ */
+export const quotes = pgTable(
+  'quotes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+
+    chain: text('chain').notNull(),
+    assetSymbol: text('asset_symbol').notNull(),
+    assetContract: text('asset_contract'),
+    assetDecimals: text('asset_decimals').notNull(),
+
+    mode: pricingModeEnum('mode').notNull(),
+    /** What the payer must send, in the asset's smallest unit. */
+    amountDue: numeric('amount_due', { precision: 78, scale: 0 }).notNull(),
+    /** Observed market rate before the spread. Null in `token` mode. */
+    marketRateScaled: numeric('market_rate_scaled', { precision: 78, scale: 0 }),
+    /** Rate actually applied. Null in `token` mode, where nothing was converted. */
+    effectiveRateScaled: numeric('effective_rate_scaled', { precision: 78, scale: 0 }),
+    spreadBps: text('spread_bps').notNull(),
+    /** Fiat value in micro-dollars. Null in `token` mode with no rate available. */
+    amountFiatMicros: numeric('amount_fiat_micros', { precision: 78, scale: 0 }),
+    /** Which sources backed the rate, for later dispute resolution. */
+    sources: jsonb('sources').$type<string[]>().notNull(),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    /** Set when an invoice is opened against this quote. */
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('quotes_org_created_idx').on(table.organizationId, table.createdAt),
+    index('quotes_expires_idx').on(table.expiresAt),
+  ],
 );

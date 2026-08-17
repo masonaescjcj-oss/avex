@@ -110,12 +110,53 @@ Phase 1 decisions that are already enforced and tested:
 - **Signup does not reveal which emails have accounts.** Duplicate and new
   signups return identical responses; the real owner is emailed instead.
 
+## Pricing
+
+Rates come from several sources at once, combined by median. A single source is
+never trusted — not because APIs go down, which is easy to notice, but because an
+API returning a *wrong number* is not, and a wrong rate silently under-prices
+every invoice until someone reconciles the books.
+
+```ts
+const prices = new PriceService(createPriceSources(env.PRICE_SOURCES), config);
+await prices.requireRate('ETH');   // throws rather than returning a guess
+```
+
+- **Median, not mean.** One source reporting a plausible but wrong price is
+  outvoted; a mean would be dragged toward it.
+- **Staleness before anything else.** Every observation carries the timestamp the
+  source produced it, and the aggregate is only as fresh as its oldest input.
+- **A circuit breaker per asset.** Sources disagreeing beyond the dispersion limit
+  suspends new quotes for that asset immediately — a data-integrity signal, not a
+  flake. Other assets are unaffected. Invoices already open keep their locked rate.
+- **No fallback.** `requireRate` throws. Callers that cannot express "no price
+  available" must not be handed an invented one.
+
+Which sources are enabled is configuration (`PRICE_SOURCES`), because
+reachability varies by deployment — swapping one out must not require a release.
+`GET /v1/prices/coverage` reports assets with too few sources to price at all.
+
+### Three pricing modes
+
+| Mode | Amount given in | FX risk |
+|---|---|---|
+| `fiat` | USD, converted at quote time | Merchant, for the life of the quote |
+| `token` | Exact token units | None — nothing is converted |
+| `fixed_rate` | USD at a rate the merchant sets | None — for merchant-issued tokens no market prices |
+
+Conversions are integer-only (`pricing/rate.ts`): rates scaled by 1e18, fiat in
+micro-dollars. Amounts owed round **up** so a merchant is never short, valuations
+round **down** so confirmation tiering never asks for too few confirmations. A
+guard rejects assets too coarse-grained to express a price at all — rounding up on
+a high-priced token with few decimals would otherwise become a real overcharge.
+`fiat` quotes take a configurable protective spread; `fixed_rate` does not, since
+the merchant already chose their price.
+
 ## What is not built yet
 
-Phases 2 onward — pricing engine, asset registry and contract vetting, the
-end-to-end payment slice on BNB Chain, hosted checkout, merchant dashboard,
-public API and SDKs, the Telegram surface, admin panel, remaining chains,
-hardening. See the roadmap.
+Phases 3 onward — asset registry and contract vetting, the end-to-end payment
+slice on BNB Chain, hosted checkout, merchant dashboard, public API and SDKs, the
+Telegram surface, admin panel, remaining chains, hardening. See the roadmap.
 
 Also outstanding in what exists: native-asset arrival detection on EVM chains
 (`poll` covers token transfers only), and a real email transport behind the

@@ -1,3 +1,4 @@
+import { PriceUnavailableError, type PriceService } from '@avex/core';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
@@ -21,6 +22,7 @@ import type { Principal } from './principal.js';
 import { RateLimiter } from './rate-limit.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
+import { registerPriceRoutes } from './routes/prices.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -35,6 +37,9 @@ export interface AppContext {
   readonly auth: AuthService;
   readonly audit: AuditService;
   readonly mailer: Mailer;
+  readonly prices: PriceService;
+  /** Aggregation minimum, so coverage gaps can be reported as such. */
+  readonly minPriceSources: number;
 }
 
 /** Routes reachable without credentials. Everything else needs a principal. */
@@ -177,6 +182,16 @@ export function buildServer(context: AppContext): FastifyInstance {
       });
     }
 
+    if (error instanceof PriceUnavailableError) {
+      // Not our fault and not the caller's: the feed cannot be trusted right now.
+      // Explicitly 503 so clients retry rather than treating it as a bad request.
+      return reply.status(503).send({
+        error: 'price_unavailable',
+        message: `Pricing for ${error.symbol} is temporarily unavailable. Try again shortly.`,
+        reason: error.reason,
+      });
+    }
+
     request.log.error({ err: error }, 'unhandled error');
     return reply
       .status(500)
@@ -187,6 +202,7 @@ export function buildServer(context: AppContext): FastifyInstance {
 
   registerAuthRoutes(app, context);
   registerOrganizationRoutes(app, context);
+  registerPriceRoutes(app, context);
 
   return app;
 }

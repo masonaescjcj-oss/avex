@@ -4,7 +4,11 @@ import { after, before, describe, test } from 'node:test';
 
 import type { FastifyInstance } from 'fastify';
 
+import { DEFAULT_AGGREGATION, DEFAULT_BREAKER, PriceService } from '@avex/core';
+import type { PriceSource, PriceSymbol } from '@avex/core';
+
 import { createDatabase } from '../db/client.js';
+import { PriceTickWriter } from '../domain/price-repository.js';
 import { AuditService } from '../domain/audit.js';
 import { AuthService } from '../domain/auth-service.js';
 import { totpCode } from '../auth/totp.js';
@@ -30,6 +34,18 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
   const ownerEmail = `owner-${unique}@example.com`;
   const password = 'a-sufficiently-long-password';
 
+  /**
+   * A price source under the test's control. The suite must not depend on a
+   * third-party API being reachable, or CI fails for reasons unrelated to the code.
+   */
+  const fakeSource = (name: string): PriceSource => ({
+    name,
+    supports: () => true,
+    async fetchUsdPrice() {
+      return { priceScaled: 10n ** 18n, observedAt: Date.now() };
+    },
+  });
+
   before(async () => {
     const env = loadEnv({
       ...process.env,
@@ -50,6 +66,11 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
       db: database.db,
       audit,
       mailer,
+      minPriceSources: DEFAULT_AGGREGATION.minSources,
+      prices: new PriceService(
+        [fakeSource('fake-a'), fakeSource('fake-b')],
+        { aggregation: DEFAULT_AGGREGATION, breaker: DEFAULT_BREAKER, cacheTtlMs: 10_000 },
+      ),
       auth: new AuthService(database.db, audit, {
         sessionTtlMs: 60 * 60 * 1000,
         emailTokenTtlMs: 60 * 60 * 1000,
@@ -428,5 +449,151 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
       headers: asOwner(),
     });
     assert.equal(after_.statusCode, 401);
+  });
+});
+
+describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
+  // A separate suite so it can authenticate independently of the sequence above,
+  // which deliberately ends by revoking its session.
+  let app: FastifyInstance;
+  let close: () => Promise<void>;
+  let token: string;
+  let db: ReturnType<typeof createDatabase>['db'];
+
+  const unique = randomBytes(6).toString('hex');
+
+  before(async () => {
+    const env = loadEnv({
+      ...process.env,
+      NODE_ENV: 'test',
+      DATABASE_URL: databaseUrl!,
+      RATE_LIMIT_PER_MINUTE: '10000',
+    });
+
+    const database = createDatabase(env.DATABASE_URL);
+    close = database.close;
+    db = database.db;
+    const audit = new AuditService(database.db);
+
+    app = buildServer({
+      env,
+      db: database.db,
+      audit,
+      mailer: new ConsoleMailer(env.APP_URL, () => {}),
+      minPriceSources: 2,
+      prices: new PriceService(
+        [
+          {
+            name: 'agrees-a',
+            supports: () => true,
+            async fetchUsdPrice() {
+              return { priceScaled: 2000n * 10n ** 18n, observedAt: Date.now() };
+            },
+          },
+          {
+            name: 'agrees-b',
+            supports: () => true,
+            async fetchUsdPrice() {
+              return { priceScaled: 2001n * 10n ** 18n, observedAt: Date.now() };
+            },
+          },
+          {
+            name: 'always-fails',
+            supports: () => true,
+            async fetchUsdPrice(): Promise<never> {
+              throw new Error('HTTP 503');
+            },
+          },
+        ],
+        { aggregation: DEFAULT_AGGREGATION, breaker: DEFAULT_BREAKER, cacheTtlMs: 0 },
+      ),
+      auth: new AuthService(database.db, audit, {
+        sessionTtlMs: 60 * 60 * 1000,
+        emailTokenTtlMs: 60 * 60 * 1000,
+      }),
+    });
+    await app.ready();
+
+    await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: {
+        email: `prices-${unique}@example.com`,
+        password: 'a-sufficiently-long-password',
+        organizationName: 'Price Reader',
+      },
+    });
+    const login = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: {
+        email: `prices-${unique}@example.com`,
+        password: 'a-sufficiently-long-password',
+      },
+    });
+    token = login.json().token;
+  });
+
+  after(async () => {
+    await app?.close();
+    await close?.();
+  });
+
+  test('prices require authentication', async () => {
+    const response = await app.inject({ method: 'GET', url: '/v1/prices?symbols=ETH' });
+    assert.equal(response.statusCode, 401);
+  });
+
+  test('a rate is returned with the sources that backed it', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/prices?symbols=ETH',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const [eth] = response.json().data;
+    assert.equal(eth.symbol, 'ETH');
+    assert.equal(eth.available, true);
+    // Median of 2000 and 2001, with the failing source excluded.
+    assert.match(eth.usd, /^2000\.5/);
+    assert.deepEqual(eth.sources.sort(), ['agrees-a', 'agrees-b']);
+    assert.ok(!eth.sources.includes('always-fails'));
+  });
+
+  test('unknown symbols are ignored rather than erroring', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/prices?symbols=ETH,NOTATOKEN',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().data.length, 1);
+  });
+
+  test('coverage reports whether each asset has enough sources', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/prices/coverage',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    const eth = body.data.find((row: { symbol: string }) => row.symbol === 'ETH');
+    assert.equal(eth.sufficient, true);
+    assert.equal(eth.sources.length, 3);
+  });
+
+  test('observations are persisted, failures included', async () => {
+    // Reuses the suite's pool: opening a second one would keep the process alive
+    // after the tests finish.
+    const writer = new PriceTickWriter(db);
+    writer.record({ symbol: 'ETH', source: 'unit-test', rate: { priceScaled: 5n, observedAt: Date.now() }, error: null });
+    writer.record({ symbol: 'ETH', source: 'unit-test', rate: null, error: 'HTTP 500' });
+
+    // Both rows must land: reconstructing why a rate was refused needs the failures.
+    assert.equal(await writer.flush(), 2);
+    assert.equal(writer.pending, 0);
   });
 });
