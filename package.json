@@ -5,7 +5,8 @@
   "description": "AVEX Pay \u2014 non-custodial crypto payment gateway with Telegram Stars",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "contracts"
   ],
   "engines": {
     "node": ">=22"

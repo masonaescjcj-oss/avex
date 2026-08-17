@@ -51,6 +51,13 @@ jobs:
             test -f "$artifact" || { echo "::error::build produced no $artifact"; exit 1; }
           done
 
+      # Compiles the contracts and executes them on an in-process EVM. Needs no
+      # testnet, no key and no funds, so the check that the off-chain deposit
+      # address matches on-chain CREATE2 runs on every commit.
+      - name: Verify contracts on an EVM
+        working-directory: contracts
+        run: npm test
+
       - name: Apply migrations
         working-directory: apps/api
         run: npx drizzle-kit migrate

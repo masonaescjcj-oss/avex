@@ -1,0 +1,21 @@
+{
+  "name": "@avex/contracts",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Forwarder contracts and their on-EVM verification",
+  "scripts": {
+    "build": "node compile.mjs",
+    "test": "node compile.mjs && node --test \"test/*.test.mjs\""
+  },
+  "devDependencies": {
+    "@ethereumjs/common": "^10.1.2",
+    "@ethereumjs/statemanager": "^10.1.2",
+    "@ethereumjs/util": "^10.1.2",
+    "@ethereumjs/vm": "^10.1.2",
+    "solc": "^0.8.36"
+  },
+  "dependencies": {
+    "@ethereumjs/tx": "^10.1.2"
+  }
+}

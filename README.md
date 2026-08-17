@@ -13,7 +13,7 @@ twelve-phase build plan.
 ```
 packages/core     chain adapters, fee policy, settlement, invoice domain
 apps/api          platform: identity, organisations, credentials, audit
-contracts         Forwarder.sol — the non-custodial guarantee
+contracts         Forwarder.sol, and its verification on a real EVM
 ```
 
 ## Supported chains
@@ -86,6 +86,38 @@ a commitment to the destination. There is no admin function, no owner and no
 upgrade path. Deployment is deferred: the address is published while no code
 exists at it, and the contract is deployed in the same transaction that forwards
 the funds.
+
+### Verified by execution, not by argument
+
+The address arithmetic was already checked against the EIP-1014 vectors. What
+those cannot check is whether the init code this repository *composes* off-chain
+is byte-for-byte what solc and the EVM actually use — and if the two disagree,
+every address handed to a payer is one no CREATE2 will ever produce, and the funds
+sent there are unreachable.
+
+So `contracts/test/forwarder.test.mjs` compiles the contracts and runs them on an
+in-process EVM, asserting that:
+
+- the off-chain derivation equals what `ForwarderFactory.predict` returns
+- CREATE2 actually places the contract at that address
+- the deployed forwarder's `destination` is the merchant, and changing the
+  merchant changes the address — the guarantee, stated as a test
+- tokens sent to a published address before any code exists there reach the
+  merchant, and nothing is left behind
+- a batch settles several invoices in one transaction
+- a fee-on-transfer token delivers less than was sent
+- native value sent before deployment is swept by the constructor
+
+```bash
+cd contracts && npm test
+```
+
+It needs no testnet, no key and no funds, so it runs in CI on every commit rather
+than once, by hand, before a deploy.
+
+Compiler version and optimizer settings are pinned and recorded in the artifact,
+because the deposit address is a hash over this bytecode: recompiling with
+different settings changes every address already handed out.
 
 ## Security posture
 
