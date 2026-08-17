@@ -42,6 +42,27 @@ const schema = z.object({
   PRICE_MAX_DISPERSION_BPS: z.coerce.number().int().positive().default(300),
   PRICE_MAX_STALENESS_MS: z.coerce.number().int().positive().default(120_000),
   PRICE_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(10_000),
+
+  /**
+   * EVM RPC endpoints, as `chain=url` pairs separated by commas.
+   *
+   * Several per chain is intended: hosted providers geofence some regions, so a
+   * single endpoint is a single point of failure for contract vetting and for
+   * every settlement that follows.
+   */
+  EVM_RPC_URLS: z
+    .string()
+    .default('bsc=https://bsc-dataseed.binance.org')
+    .transform((value) => {
+      const map: Record<string, string[]> = {};
+      for (const entry of value.split(',')) {
+        const [chain, ...rest] = entry.split('=');
+        const url = rest.join('=').trim();
+        if (!chain || !url) continue;
+        (map[chain.trim()] ??= []).push(url);
+      }
+      return map;
+    }),
 });
 
 export type Env = z.infer<typeof schema>;

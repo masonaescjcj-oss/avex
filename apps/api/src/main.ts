@@ -1,4 +1,5 @@
 import {
+  ContractProbe,
   DEFAULT_BREAKER,
   PriceService,
   createPriceSources,
@@ -6,10 +7,12 @@ import {
 
 import { createDatabase } from './db/client.js';
 import { AuditService } from './domain/audit.js';
+import { AssetService } from './domain/asset-service.js';
 import { AuthService } from './domain/auth-service.js';
 import { PriceTickWriter } from './domain/price-repository.js';
 import { loadEnv } from './env.js';
 import { buildServer } from './http/server.js';
+import { JsonRpcCaller } from './rpc/json-rpc-caller.js';
 import { ConsoleMailer } from './mailer.js';
 
 async function main(): Promise<void> {
@@ -46,12 +49,23 @@ async function main(): Promise<void> {
     (tick) => tickWriter.record(tick),
   );
 
+  const pricedSymbols = [...prices.coverage().keys()];
+  const assetService = new AssetService(
+    db,
+    audit,
+    new ContractProbe(new JsonRpcCaller(env.EVM_RPC_URLS)),
+    pricedSymbols,
+  );
+
+  const seeded = await assetService.seedCurated();
+
   const app = buildServer({
     env,
     db,
     auth,
     audit,
     prices,
+    assets: assetService,
     minPriceSources: env.PRICE_MIN_SOURCES,
     // Phase 6 replaces this with a real transport; the seam is what matters now.
     mailer: new ConsoleMailer(env.APP_URL),
@@ -69,6 +83,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
   await app.listen({ port: env.PORT, host: env.HOST });
+  app.log.info({ seeded }, 'curated asset catalogue synchronised');
 }
 
 main().catch((error: unknown) => {

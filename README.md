@@ -152,11 +152,69 @@ a high-priced token with few decimals would otherwise become a real overcharge.
 `fiat` quotes take a configurable protective spread; `fixed_rate` does not, since
 the merchant already chose their price.
 
+## The asset catalogue
+
+Merchants can submit their own token contracts. This is necessary, and also the
+most direct way an attacker reaches the system: anyone can deploy a contract that
+calls itself USDT. Nothing is credited on the strength of what a contract says
+about itself.
+
+Approval and enablement are separate decisions. AVEX decides whether a contract
+may credit invoices at all; a merchant decides whether they want to accept it.
+
+### What the probe checks
+
+| Check | Catches |
+|---|---|
+| Code at the address | Wrong address, or a plain wallet |
+| `decimals` / `balanceOf` answer | Not a token at all |
+| Decimals in range | Values that break amount arithmetic |
+| Total supply non-zero | A token nothing could ever be paid with |
+| Symbol against the curated list | A contract borrowing a major asset's name |
+| EIP-1967 slots and DELEGATECALL | Behaviour that can be replaced after approval |
+| Selector scan of bytecode | Issuer powers: pause, freeze, blacklist, mint |
+| Simulated transfer | Fee-on-transfer and rebasing |
+
+Transfer behaviour is measured by injecting `contracts/TransferProbe.sol` at an
+address that already holds the token, via an `eth_call` state override — `eth_call`
+runs without a signature, so nothing is spent and no key is needed. The
+measurement has to happen inside one call, because `eth_call` discards state
+between calls.
+
+### Two rules that carry the safety
+
+**A check that could not run reports `unknown`, never `absent`.** If the provider
+does not support state overrides, or no holder was found, the transfer checks
+establish nothing — and `unknown` on anything touching money forces manual review.
+Treating silence as safety is how an unvetted contract reaches production.
+
+**Clean checks never add up to approval.** `approved` is reachable only from the
+curated list, where each address was verified by hand against the issuer's
+documentation. A merchant submission lands in `review` at best; a human decides.
+
+Curated entries carry `issuer_controls` by design — USDT and USDC can both freeze
+balances, and refusing them would leave nothing worth accepting. That power is
+disclosed to merchants rather than treated as a fault.
+
+### The link back to pricing
+
+An asset no configured source can quote gets `requiresFixedRate`, and the API
+refuses to enable it in a market-rate mode — there would be nothing to convert
+with. A merchant-set rate must carry an expiry: a fixed rate with no expiry is one
+nobody revisits, and a stale one misprices every invoice without ever failing.
+
+A fee-on-transfer token needs its invoice tolerance raised above the observed fee,
+or every payment reads as underpaid.
+
 ## What is not built yet
 
-Phases 3 onward — asset registry and contract vetting, the end-to-end payment
-slice on BNB Chain, hosted checkout, merchant dashboard, public API and SDKs, the
-Telegram surface, admin panel, remaining chains, hardening. See the roadmap.
+Phases 4 onward — the end-to-end payment slice on BNB Chain, hosted checkout,
+merchant dashboard, public API and SDKs, the Telegram surface, admin panel,
+remaining chains, hardening. See the roadmap.
+
+The reviewer-facing side of vetting is Phase 9: the probe, verdicts and audit
+trail exist, but a reviewer currently changes a verdict in the database rather
+than through an admin UI.
 
 Also outstanding in what exists: native-asset arrival detection on EVM chains
 (`poll` covers token transfers only), and a real email transport behind the

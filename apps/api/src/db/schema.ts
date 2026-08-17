@@ -1,5 +1,8 @@
+import { sql } from 'drizzle-orm';
 import {
+  boolean,
   index,
+  integer,
   jsonb,
   numeric,
   pgEnum,
@@ -313,5 +316,106 @@ export const quotes = pgTable(
   (table) => [
     index('quotes_org_created_idx').on(table.organizationId, table.createdAt),
     index('quotes_expires_idx').on(table.expiresAt),
+  ],
+);
+
+/**
+ * Phase 3: the asset catalogue.
+ *
+ * Two layers. `assets` is the global catalogue — curated entries plus contracts
+ * merchants submitted and a reviewer accepted. `merchant_assets` is what a given
+ * merchant has actually switched on, with their pricing choice for it.
+ *
+ * The separation matters because approval and enablement are different decisions
+ * made by different people: AVEX decides a contract is safe to credit at all, and
+ * a merchant decides whether they want to accept it.
+ */
+
+export const assetVerdictEnum = pgEnum('asset_verdict', ['blocked', 'review', 'approved']);
+export const assetKindEnum = pgEnum('asset_kind', ['native', 'erc20', 'trc20', 'spl', 'jetton']);
+
+export const assets = pgTable(
+  'assets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    chain: text('chain').notNull(),
+    symbol: text('symbol').notNull(),
+    /** Null for a chain's native asset. */
+    contract: text('contract'),
+    decimals: integer('decimals').notNull(),
+    kind: assetKindEnum('kind').notNull(),
+
+    /** On the hand-verified global list; the only route to automatic approval. */
+    curated: boolean('curated').notNull().default(false),
+    verdict: assetVerdictEnum('verdict').notNull(),
+    /** No price source can quote this, so the merchant must supply a rate. */
+    requiresFixedRate: boolean('requires_fixed_rate').notNull().default(false),
+
+    /** The full probe output, kept so a decision can be re-examined later. */
+    findings: jsonb('findings').$type<unknown[]>(),
+    probedAt: timestamp('probed_at', { withTimezone: true }),
+
+    /** Null for curated entries; set when a merchant submitted the contract. */
+    submittedByOrganizationId: uuid('submitted_by_organization_id').references(
+      () => organizations.id,
+      { onDelete: 'set null' },
+    ),
+    reviewedByUserId: uuid('reviewed_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    reviewNote: text('review_note'),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('assets_chain_contract_key').on(table.chain, table.contract),
+    // Postgres treats NULLs as distinct, so the index above would permit several
+    // native assets per chain. This one closes that gap.
+    uniqueIndex('assets_chain_native_key')
+      .on(table.chain)
+      .where(sql`${table.contract} is null`),
+    index('assets_verdict_idx').on(table.verdict),
+  ],
+);
+
+export const merchantAssets = pgTable(
+  'merchant_assets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    assetId: uuid('asset_id')
+      .notNull()
+      .references(() => assets.id, { onDelete: 'cascade' }),
+
+    enabled: boolean('enabled').notNull().default(true),
+    pricingMode: pricingModeEnum('pricing_mode').notNull(),
+
+    /** Merchant-set rate, scaled by 1e18. Required when pricing mode is fixed_rate. */
+    fixedRateScaled: numeric('fixed_rate_scaled', { precision: 78, scale: 0 }),
+    /**
+     * When the merchant's rate stops being usable.
+     *
+     * A fixed rate with no expiry is a rate nobody revisits, and a stale one
+     * silently misprices every invoice — so it is required rather than optional.
+     */
+    fixedRateValidUntil: timestamp('fixed_rate_valid_until', { withTimezone: true }),
+
+    spreadBps: integer('spread_bps').notNull().default(50),
+    /**
+     * Accepted deviation from the invoiced amount. Raised above the default for a
+     * fee-on-transfer token, which delivers less than was sent and would otherwise
+     * make every payment read as underpaid.
+     */
+    toleranceBps: integer('tolerance_bps').notNull().default(50),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('merchant_assets_org_asset_key').on(table.organizationId, table.assetId),
+    index('merchant_assets_org_idx').on(table.organizationId),
   ],
 );

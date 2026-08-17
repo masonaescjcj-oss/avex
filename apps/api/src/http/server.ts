@@ -1,4 +1,8 @@
 import { PriceUnavailableError, type PriceService } from '@avex/core';
+
+import { AssetConfigError } from '../domain/asset-service.js';
+import type { AssetService } from '../domain/asset-service.js';
+import { assetErrorResponse } from './routes/assets.js';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
@@ -20,6 +24,7 @@ import {
 } from './principal.js';
 import type { Principal } from './principal.js';
 import { RateLimiter } from './rate-limit.js';
+import { registerAssetRoutes } from './routes/assets.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerPriceRoutes } from './routes/prices.js';
@@ -38,6 +43,7 @@ export interface AppContext {
   readonly audit: AuditService;
   readonly mailer: Mailer;
   readonly prices: PriceService;
+  readonly assets: AssetService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */
   readonly minPriceSources: number;
 }
@@ -182,6 +188,11 @@ export function buildServer(context: AppContext): FastifyInstance {
       });
     }
 
+    if (error instanceof AssetConfigError) {
+      const { status, body } = assetErrorResponse(error);
+      return reply.status(status).send(body);
+    }
+
     if (error instanceof PriceUnavailableError) {
       // Not our fault and not the caller's: the feed cannot be trusted right now.
       // Explicitly 503 so clients retry rather than treating it as a bad request.
@@ -203,6 +214,7 @@ export function buildServer(context: AppContext): FastifyInstance {
   registerAuthRoutes(app, context);
   registerOrganizationRoutes(app, context);
   registerPriceRoutes(app, context);
+  registerAssetRoutes(app, context);
 
   return app;
 }

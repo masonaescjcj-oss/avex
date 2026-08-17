@@ -22,3 +22,9 @@ export * from './pricing/breaker.js';
 export * from './pricing/quote.js';
 export * from './pricing/PriceService.js';
 export * from './pricing/sources/index.js';
+
+export * from './assets/abi.js';
+export * from './assets/types.js';
+export * from './assets/risk.js';
+export * from './assets/probe.js';
+export * from './assets/registry.js';

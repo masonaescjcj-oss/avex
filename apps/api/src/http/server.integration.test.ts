@@ -4,11 +4,14 @@ import { after, before, describe, test } from 'node:test';
 
 import type { FastifyInstance } from 'fastify';
 
-import { DEFAULT_AGGREGATION, DEFAULT_BREAKER, PriceService } from '@avex/core';
+import { ContractProbe, DEFAULT_AGGREGATION, DEFAULT_BREAKER, PriceService } from '@avex/core';
 import type { PriceSource, PriceSymbol } from '@avex/core';
 
-import { createDatabase } from '../db/client.js';
+import { eq } from 'drizzle-orm';
+
+import { createDatabase, schema } from '../db/client.js';
 import { PriceTickWriter } from '../domain/price-repository.js';
+import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
 import { AuthService } from '../domain/auth-service.js';
 import { totpCode } from '../auth/totp.js';
@@ -24,6 +27,21 @@ import { buildServer } from './server.js';
  *   DATABASE_URL=postgres://avex@localhost:5433/avex node --test dist/**\/*.test.js
  */
 const databaseUrl = process.env.DATABASE_URL;
+
+/** A chain caller that answers nothing, for suites that never probe a contract. */
+const offlineCaller = {
+  async getCode(): Promise<string> {
+    throw new Error('offline');
+  },
+  async call(): Promise<string> {
+    throw new Error('offline');
+  },
+  async getStorageAt(): Promise<string> {
+    throw new Error('offline');
+  },
+};
+
+
 
 describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
   let app: FastifyInstance;
@@ -67,6 +85,7 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
       audit,
       mailer,
       minPriceSources: DEFAULT_AGGREGATION.minSources,
+      assets: new AssetService(database.db, audit, new ContractProbe(offlineCaller), ['USDT']),
       prices: new PriceService(
         [fakeSource('fake-a'), fakeSource('fake-b')],
         { aggregation: DEFAULT_AGGREGATION, breaker: DEFAULT_BREAKER, cacheTtlMs: 10_000 },
@@ -481,6 +500,7 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
       audit,
       mailer: new ConsoleMailer(env.APP_URL, () => {}),
       minPriceSources: 2,
+      assets: new AssetService(database.db, audit, new ContractProbe(offlineCaller), ['USDT']),
       prices: new PriceService(
         [
           {
@@ -595,5 +615,325 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
     // Both rows must land: reconstructing why a rate was refused needs the failures.
     assert.equal(await writer.flush(), 2);
     assert.equal(writer.pending, 0);
+  });
+});
+
+describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
+  let app: FastifyInstance;
+  let close: () => Promise<void>;
+  let token: string;
+  let orgId: string;
+  let db: ReturnType<typeof createDatabase>['db'];
+  let assetService: AssetService;
+
+  const unique = randomBytes(6).toString('hex');
+  const email = `assets-${unique}@example.com`;
+  const password = 'a-sufficiently-long-password';
+  /**
+   * Unique per run. A hardcoded address would already be in the catalogue on a
+   * second run, so the suite would pass once and then fail against its own
+   * leftovers — which costs more time to diagnose than it saves to write.
+   */
+  const submittedContract = `0x${unique}${'ab'.repeat(14)}`;
+
+  /** A token contract whose responses this suite dictates. */
+  const fakeToken = (symbol: string, decimals: number) => ({
+    async getCode(): Promise<string> {
+      return '0x60806040523480156100';
+    },
+    async call(_to: string, data: string): Promise<string> {
+      const sel = data.slice(0, 10);
+      const word = (value: bigint) => `0x${value.toString(16).padStart(64, '0')}`;
+      if (sel === '0x95d89b41' || sel === '0x06fdde03') {
+        const bytes = Buffer.from(symbol, 'utf8');
+        return (
+          `0x${(32n).toString(16).padStart(64, '0')}` +
+          bytes.length.toString(16).padStart(64, '0') +
+          bytes.toString('hex').padEnd(64, '0')
+        );
+      }
+      if (sel === '0x313ce567') return word(BigInt(decimals));
+      if (sel === '0x18160ddd') return word(10n ** 24n);
+      if (sel === '0x70a08231') return word(10n ** 20n);
+      throw new Error('unexpected call');
+    },
+    async getStorageAt(): Promise<string> {
+      return `0x${'00'.repeat(32)}`;
+    },
+  });
+
+  before(async () => {
+    const env = loadEnv({
+      ...process.env,
+      NODE_ENV: 'test',
+      DATABASE_URL: databaseUrl!,
+      RATE_LIMIT_PER_MINUTE: '10000',
+    });
+
+    const database = createDatabase(env.DATABASE_URL);
+    close = database.close;
+    db = database.db;
+    const audit = new AuditService(database.db);
+
+    assetService = new AssetService(
+      database.db,
+      audit,
+      new ContractProbe(fakeToken('MERCH', 18)),
+      ['USDT', 'USDC', 'ETH', 'BNB', 'POL', 'TRX', 'SOL', 'TON'],
+    );
+
+    app = buildServer({
+      env,
+      db: database.db,
+      audit,
+      mailer: new ConsoleMailer(env.APP_URL, () => {}),
+      minPriceSources: 2,
+      prices: new PriceService(
+        [
+          { name: 'a', supports: () => true, async fetchUsdPrice() { return { priceScaled: 10n ** 18n, observedAt: Date.now() }; } },
+          { name: 'b', supports: () => true, async fetchUsdPrice() { return { priceScaled: 10n ** 18n, observedAt: Date.now() }; } },
+        ],
+        { aggregation: DEFAULT_AGGREGATION, breaker: DEFAULT_BREAKER, cacheTtlMs: 10_000 },
+      ),
+      // MERCH is deliberately absent from the priced symbols.
+      assets: assetService,
+      auth: new AuthService(database.db, audit, {
+        sessionTtlMs: 60 * 60 * 1000,
+        emailTokenTtlMs: 60 * 60 * 1000,
+      }),
+    });
+    await app.ready();
+
+    const signup = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: { email, password, organizationName: 'Asset Merchant' },
+    });
+    orgId = signup.json().organizationId;
+
+    const login = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { email, password },
+    });
+    token = login.json().token;
+  });
+
+  after(async () => {
+    await app?.close();
+    await close?.();
+  });
+
+  const auth = () => ({ authorization: `Bearer ${token}` });
+
+  test('the curated catalogue is visible and marked as such', async () => {
+    // Idempotent, so running it here is safe regardless of suite order.
+    await assetService.seedCurated();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/assets`,
+      headers: auth(),
+    });
+
+    assert.equal(response.statusCode, 200);
+    const curated = response.json().data.filter((row: { curated: boolean }) => row.curated);
+    assert.ok(curated.length > 0, 'curated assets should be seeded');
+
+    // Every curated entry arrives approved; nothing else does.
+    assert.ok(curated.every((row: { verdict: string }) => row.verdict === 'approved'));
+
+    // The decimals gotcha, surfaced through the API.
+    const bscUsdt = curated.find(
+      (row: { chain: string; symbol: string }) => row.chain === 'bsc' && row.symbol === 'USDT',
+    );
+    assert.equal(bscUsdt.decimals, 18);
+  });
+
+  let submittedAssetId: string;
+
+  test('a submitted contract is accepted for review, not approved', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/assets`,
+      headers: auth(),
+      payload: { chain: 'bsc', contract: submittedContract },
+    });
+
+    // 202, not 201: probed, but nothing is usable until a human accepts it.
+    assert.equal(response.statusCode, 202);
+    const body = response.json();
+    assert.equal(body.verdict, 'review');
+    assert.equal(body.symbol, 'MERCH');
+    // No source can quote MERCH, so a market rate is impossible.
+    assert.equal(body.requiresFixedRate, true);
+    assert.ok(body.findings.length > 0, 'findings must be disclosed to the merchant');
+
+    submittedAssetId = body.assetId;
+  });
+
+  test('transfer behaviour is reported unknown when it could not be checked', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/assets`,
+      headers: auth(),
+    });
+
+    const submitted = response
+      .json()
+      .data.find((row: { id: string }) => row.id === submittedAssetId);
+    const fee = submitted.findings.find(
+      (finding: { kind: string }) => finding.kind === 'fee_on_transfer',
+    );
+
+    // The rule that matters most: a check that did not run must not read as clean.
+    assert.equal(fee.status, 'unknown');
+  });
+
+  test('submitting the same contract twice is refused', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/assets`,
+      headers: auth(),
+      payload: { chain: 'bsc', contract: submittedContract },
+    });
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().error, 'asset_exists');
+  });
+
+  test('an asset under review cannot be enabled', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/organizations/${orgId}/assets/${submittedAssetId}`,
+      headers: auth(),
+      payload: { enabled: true, pricingMode: 'fixed_rate', fixedRate: '0.25' },
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, 'not_approved');
+    assert.match(response.json().message, /under review/);
+  });
+
+  test('an unpriceable asset cannot use a market-rate mode', async () => {
+    // The Phase 2 link enforced: no source can quote MERCH, so `fiat` mode would
+    // have nothing to convert with.
+    // Stand in for the reviewer accepting it, so the pricing rule can be reached.
+    await db
+      .update(schema.assets)
+      .set({ verdict: 'approved' })
+      .where(eq(schema.assets.id, submittedAssetId));
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/organizations/${orgId}/assets/${submittedAssetId}`,
+      headers: auth(),
+      payload: { enabled: true, pricingMode: 'fiat' },
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, 'fixed_rate_required');
+  });
+
+  test('a fixed rate must carry an expiry', async () => {
+    // A rate with no expiry is one nobody revisits, and a stale one misprices every
+    // invoice without ever failing.
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/organizations/${orgId}/assets/${submittedAssetId}`,
+      headers: auth(),
+      payload: { enabled: true, pricingMode: 'fixed_rate', fixedRate: '0.25' },
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, 'expiry_required');
+  });
+
+  test('an expiry in the past is refused', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/organizations/${orgId}/assets/${submittedAssetId}`,
+      headers: auth(),
+      payload: {
+        enabled: true,
+        pricingMode: 'fixed_rate',
+        fixedRate: '0.25',
+        fixedRateValidUntil: new Date(Date.now() - 1000).toISOString(),
+      },
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, 'expiry_in_past');
+  });
+
+  test('a well-formed fixed rate is accepted and reflected in the listing', async () => {
+    const validUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/organizations/${orgId}/assets/${submittedAssetId}`,
+      headers: auth(),
+      payload: {
+        enabled: true,
+        pricingMode: 'fixed_rate',
+        fixedRate: '0.25',
+        fixedRateValidUntil: validUntil.toISOString(),
+        toleranceBps: 200,
+      },
+    });
+    assert.equal(response.statusCode, 204);
+
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/assets`,
+      headers: auth(),
+    });
+    const row = listed.json().data.find((entry: { id: string }) => entry.id === submittedAssetId);
+
+    assert.equal(row.enabled, true);
+    assert.equal(row.pricingMode, 'fixed_rate');
+    assert.equal(row.toleranceBps, 200);
+    assert.ok(row.fixedRateValidUntil);
+  });
+
+  test('a malformed rate is rejected before it can become a wrong amount', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/organizations/${orgId}/assets/${submittedAssetId}`,
+      headers: auth(),
+      payload: {
+        enabled: true,
+        pricingMode: 'fixed_rate',
+        fixedRate: 'not-a-number',
+        fixedRateValidUntil: new Date(Date.now() + 86_400_000).toISOString(),
+      },
+    });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, 'invalid_request');
+  });
+
+  test('another merchant cannot see this one submission', async () => {
+    const otherEmail = `other-assets-${unique}@example.com`;
+    const signup = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: { email: otherEmail, password, organizationName: 'Other' },
+    });
+    const otherOrgId = signup.json().organizationId;
+    const login = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { email: otherEmail, password },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${otherOrgId}/assets`,
+      headers: { authorization: `Bearer ${login.json().token}` },
+    });
+
+    const ids = response.json().data.map((row: { id: string }) => row.id);
+    // Curated assets are shared; another merchant's submission is not.
+    assert.ok(!ids.includes(submittedAssetId));
+    assert.ok(response.json().data.some((row: { curated: boolean }) => row.curated));
   });
 });
