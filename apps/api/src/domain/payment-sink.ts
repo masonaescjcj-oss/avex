@@ -203,8 +203,13 @@ export class DatabasePaymentSink implements PaymentSink {
    * Summing rather than incrementing is what makes a reversal correct: after a
    * reorg the total has to be able to go down, and a counter that only rises
    * cannot.
+   *
+   * Public because reconciliation needs it too: an operator attaching an unmatched
+   * transfer to an invoice must arrive at the same status the watcher would have.
+   * Two implementations of the underpaid/overpaid boundary would be two places to
+   * get the tolerance wrong.
    */
-  private async recompute(invoiceId: string): Promise<string> {
+  async recompute(invoiceId: string): Promise<string> {
     const [invoice] = await this.db
       .select()
       .from(invoices)

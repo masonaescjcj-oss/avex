@@ -440,6 +440,16 @@ export const assets = pgTable(
     reviewedByUserId: uuid('reviewed_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
+    /**
+     * Who reviewed it, now that reviewing happens in the admin panel.
+     *
+     * `reviewedByUserId` is kept rather than migrated: it holds real history from
+     * before staff existed as a separate identity, and rewriting it would replace a
+     * true record with a guess about which staff account corresponds to which user.
+     */
+    reviewedByStaffId: uuid('reviewed_by_staff_id').references(() => staff.id, {
+      onDelete: 'set null',
+    }),
     reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
     reviewNote: text('review_note'),
 
@@ -634,6 +644,139 @@ export const payments = pgTable(
     index('payments_invoice_idx').on(table.invoiceId),
     // Rewinding a reorg needs every payment above a block height.
     index('payments_chain_block_idx').on(table.chain, table.blockNumber),
+  ],
+);
+
+/**
+ * Transfers that arrived but belong to no invoice.
+ *
+ * `payments.invoice_id` is `not null`, so a transfer with no home cannot be
+ * recorded there — and dropping it means a payer is out of pocket with nothing in
+ * the system to show it. This table is where those land, and reconciling them is a
+ * Tier 1 admin feature because every row is a person waiting for an answer.
+ *
+ * The identity key is the same `(chain, tx_hash, transfer_index)` triple the
+ * payments table uses, which buys two things at once. Re-scanning a block range
+ * cannot duplicate a row here, and because `payments` carries the same unique key,
+ * an operator cannot attach one transfer to two different invoices — the second
+ * insert fails on the constraint rather than on a reviewer noticing.
+ */
+export const unmatchedReasonEnum = pgEnum('unmatched_reason', [
+  /** Nothing in `invoices` claims this deposit address. */
+  'no_matching_address',
+  /** A shared-address chain and the payer omitted the memo. */
+  'memo_missing',
+  /** The address is known but the token sent is not the one invoiced. */
+  'wrong_asset',
+  /** Matched an invoice that had already expired. */
+  'invoice_expired',
+  /** Below the amount at which settling is economic. */
+  'below_minimum',
+]);
+
+export const unmatchedResolutionEnum = pgEnum('unmatched_resolution', [
+  'pending',
+  /** Credited to an invoice by an operator. */
+  'attached',
+  /** Marked for sending back to the payer. */
+  'returned',
+  /** Deliberately left alone, with a reason recorded. */
+  'ignored',
+]);
+
+export const unmatchedPayments = pgTable(
+  'unmatched_payments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+
+    chain: text('chain').notNull(),
+    txHash: text('tx_hash').notNull(),
+    transferIndex: integer('transfer_index').notNull(),
+
+    amount: numeric('amount', { precision: 78, scale: 0 }).notNull(),
+    /** Null when the token itself is not in the catalogue. */
+    assetId: uuid('asset_id').references(() => assets.id, { onDelete: 'set null' }),
+    /** Recorded even when unknown, because it is the only clue to the token. */
+    contract: text('contract'),
+
+    toAddress: text('to_address').notNull(),
+    /** The payer, and the only address a return could sensibly go to. */
+    fromAddress: text('from_address'),
+    memo: text('memo'),
+    blockNumber: integer('block_number').notNull(),
+
+    reason: unmatchedReasonEnum('reason').notNull(),
+    resolution: unmatchedResolutionEnum('resolution').notNull().default('pending'),
+
+    /** Set when an operator attached this to an invoice. */
+    attachedInvoiceId: uuid('attached_invoice_id').references(() => invoices.id, {
+      onDelete: 'set null',
+    }),
+    resolvedByStaffId: uuid('resolved_by_staff_id').references(() => staff.id, {
+      onDelete: 'set null',
+    }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    note: text('note'),
+
+    seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('unmatched_identity_key').on(table.chain, table.txHash, table.transferIndex),
+    // The queue view is "everything still unresolved, oldest first".
+    index('unmatched_resolution_idx').on(table.resolution, table.seenAt),
+    // Reconciliation starts from an address a merchant asks about.
+    index('unmatched_to_address_idx').on(table.chain, table.toAddress),
+  ],
+);
+
+/**
+ * Every settlement transaction we have broadcast.
+ *
+ * Until now the runner held its in-flight transactions in memory only, which has a
+ * consequence beyond the admin panel being unable to show them: after a restart
+ * nothing knows a transaction is outstanding at a given nonce, so a stuck
+ * transaction can neither be found nor replaced. Persisting it is what makes the
+ * pipeline recoverable, and the monitor is a by-product.
+ */
+export const settlementStatusEnum = pgEnum('settlement_status', [
+  'pending',
+  'confirmed',
+  /** Mined and failed. Never retried — see SettlementRunner. */
+  'reverted',
+  /** Superseded by another transaction at the same nonce. */
+  'replaced',
+]);
+
+export const settlements = pgTable(
+  'settlements',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    chain: text('chain').notNull(),
+    txHash: text('tx_hash').notNull(),
+    /** The nonce this occupies. Two pending rows sharing one is a bug worth seeing. */
+    nonce: integer('nonce').notNull(),
+
+    /** Which invoices this batch flushes. */
+    invoiceIds: jsonb('invoice_ids').$type<string[]>().notNull(),
+
+    feePerGasWei: numeric('fee_per_gas_wei', { precision: 78, scale: 0 }).notNull(),
+    gasLimit: numeric('gas_limit', { precision: 78, scale: 0 }).notNull(),
+    gasUsed: numeric('gas_used', { precision: 78, scale: 0 }),
+    /** Estimated at broadcast, in micro-dollars; the actual cost on confirmation. */
+    estimatedCostUsdMicros: numeric('estimated_cost_usd_micros', { precision: 78, scale: 0 }),
+    actualCostUsdMicros: numeric('actual_cost_usd_micros', { precision: 78, scale: 0 }),
+
+    status: settlementStatusEnum('status').notNull().default('pending'),
+    replacedByTxHash: text('replaced_by_tx_hash'),
+
+    broadcastAt: timestamp('broadcast_at', { withTimezone: true }).notNull().defaultNow(),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('settlements_chain_tx_key').on(table.chain, table.txHash),
+    index('settlements_chain_status_idx').on(table.chain, table.status),
+    // Finding what occupies a nonce is the first question when the pipeline stalls.
+    index('settlements_chain_nonce_idx').on(table.chain, table.nonce),
   ],
 );
 

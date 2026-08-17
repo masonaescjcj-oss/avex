@@ -28,6 +28,9 @@ import type { Principal } from './principal.js';
 import { RateLimiter } from './rate-limit.js';
 import { AdminError } from '../domain/admin-service.js';
 import type { AdminService } from '../domain/admin-service.js';
+import { ReconciliationError } from '../domain/reconciliation-service.js';
+import type { ReconciliationService } from '../domain/reconciliation-service.js';
+import type { SettlementStore } from '../domain/settlement-store.js';
 import { StaffAuthError } from '../domain/staff-auth.js';
 import type { StaffAuthService, StaffPrincipal } from '../domain/staff-auth.js';
 import {
@@ -39,7 +42,12 @@ import {
   StaffUnauthenticatedError,
   resolveStaffPrincipal,
 } from './staff-principal.js';
-import { adminErrorResponse, registerAdminRoutes, staffAuthErrorResponse } from './routes/admin.js';
+import {
+  adminErrorResponse,
+  reconciliationErrorResponse,
+  registerAdminRoutes,
+  staffAuthErrorResponse,
+} from './routes/admin.js';
 import { registerAssetRoutes } from './routes/assets.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
@@ -72,6 +80,8 @@ export interface AppContext {
   readonly payouts: PayoutAddressService;
   readonly staffAuth: StaffAuthService;
   readonly admin: AdminService;
+  readonly settlements: SettlementStore;
+  readonly reconciliation: ReconciliationService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */
   readonly minPriceSources: number;
 }
@@ -225,6 +235,11 @@ export function buildServer(context: AppContext): FastifyInstance {
 
     if (error instanceof AdminError) {
       const { status, body } = adminErrorResponse(error);
+      return reply.status(status).send(body);
+    }
+
+    if (error instanceof ReconciliationError) {
+      const { status, body } = reconciliationErrorResponse(error);
       return reply.status(status).send(body);
     }
 

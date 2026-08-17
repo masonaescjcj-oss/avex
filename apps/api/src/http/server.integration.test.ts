@@ -27,6 +27,8 @@ import { DatabaseWatchStore } from '../domain/watch-store.js';
 import { WebhookService } from '../domain/webhook-service.js';
 import { AdminService } from '../domain/admin-service.js';
 import { AuthService } from '../domain/auth-service.js';
+import { ReconciliationService } from '../domain/reconciliation-service.js';
+import { SettlementStore } from '../domain/settlement-store.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
 import { totpCode } from '../auth/totp.js';
 import { hashToken } from '../auth/tokens.js';
@@ -42,6 +44,25 @@ import { buildServer } from './server.js';
  *   DATABASE_URL=postgres://avex@localhost:5433/avex node --test dist/**\/*.test.js
  */
 const databaseUrl = process.env.DATABASE_URL;
+
+/**
+ * The admin-panel services, for harnesses that do not exercise them.
+ *
+ * The recomputer is a stub: reconciliation has its own suite, in
+ * admin.integration.test.ts, where it runs against a real payment sink so that
+ * attaching a transfer produces a genuine invoice status. Wiring a full sink into
+ * every harness here would drag a webhook dispatcher along with it for no coverage.
+ */
+function adminServices(db: ReturnType<typeof createDatabase>['db'], audit: AuditService) {
+  const settlements = new SettlementStore(db);
+  const reconciliation = new ReconciliationService(db, audit, {
+    async recompute() {
+      throw new Error('reconciliation is exercised in admin.integration.test.ts');
+    },
+  });
+  return { settlements, reconciliation, admin: new AdminService(db, audit, settlements, reconciliation) };
+}
+
 
 /** A chain caller that answers nothing, for suites that never probe a contract. */
 const offlineCaller = {
@@ -111,7 +132,7 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
         emailTokenTtlMs: 60 * 60 * 1000,
       }),
       staffAuth: new StaffAuthService(database.db, audit),
-      admin: new AdminService(database.db, audit),
+      ...adminServices(database.db, audit),
     });
     await app.ready();
   });
@@ -552,7 +573,7 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
         emailTokenTtlMs: 60 * 60 * 1000,
       }),
       staffAuth: new StaffAuthService(database.db, audit),
-      admin: new AdminService(database.db, audit),
+      ...adminServices(database.db, audit),
     });
     await app.ready();
 
@@ -726,7 +747,7 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
         emailTokenTtlMs: 60 * 60 * 1000,
       }),
       staffAuth: new StaffAuthService(database.db, audit),
-      admin: new AdminService(database.db, audit),
+      ...adminServices(database.db, audit),
     });
     await app.ready();
 
@@ -1019,7 +1040,7 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
         emailTokenTtlMs: 60 * 60 * 1000,
       }),
       staffAuth: new StaffAuthService(database.db, audit),
-      admin: new AdminService(database.db, audit),
+      ...adminServices(database.db, audit),
     });
     await app.ready();
 

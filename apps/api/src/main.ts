@@ -15,6 +15,8 @@ import { AssetService } from './domain/asset-service.js';
 import { AuthService } from './domain/auth-service.js';
 import { StaffAuthService } from './domain/staff-auth.js';
 import { DatabasePaymentSink } from './domain/payment-sink.js';
+import { ReconciliationService } from './domain/reconciliation-service.js';
+import { SettlementStore } from './domain/settlement-store.js';
 import { PayoutAddressService } from './domain/payout-service.js';
 import { DatabaseWatchStore } from './domain/watch-store.js';
 import { WebhookService } from './domain/webhook-service.js';
@@ -111,7 +113,9 @@ async function main(): Promise<void> {
   payoutWorker.unref();
 
   const staffAuth = new StaffAuthService(db, audit);
-  const admin = new AdminService(db, audit);
+  const settlementStore = new SettlementStore(db);
+  const reconciliation = new ReconciliationService(db, audit, paymentSink);
+  const admin = new AdminService(db, audit, settlementStore, reconciliation);
 
   const app = buildServer({
     env,
@@ -123,6 +127,8 @@ async function main(): Promise<void> {
     payouts,
     staffAuth,
     admin,
+    settlements: settlementStore,
+    reconciliation,
     minPriceSources: env.PRICE_MIN_SOURCES,
     // A real transport still to come; the seam is what matters now.
     mailer,

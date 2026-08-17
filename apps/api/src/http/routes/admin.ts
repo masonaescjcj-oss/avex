@@ -1,7 +1,11 @@
+import { DEFAULT_RUNNER, SUPPORTED_CHAINS } from '@avex/core';
+import type { ChainId } from '@avex/core';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { AdminError } from '../../domain/admin-service.js';
+import { ReconciliationError } from '../../domain/reconciliation-service.js';
+import type { SettlementRow } from '../../domain/settlement-store.js';
 import { StaffAuthError } from '../../domain/staff-auth.js';
 import { STAFF_ROLES } from '../../domain/staff-rbac.js';
 import { staffPermissionsFor } from '../../domain/staff-rbac.js';
@@ -280,6 +284,205 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
     );
   });
 
+  // ── feature 02: contract review queue ─────────────────────────────────────
+
+  app.get('/admin/contracts/review', async (request, reply) => {
+    const query = z
+      .object({ limit: z.coerce.number().int().min(1).max(200).optional() })
+      .parse(request.query);
+    await requireStaffPermission(context.audit, request.staff, 'contract:read');
+
+    return reply.send({ items: await context.admin.reviewQueue(query.limit) });
+  });
+
+  app.post('/admin/contracts/:assetId/decision', async (request, reply) => {
+    const params = z.object({ assetId: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        decision: z.enum(['approved', 'blocked']),
+        /**
+         * A substantial note is required.
+         *
+         * This decision lets a token be credited as money across the platform, and
+         * the only durable record of why is this sentence. "ok" six months from now
+         * is indistinguishable from nobody having looked.
+         */
+        note: z.string().trim().min(15).max(1000),
+      })
+      .parse(request.body);
+
+    const staff = await requireStaffPermission(context.audit, request.staff, 'contract:decide', {
+      targetType: 'asset',
+      targetId: params.assetId,
+      context: requestContext(request),
+    });
+
+    await context.admin.decideContract(
+      staff,
+      params.assetId,
+      body.decision,
+      body.note,
+      requestContext(request),
+    );
+    return reply.send({
+      status: body.decision,
+      message:
+        body.decision === 'approved'
+          ? 'Approved. Merchants may now enable it.'
+          : 'Blocked. It cannot be enabled by any merchant.',
+    });
+  });
+
+  // ── feature 03: settlement monitor ────────────────────────────────────────
+
+  app.get('/admin/settlements', async (request, reply) => {
+    const query = z
+      .object({
+        chain: z.enum(SUPPORTED_CHAINS as unknown as [string, ...string[]]).optional(),
+        limit: z.coerce.number().int().min(1).max(200).optional(),
+      })
+      .parse(request.query);
+    await requireStaffPermission(context.audit, request.staff, 'settlement:read');
+
+    const chains = query.chain ? [query.chain as ChainId] : SUPPORTED_CHAINS;
+    const perChain = await Promise.all(
+      chains.map(async (chain) => {
+        const summary = await context.settlements.summary(chain, {
+          stuckAfterMs: DEFAULT_RUNNER.stuckAfterMs,
+          spendWindowMs: DEFAULT_RUNNER.spendWindowMs,
+        });
+        return {
+          chain: summary.chain,
+          pending: summary.pending,
+          confirmed: summary.confirmed,
+          reverted: summary.reverted,
+          replaced: summary.replaced,
+          blockingNonce: summary.blockingNonce,
+          // Strings, because these are exact integers wider than a double.
+          spentUsdMicros: summary.spentUsdMicros.toString(),
+          spendCapUsdMicros: String(DEFAULT_RUNNER.spendCapUsd * 1_000_000),
+          stuck: summary.stuck.map(serializeSettlement),
+        };
+      }),
+    );
+
+    return reply.send({
+      chains: perChain,
+      recent: (await context.settlements.recent(query.limit ?? 50)).map(serializeSettlement),
+    });
+  });
+
+  // ── feature 04: unmatched payment reconciliation ──────────────────────────
+
+  app.get('/admin/unmatched', async (request, reply) => {
+    const query = z
+      .object({
+        resolution: z.enum(['pending', 'attached', 'returned', 'ignored', 'all']).optional(),
+        chain: z.enum(SUPPORTED_CHAINS as unknown as [string, ...string[]]).optional(),
+        limit: z.coerce.number().int().min(1).max(200).optional(),
+      })
+      .parse(request.query);
+    await requireStaffPermission(context.audit, request.staff, 'payment:read');
+
+    return reply.send(
+      await context.reconciliation.list({
+        resolution: query.resolution ?? 'pending',
+        chain: query.chain as ChainId | undefined,
+        limit: query.limit,
+      }),
+    );
+  });
+
+  app.get('/admin/unmatched/:id', async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    // Named target, so this read is recorded: it exposes a payer's address and
+    // amount, which is somebody's financial data even though it is nobody's invoice.
+    await requireStaffPermission(context.audit, request.staff, 'payment:read', {
+      targetType: 'unmatched_payment',
+      targetId: params.id,
+      context: requestContext(request),
+    });
+
+    return reply.send(await context.reconciliation.get(params.id));
+  });
+
+  app.post('/admin/unmatched/:id/attach', async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        invoiceId: z.string().uuid(),
+        note: z.string().trim().min(10).max(1000),
+      })
+      .parse(request.body);
+
+    const staff = await requireStaffPermission(context.audit, request.staff, 'payment:reassign', {
+      targetType: 'unmatched_payment',
+      targetId: params.id,
+      context: requestContext(request),
+    });
+
+    const result = await context.reconciliation.attach(
+      staff,
+      params.id,
+      body.invoiceId,
+      body.note,
+      requestContext(request),
+    );
+    return reply.send({
+      status: 'attached',
+      invoiceStatus: result.invoiceStatus,
+      message: `Credited. The invoice is now ${result.invoiceStatus}.`,
+    });
+  });
+
+  app.post('/admin/unmatched/:id/resolve', async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        resolution: z.enum(['returned', 'ignored']),
+        note: z.string().trim().min(10).max(1000),
+      })
+      .parse(request.body);
+
+    const staff = await requireStaffPermission(context.audit, request.staff, 'payment:reassign', {
+      targetType: 'unmatched_payment',
+      targetId: params.id,
+      context: requestContext(request),
+    });
+
+    await context.reconciliation.resolveWithout(
+      staff,
+      params.id,
+      body.resolution,
+      body.note,
+      requestContext(request),
+    );
+    return reply.send({
+      status: body.resolution,
+      // Deliberately explicit that nothing was sent. An operator who believes the
+      // money went back will stop chasing it.
+      message:
+        body.resolution === 'returned'
+          ? 'Marked for return. No transfer has been made — the return is a separate, confirmed action.'
+          : 'Left as-is, with your note on the record.',
+    });
+  });
+
+  // ── feature 05: system health ─────────────────────────────────────────────
+
+  app.get('/admin/health', async (request, reply) => {
+    await requireStaffPermission(context.audit, request.staff, 'health:read');
+
+    return reply.send(
+      await context.admin.systemHealth({
+        chains: SUPPORTED_CHAINS,
+        openOracleAssets: context.prices.suspendedSymbols(),
+        stuckAfterMs: DEFAULT_RUNNER.stuckAfterMs,
+        spendWindowMs: DEFAULT_RUNNER.spendWindowMs,
+      }),
+    );
+  });
+
   // ── staff administration ──────────────────────────────────────────────────
 
   app.post('/admin/staff', async (request, reply) => {
@@ -341,6 +544,7 @@ export function adminErrorResponse(error: AdminError): {
       return { status: 404, body: { error: 'not_found', message: error.message } };
     case 'already_suspended':
     case 'not_suspended':
+    case 'not_in_review':
       return { status: 409, body: { error: error.code, message: error.message } };
   }
 }
@@ -363,4 +567,47 @@ export function staffAuthErrorResponse(error: StaffAuthError): {
     case 'invalid_challenge':
       return { status: 401, body: { error: 'invalid_challenge', message: error.message } };
   }
+}
+
+export function reconciliationErrorResponse(error: ReconciliationError): {
+  status: number;
+  body: Record<string, unknown>;
+} {
+  switch (error.code) {
+    case 'not_found':
+    case 'invoice_not_found':
+      return { status: 404, body: { error: error.code, message: error.message } };
+    case 'already_resolved':
+    case 'already_credited':
+      return { status: 409, body: { error: error.code, message: error.message } };
+    case 'chain_mismatch':
+      return { status: 400, body: { error: error.code, message: error.message } };
+  }
+}
+
+/**
+ * A settlement as JSON.
+ *
+ * Written by hand rather than serialised automatically because every numeric field
+ * here is a `bigint`, which `JSON.stringify` refuses outright. Converting to
+ * `number` would be worse than the crash: gas figures in wei exceed what a double
+ * represents exactly, so the panel would show a plausible wrong number.
+ */
+function serializeSettlement(row: SettlementRow): Record<string, unknown> {
+  return {
+    id: row.id,
+    chain: row.chain,
+    txHash: row.txHash,
+    nonce: row.nonce,
+    invoiceIds: row.invoiceIds,
+    status: row.status,
+    feePerGasWei: row.feePerGasWei.toString(),
+    gasLimit: row.gasLimit.toString(),
+    gasUsed: row.gasUsed?.toString() ?? null,
+    estimatedCostUsdMicros: row.estimatedCostUsdMicros?.toString() ?? null,
+    actualCostUsdMicros: row.actualCostUsdMicros?.toString() ?? null,
+    replacedByTxHash: row.replacedByTxHash,
+    broadcastAt: row.broadcastAt.toISOString(),
+    confirmedAt: row.confirmedAt?.toISOString() ?? null,
+  };
 }

@@ -43,6 +43,13 @@
       "when": 1786987525696,
       "tag": "0005_mighty_colossus",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786989437972,
+      "tag": "0006_steady_squadron_sinister",
+      "breakpoints": true
     }
   ]
 }

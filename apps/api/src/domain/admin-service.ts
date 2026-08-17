@@ -1,18 +1,29 @@
 import { and, asc, count, desc, eq, gte, ilike, isNull, lt, lte, or, sql } from 'drizzle-orm';
 
+import type { ChainId } from '@avex/core';
+
 import type { Database } from '../db/client.js';
 import {
   apiKeys,
+  assets,
   auditLog,
   invoices,
   memberships,
+  merchantAssets,
   organizations,
   payoutAddresses,
   payments,
+  settlements,
   staff,
+  unmatchedPayments,
   users,
+  watchCursors,
+  webhookDeliveries,
+  webhookEndpoints,
 } from '../db/schema.js';
 import type { AuditService } from './audit.js';
+import type { ReconciliationService } from './reconciliation-service.js';
+import type { SettlementStore } from './settlement-store.js';
 import type { StaffRole } from './staff-rbac.js';
 
 /**
@@ -32,7 +43,7 @@ import type { StaffRole } from './staff-rbac.js';
 
 export class AdminError extends Error {
   constructor(
-    readonly code: 'not_found' | 'already_suspended' | 'not_suspended',
+    readonly code: 'not_found' | 'already_suspended' | 'not_suspended' | 'not_in_review',
     message: string,
   ) {
     super(message);
@@ -105,6 +116,8 @@ export class AdminService {
   constructor(
     private readonly db: Database,
     private readonly audit: AuditService,
+    private readonly settlements: SettlementStore,
+    private readonly reconciliation: ReconciliationService,
   ) {}
 
   /**
@@ -457,6 +470,276 @@ export class AdminService {
       nextCursor: rows.length > limit && last ? encodeCursor(last.createdAt, last.id) : null,
     };
   }
+
+  // ── feature 02: contract review queue ─────────────────────────────────────
+
+  /** Submissions sitting at `review`, oldest first — a queue, not a report. */
+  async reviewQueue(limit = 50): Promise<readonly ReviewQueueItem[]> {
+    const rows = await this.db
+      .select({
+        assetId: assets.id,
+        chain: assets.chain,
+        symbol: assets.symbol,
+        contract: assets.contract,
+        decimals: assets.decimals,
+        kind: assets.kind,
+        requiresFixedRate: assets.requiresFixedRate,
+        findings: assets.findings,
+        probedAt: assets.probedAt,
+        submittedByOrganizationId: assets.submittedByOrganizationId,
+        submittedByOrganizationName: organizations.name,
+        createdAt: assets.createdAt,
+        waitingMerchants: sql<number>`(
+          select count(*)::int from ${merchantAssets} ma
+          where ma.asset_id = ${assets}."id"
+        )`,
+      })
+      .from(assets)
+      .leftJoin(organizations, eq(organizations.id, assets.submittedByOrganizationId))
+      .where(eq(assets.verdict, 'review'))
+      .orderBy(asc(assets.createdAt))
+      .limit(clampLimit(limit));
+
+    return rows.map((row) => ({ ...row, findings: row.findings ?? [] }));
+  }
+
+  /**
+   * Approve or block a submitted contract.
+   *
+   * Only a submission at `review` may be decided. Re-deciding an already-approved
+   * asset is refused rather than allowed, because the asset table is what the whole
+   * platform trusts and a second decision arriving out of order would silently
+   * overwrite the first. Reversing an approval is a different operation with its own
+   * consequences for merchants already accepting the token, and it does not belong
+   * behind the same button.
+   */
+  async decideContract(
+    actor: { readonly staffId: string; readonly role: StaffRole },
+    assetId: string,
+    decision: 'approved' | 'blocked',
+    note: string,
+    context: { readonly ip?: string | null | undefined; readonly userAgent?: string | null | undefined } = {},
+  ): Promise<void> {
+    const [asset] = await this.db
+      .select()
+      .from(assets)
+      .where(eq(assets.id, assetId))
+      .limit(1);
+    if (!asset) throw new AdminError('not_found', 'No such asset.');
+    if (asset.verdict !== 'review') {
+      throw new AdminError(
+        'not_in_review',
+        `That asset is already ${asset.verdict}; it is not awaiting a decision.`,
+      );
+    }
+
+    await this.db
+      .update(assets)
+      .set({
+        verdict: decision,
+        reviewedByStaffId: actor.staffId,
+        reviewedAt: new Date(),
+        reviewNote: note,
+      })
+      .where(eq(assets.id, assetId));
+
+    await this.audit.record({
+      staffId: actor.staffId,
+      organizationId: asset.submittedByOrganizationId,
+      action: decision === 'approved' ? 'contract.approved' : 'contract.blocked',
+      targetType: 'asset',
+      targetId: assetId,
+      metadata: {
+        chain: asset.chain,
+        symbol: asset.symbol,
+        contract: asset.contract,
+        note,
+        // The findings the decision was made against, so a later reviewer can see
+        // what was known at the time rather than what the probe says today.
+        findingsAtDecision: asset.findings ?? [],
+        actorRole: actor.role,
+      },
+      ip: context.ip ?? null,
+      userAgent: context.userAgent ?? null,
+    });
+  }
+
+  // ── feature 05: system health ─────────────────────────────────────────────
+
+  /**
+   * One view of everything that can be silently broken.
+   *
+   * Watcher lag leads, because it is the failure that costs money without producing
+   * an error: a watcher that has stopped polling is not seeing payments, and every
+   * other part of the system behaves normally while merchants go uncredited.
+   */
+  async systemHealth(options: {
+    readonly chains: readonly ChainId[];
+    readonly openOracleAssets: readonly string[];
+    readonly stuckAfterMs: number;
+    readonly spendWindowMs: number;
+    readonly now?: Date | undefined;
+  }): Promise<SystemHealth> {
+    const now = options.now ?? new Date();
+
+    const cursors = await this.db.select().from(watchCursors);
+    const byChain = new Map(cursors.map((row) => [row.chain, row]));
+
+    const chains: ChainHealth[] = [];
+    for (const chain of options.chains) {
+      const cursor = byChain.get(chain);
+      const summary = await this.settlements.summary(chain, {
+        stuckAfterMs: options.stuckAfterMs,
+        spendWindowMs: options.spendWindowMs,
+        now,
+      });
+
+      chains.push({
+        chain,
+        scannedTo: cursor?.scannedTo ?? null,
+        lastPolledAt: cursor?.lastPolledAt ?? null,
+        staleForMs:
+          cursor?.lastPolledAt === undefined || cursor.lastPolledAt === null
+            ? null
+            : now.getTime() - cursor.lastPolledAt.getTime(),
+        lastError: cursor?.lastError ?? null,
+        lastErrorAt: cursor?.lastErrorAt ?? null,
+        settlements: {
+          pending: summary.pending,
+          stuck: summary.stuck.length,
+          blockingNonce: summary.blockingNonce,
+          spentUsdMicros: summary.spentUsdMicros.toString(),
+        },
+      });
+    }
+
+    const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    const [webhookPending] = await this.db
+      .select({ value: count() })
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.status, 'pending'));
+    /**
+     * Recent failures, dated by the last attempt rather than by creation.
+     *
+     * There is no `updatedAt` on a delivery, and `createdAt` would be wrong here: a
+     * delivery queued yesterday that exhausted its retries an hour ago is a failure
+     * happening now, and dating it yesterday hides exactly the spike this figure is
+     * meant to catch. `nextAttemptAt` advances with every attempt, so on a settled
+     * row it is the closest thing to when it stopped.
+     */
+    const [webhookFailed] = await this.db
+      .select({ value: count() })
+      .from(webhookDeliveries)
+      .where(
+        and(eq(webhookDeliveries.status, 'failed'), gte(webhookDeliveries.nextAttemptAt, hourAgo)),
+      );
+    const [webhookAbandoned] = await this.db
+      .select({ value: count() })
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.status, 'abandoned'));
+    const [unhealthyEndpoints] = await this.db
+      .select({ value: count() })
+      .from(webhookEndpoints)
+      .where(sql`${webhookEndpoints.disabledAt} is not null`);
+
+    const [reviewWaiting] = await this.db
+      .select({ value: count() })
+      .from(assets)
+      .where(eq(assets.verdict, 'review'));
+
+    const [unmatchedPending] = await this.db
+      .select({ value: count() })
+      .from(unmatchedPayments)
+      .where(eq(unmatchedPayments.resolution, 'pending'));
+
+    return {
+      chains,
+      oracle: { openAssets: options.openOracleAssets },
+      webhooks: {
+        pending: webhookPending?.value ?? 0,
+        failedLastHour: webhookFailed?.value ?? 0,
+        abandoned: webhookAbandoned?.value ?? 0,
+        unhealthyEndpoints: unhealthyEndpoints?.value ?? 0,
+      },
+      reconciliation: {
+        pending: unmatchedPending?.value ?? 0,
+        oldestPendingAgeMs: await this.reconciliation.oldestPendingAgeMs(now),
+      },
+      review: { waiting: reviewWaiting?.value ?? 0 },
+      unavailable: [
+        'gas_wallet_balance: needs a ChainSigner able to query the wallet; none is configured',
+        'rpc_reachability: reported through watcher errors rather than probed directly',
+      ],
+    };
+  }
+}
+
+/**
+ * Contract submissions waiting on a decision.
+ *
+ * Only `review` appears. `approved` needs nothing and `blocked` was refused
+ * automatically, so a queue containing either would be a list an operator learns to
+ * scroll past — and a queue people scroll past is not a control.
+ */
+export interface ReviewQueueItem {
+  readonly assetId: string;
+  readonly chain: string;
+  readonly symbol: string;
+  readonly contract: string | null;
+  readonly decimals: number;
+  readonly kind: string;
+  readonly requiresFixedRate: boolean;
+  readonly findings: readonly unknown[];
+  readonly probedAt: Date | null;
+  readonly submittedByOrganizationId: string | null;
+  readonly submittedByOrganizationName: string | null;
+  readonly createdAt: Date;
+  /** How many merchants have already switched it on, awaiting approval. */
+  readonly waitingMerchants: number;
+}
+
+export interface ChainHealth {
+  readonly chain: string;
+  readonly scannedTo: number | null;
+  readonly lastPolledAt: Date | null;
+  /** Time since the last successful poll. Null when the chain has never been polled. */
+  readonly staleForMs: number | null;
+  readonly lastError: string | null;
+  readonly lastErrorAt: Date | null;
+  readonly settlements: {
+    readonly pending: number;
+    readonly stuck: number;
+    readonly blockingNonce: number | null;
+    readonly spentUsdMicros: string;
+  };
+}
+
+export interface SystemHealth {
+  readonly chains: readonly ChainHealth[];
+  readonly oracle: {
+    readonly openAssets: readonly string[];
+  };
+  readonly webhooks: {
+    readonly pending: number;
+    readonly failedLastHour: number;
+    readonly abandoned: number;
+    readonly unhealthyEndpoints: number;
+  };
+  readonly reconciliation: {
+    readonly pending: number;
+    readonly oldestPendingAgeMs: number | null;
+  };
+  readonly review: {
+    readonly waiting: number;
+  };
+  /**
+   * Things this view cannot answer yet, named rather than omitted.
+   *
+   * A health page that silently lacks a check reads as "all clear" for whatever it
+   * does not cover, which is worse than showing the gap. Gas balance needs a signer
+   * that can query the wallet, and there is deliberately none in this repository.
+   */
+  readonly unavailable: readonly string[];
 }
 
 function describeActor(row: {

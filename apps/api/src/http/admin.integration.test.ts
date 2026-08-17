@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
 
-import { ContractProbe, DEFAULT_AGGREGATION, DEFAULT_BREAKER, PriceService } from '@avex/core';
+import {
+  ContractProbe,
+  DEFAULT_AGGREGATION,
+  DEFAULT_BREAKER,
+  PriceService,
+  WebhookDispatcher,
+} from '@avex/core';
 import type { PriceSource } from '@avex/core';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -14,7 +20,11 @@ import { AdminService } from '../domain/admin-service.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
 import { AuthService } from '../domain/auth-service.js';
+import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
+import { ReconciliationService } from '../domain/reconciliation-service.js';
+import { SettlementStore } from '../domain/settlement-store.js';
+import { WebhookService } from '../domain/webhook-service.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
 import { loadEnv } from '../env.js';
 import { ConsoleMailer } from '../mailer.js';
@@ -49,6 +59,9 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   let close: () => Promise<void>;
   let db: ReturnType<typeof createDatabase>['db'];
   let staffAuth: StaffAuthService;
+  let settlements: SettlementStore;
+  let reconciliation: ReconciliationService;
+  let paymentSink: DatabasePaymentSink;
 
   const unique = randomBytes(6).toString('hex');
   const staffPassword = 'a-long-enough-staff-password';
@@ -109,6 +122,20 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     const audit = new AuditService(db);
     const mailer = new ConsoleMailer(env.APP_URL, () => {});
     staffAuth = new StaffAuthService(db, audit);
+    settlements = new SettlementStore(db);
+
+    /**
+     * A real payment sink, so `attach` recomputes the invoice exactly as the watcher
+     * would. Webhooks go nowhere — this suite is not testing delivery — but the
+     * status arithmetic is the production one, which is the part that matters.
+     */
+    paymentSink = new DatabasePaymentSink(
+      db,
+      audit,
+      new WebhookService(db, new WebhookDispatcher({ async post() { return { statusCode: 200 }; } })),
+      () => 0,
+    );
+    reconciliation = new ReconciliationService(db, audit, paymentSink);
 
     app = buildServer({
       env,
@@ -128,7 +155,9 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
         emailTokenTtlMs: 60 * 60 * 1000,
       }),
       staffAuth,
-      admin: new AdminService(db, audit),
+      settlements,
+      reconciliation,
+      admin: new AdminService(db, audit, settlements, reconciliation),
     });
 
     /**
@@ -200,6 +229,89 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       .where(eq(schema.staff.role, 'superadmin'))
       .limit(1);
     return row?.id ?? null;
+  }
+
+
+  /** Shape of a chain entry in the health response, for readable assertions. */
+  interface ChainHealthJson {
+    chain: string;
+    scannedTo: number | null;
+    lastPolledAt: string | null;
+    staleForMs: number | null;
+  }
+
+  /**
+   * Re-prove the authenticator.
+   *
+   * Needed before every elevated action rather than once, because the window is two
+   * minutes and several of these tests run an elevated call each.
+   */
+  async function reauth(): Promise<void> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/auth/reauthenticate',
+      headers: asStaff(superadminToken),
+      payload: { code: totpCode(superadminSecret) },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+  }
+
+  /** An asset at a chosen verdict. Contract is unique per row so the key holds. */
+  async function insertAsset(
+    verdict: 'review' | 'approved' | 'blocked',
+    symbol: string,
+    findings: unknown[] = [],
+  ): Promise<string> {
+    const [row] = await db
+      .insert(schema.assets)
+      .values({
+        chain: 'bsc',
+        symbol,
+        contract: `0x${randomBytes(20).toString('hex')}`,
+        decimals: 18,
+        kind: 'erc20',
+        verdict,
+        findings,
+        probedAt: new Date(),
+      })
+      .returning({ id: schema.assets.id });
+    return row!.id;
+  }
+
+  /**
+   * An invoice on BSC belonging to the suite's merchant.
+   *
+   * The deposit address is random per invoice because `invoices_chain_deposit_key` is
+   * global — a fixed one would pass on the first run and collide on the second.
+   */
+  async function createInvoice(
+    amountDue: bigint,
+  ): Promise<{ invoiceId: string; depositAddress: string }> {
+    const assetId = await insertAsset('approved', `INV${randomBytes(2).toString('hex')}`);
+    const depositAddress = `0x${randomBytes(20).toString('hex')}`;
+    const [row] = await db
+      .insert(schema.invoices)
+      .values({
+        organizationId: merchantOrgId,
+        assetId,
+        amountDue: amountDue.toString(),
+        chain: 'bsc',
+        depositAddress,
+        payoutAddress: `0x${randomBytes(20).toString('hex')}`,
+        expiresAt: new Date(Date.now() + 60 * 60_000),
+      })
+      .returning({ id: schema.invoices.id });
+    return { invoiceId: row!.id, depositAddress };
+  }
+
+  async function unmatchedIdFor(txHash: string): Promise<string> {
+    const [row] = await db
+      .select({ id: schema.unmatchedPayments.id })
+      .from(schema.unmatchedPayments)
+      .where(eq(schema.unmatchedPayments.txHash, txHash))
+      .limit(1);
+    assert.ok(row, `no unmatched row for ${txHash}`);
+    return row.id;
   }
 
   // ── credential separation ──────────────────────────────────────────────────
@@ -740,6 +852,563 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
 
     const after = await app.inject({ method: 'GET', url: '/admin/me', headers: asStaff(token) });
     assert.equal(after.statusCode, 401);
+  });
+
+
+  // ── feature 02: contract review queue ──────────────────────────────────────
+
+  test('the review queue holds submissions awaiting a decision, and nothing else', async () => {
+    const submitted = await insertAsset('review', `SUB${unique.slice(0, 4)}`);
+    const approved = await insertAsset('approved', `APP${unique.slice(0, 4)}`);
+    const blocked = await insertAsset('blocked', `BLK${unique.slice(0, 4)}`);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/contracts/review?limit=200',
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200);
+
+    const ids = (response.json().items as { assetId: string }[]).map((item) => item.assetId);
+    assert.ok(ids.includes(submitted), 'a submission at review must appear');
+    // A queue containing decided items is a list people learn to scroll past.
+    assert.ok(!ids.includes(approved), 'an approved asset needs no decision');
+    assert.ok(!ids.includes(blocked), 'a blocked asset was already refused');
+  });
+
+  test('the queue carries the probe findings the decision rests on', async () => {
+    const assetId = await insertAsset('review', `FND${unique.slice(0, 4)}`, [
+      { check: 'fee_on_transfer', result: 'unknown' },
+    ]);
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/contracts/review?limit=200',
+      headers: asStaff(supportToken),
+    });
+    const item = (response.json().items as { assetId: string; findings: unknown[] }[]).find(
+      (row) => row.assetId === assetId,
+    );
+    assert.ok(item);
+    assert.deepEqual(item.findings, [{ check: 'fee_on_transfer', result: 'unknown' }]);
+  });
+
+  test('support cannot decide a contract', async () => {
+    const assetId = await insertAsset('review', `NOP${unique.slice(0, 4)}`);
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/contracts/${assetId}/decision`,
+      headers: asStaff(supportToken),
+      payload: { decision: 'approved', note: 'looks fine to me, approving now' },
+    });
+    assert.equal(response.statusCode, 403);
+    assert.equal(response.json().error, 'permission_denied');
+  });
+
+  test('a decision requires a substantial note', async () => {
+    const assetId = await insertAsset('review', `NOT${unique.slice(0, 4)}`);
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/contracts/${assetId}/decision`,
+      headers: asStaff(superadminToken),
+      payload: { decision: 'approved', note: 'ok' },
+    });
+    // This note is the only durable record of why a token became money.
+    assert.equal(response.statusCode, 400);
+  });
+
+  test('approving records the decision, the reviewer, and the findings at that moment', async () => {
+    const assetId = await insertAsset('review', `YES${unique.slice(0, 4)}`, [
+      { check: 'proxy', result: 'absent' },
+    ]);
+    await reauth();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/contracts/${assetId}/decision`,
+      headers: asStaff(superadminToken),
+      payload: { decision: 'approved', note: 'verified against the issuer documentation' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const [row] = await db
+      .select()
+      .from(schema.assets)
+      .where(eq(schema.assets.id, assetId))
+      .limit(1);
+    assert.equal(row!.verdict, 'approved');
+    assert.ok(row!.reviewedByStaffId, 'the reviewing staff member must be recorded');
+    assert.equal(row!.reviewNote, 'verified against the issuer documentation');
+
+    const audit = await app.inject({
+      method: 'GET',
+      url: `/admin/audit?action=contract.approved&targetId=${assetId}`,
+      headers: asStaff(superadminToken),
+    });
+    const [entry] = audit.json().rows;
+    assert.ok(entry, 'the approval should be in the audit trail');
+    // What was known at the time, not what the probe says today.
+    assert.deepEqual(entry.metadata.findingsAtDecision, [{ check: 'proxy', result: 'absent' }]);
+  });
+
+  test('an already-decided contract cannot be decided again', async () => {
+    const assetId = await insertAsset('approved', `TWC${unique.slice(0, 4)}`);
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/contracts/${assetId}/decision`,
+      headers: asStaff(superadminToken),
+      payload: { decision: 'blocked', note: 'changed my mind about this one' },
+    });
+    // Reversing an approval has consequences for merchants already accepting the
+    // token, and does not belong behind the same button as a first decision.
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().error, 'not_in_review');
+  });
+
+  // ── feature 03: settlement monitor ─────────────────────────────────────────
+
+  test('a broadcast settlement appears in the monitor', async () => {
+    const txHash = `0xsettle${unique}01`;
+    await settlements.recordBroadcast({
+      chain: 'bsc',
+      txHash,
+      nonce: 41,
+      invoiceIds: [],
+      feePerGasWei: 3_000_000_000n,
+      gasLimit: 120_000n,
+      estimatedCostUsdMicros: 14_100n,
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/settlements?chain=bsc',
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const found = (response.json().recent as { txHash: string; feePerGasWei: string }[]).find(
+      (row) => row.txHash === txHash,
+    );
+    assert.ok(found, 'the broadcast should be listed');
+    // Wei as a string: 3e9 fits a double but a gas total does not, and a monitor that
+    // rounds one field and not another is worse than one that rounds none.
+    assert.equal(found.feePerGasWei, '3000000000');
+    assert.equal(typeof found.feePerGasWei, 'string');
+  });
+
+  test('re-recording the same broadcast does not create a second row at that nonce', async () => {
+    /**
+     * A process can die between the node accepting a transaction and the write
+     * landing, so the same broadcast gets recorded twice. Two pending rows sharing a
+     * nonce is exactly the bug this table exists to surface, so it must never be
+     * created by our own retry.
+     */
+    const txHash = `0xsettle${unique}02`;
+    const once = { chain: 'bsc' as const, txHash, nonce: 42, invoiceIds: [], feePerGasWei: 1n, gasLimit: 21_000n };
+    await settlements.recordBroadcast(once);
+    await settlements.recordBroadcast(once);
+
+    const rows = await db
+      .select()
+      .from(schema.settlements)
+      .where(eq(schema.settlements.txHash, txHash));
+    assert.equal(rows.length, 1);
+  });
+
+  test('the monitor reports the nonce blocking the queue', async () => {
+    const low = `0xsettle${unique}03`;
+    const high = `0xsettle${unique}04`;
+    await settlements.recordBroadcast({ chain: 'solana', txHash: low, nonce: 7, invoiceIds: [], feePerGasWei: 1n, gasLimit: 1n });
+    await settlements.recordBroadcast({ chain: 'solana', txHash: high, nonce: 9, invoiceIds: [], feePerGasWei: 1n, gasLimit: 1n });
+
+    const summary = await settlements.summary('solana', {
+      stuckAfterMs: 5 * 60_000,
+      spendWindowMs: 60 * 60_000,
+    });
+    // Nothing above the lowest pending nonce can confirm until it does, so that is
+    // the number an operator needs first when the pipeline stalls.
+    assert.equal(summary.blockingNonce, 7);
+    assert.ok(summary.pending >= 2);
+  });
+
+  test('a confirmed receipt clears the transaction; a reverted one is recorded', async () => {
+    const ok = `0xsettle${unique}05`;
+    const bad = `0xsettle${unique}06`;
+    await settlements.recordBroadcast({ chain: 'polygon', txHash: ok, nonce: 1, invoiceIds: [], feePerGasWei: 1n, gasLimit: 1n });
+    await settlements.recordBroadcast({ chain: 'polygon', txHash: bad, nonce: 2, invoiceIds: [], feePerGasWei: 1n, gasLimit: 1n });
+
+    await settlements.recordReceipt('polygon', ok, { status: 'success', gasUsed: 90_000n });
+    await settlements.recordReceipt('polygon', bad, { status: 'reverted', gasUsed: 45_000n });
+
+    const pending = (await settlements.pending('polygon')).map((row) => row.txHash);
+    assert.ok(!pending.includes(ok));
+    assert.ok(!pending.includes(bad), 'a reverted settlement is finished, not still pending');
+
+    const [revertedRow] = await db
+      .select()
+      .from(schema.settlements)
+      .where(eq(schema.settlements.txHash, bad))
+      .limit(1);
+    // Recorded and never retried: it will fail again for the same reason.
+    assert.equal(revertedRow!.status, 'reverted');
+  });
+
+  test('a replacement keeps both rows, so the bump is legible afterwards', async () => {
+    const original = `0xsettle${unique}07`;
+    const replacement = `0xsettle${unique}08`;
+    await settlements.recordBroadcast({ chain: 'ton', txHash: original, nonce: 3, invoiceIds: [], feePerGasWei: 1n, gasLimit: 1n });
+    await settlements.recordBroadcast({ chain: 'ton', txHash: replacement, nonce: 3, invoiceIds: [], feePerGasWei: 2n, gasLimit: 1n });
+    await settlements.recordReplacement('ton', original, replacement);
+
+    const rows = await db
+      .select()
+      .from(schema.settlements)
+      .where(eq(schema.settlements.chain, 'ton'));
+    const before = rows.find((row) => row.txHash === original);
+    assert.equal(before!.status, 'replaced');
+    assert.equal(before!.replacedByTxHash, replacement);
+    // "We bumped the fee at 14:02 and it confirmed at 14:05" needs both halves.
+    assert.ok(rows.some((row) => row.txHash === replacement && row.status === 'pending'));
+  });
+
+  test('spend inside the window counts pending transactions too', async () => {
+    /**
+     * A pending transaction has no actual cost yet but has already committed the
+     * funds. Excluding it would understate the spend by exactly the transactions
+     * still in flight, which is how a cap gets exceeded while appearing respected.
+     */
+    const txHash = `0xsettle${unique}09`;
+    await settlements.recordBroadcast({
+      chain: 'ethereum',
+      txHash,
+      nonce: 11,
+      invoiceIds: [],
+      feePerGasWei: 1n,
+      gasLimit: 1n,
+      estimatedCostUsdMicros: 2_500_000n,
+    });
+
+    const summary = await settlements.summary('ethereum', {
+      stuckAfterMs: 5 * 60_000,
+      spendWindowMs: 60 * 60_000,
+    });
+    assert.ok(summary.spentUsdMicros >= 2_500_000n, `got ${summary.spentUsdMicros}`);
+  });
+
+  // ── feature 04: unmatched payment reconciliation ───────────────────────────
+
+  test('an unmatched transfer is queued once, however often it is re-seen', async () => {
+    const txHash = `0xstray${unique}01`;
+    const input = {
+      chain: 'bsc' as const,
+      txHash,
+      transferIndex: 0,
+      amount: 20_000_000_000_000_000_000n,
+      toAddress: `0xdead${unique}`,
+      fromAddress: '0xpayer',
+      blockNumber: 500,
+      reason: 'no_matching_address' as const,
+    };
+    await reconciliation.record(input);
+    // The watcher re-scans overlapping ranges after a restart; one stray transfer
+    // must not become a page of them.
+    await reconciliation.record(input);
+
+    const rows = await db
+      .select()
+      .from(schema.unmatchedPayments)
+      .where(eq(schema.unmatchedPayments.txHash, txHash));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.resolution, 'pending');
+  });
+
+  test('the queue shows the amount as a string, not a rounded number', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/unmatched?limit=200',
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200);
+
+    const row = (response.json().rows as { txHash: string; amount: string }[]).find((item) =>
+      item.txHash.includes(`${unique}01`),
+    );
+    assert.ok(row);
+    // 20 whole tokens at 18 decimals — well past what a double holds exactly.
+    assert.equal(row.amount, '20000000000000000000');
+  });
+
+  test('the detail view suggests invoices sharing the deposit address', async () => {
+    const { invoiceId, depositAddress } = await createInvoice(20n * 10n ** 18n);
+    const txHash = `0xstray${unique}02`;
+    await reconciliation.record({
+      chain: 'bsc',
+      txHash,
+      transferIndex: 0,
+      amount: 20n * 10n ** 18n,
+      toAddress: depositAddress,
+      blockNumber: 501,
+      reason: 'memo_missing',
+    });
+    const unmatchedId = await unmatchedIdFor(txHash);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/admin/unmatched/${unmatchedId}`,
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const candidates = response.json().candidates as { id: string }[];
+    // Suggesting, not deciding: on a memo chain several invoices share one address.
+    assert.ok(candidates.some((candidate) => candidate.id === invoiceId));
+  });
+
+  test('support cannot attach a payment', async () => {
+    const txHash = `0xstray${unique}03`;
+    const { invoiceId, depositAddress } = await createInvoice(10n ** 18n);
+    await reconciliation.record({
+      chain: 'bsc',
+      txHash,
+      transferIndex: 0,
+      amount: 10n ** 18n,
+      toAddress: depositAddress,
+      blockNumber: 502,
+      reason: 'no_matching_address',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/unmatched/${await unmatchedIdFor(txHash)}/attach`,
+      headers: asStaff(supportToken),
+      payload: { invoiceId, note: 'this belongs to the invoice above' },
+    });
+    assert.equal(response.statusCode, 403);
+  });
+
+  test('attaching credits the invoice and reaches the same status the watcher would', async () => {
+    const due = 20n * 10n ** 18n;
+    const { invoiceId, depositAddress } = await createInvoice(due);
+    const txHash = `0xstray${unique}04`;
+    await reconciliation.record({
+      chain: 'bsc',
+      txHash,
+      transferIndex: 0,
+      amount: due,
+      toAddress: depositAddress,
+      fromAddress: '0xpayer',
+      blockNumber: 503,
+      reason: 'memo_missing',
+    });
+    const unmatchedId = await unmatchedIdFor(txHash);
+
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/unmatched/${unmatchedId}/attach`,
+      headers: asStaff(superadminToken),
+      payload: { invoiceId, note: 'payer confirmed the transfer by email' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    // The status comes from the sink's own recompute, not a second implementation of
+    // the tolerance arithmetic.
+    assert.equal(response.json().invoiceStatus, 'paid');
+
+    const [invoice] = await db
+      .select()
+      .from(schema.invoices)
+      .where(eq(schema.invoices.id, invoiceId))
+      .limit(1);
+    assert.equal(invoice!.status, 'paid');
+    assert.equal(BigInt(invoice!.amountPaid), due);
+
+    const [payment] = await db
+      .select()
+      .from(schema.payments)
+      .where(eq(schema.payments.txHash, txHash))
+      .limit(1);
+    assert.ok(payment, 'a real payment row should now exist');
+  });
+
+  test('a partial transfer attaches as underpaid rather than paid', async () => {
+    const due = 20n * 10n ** 18n;
+    const { invoiceId, depositAddress } = await createInvoice(due);
+    const txHash = `0xstray${unique}05`;
+    await reconciliation.record({
+      chain: 'bsc',
+      txHash,
+      transferIndex: 0,
+      amount: due / 2n,
+      toAddress: depositAddress,
+      blockNumber: 504,
+      reason: 'below_minimum',
+    });
+
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/unmatched/${await unmatchedIdFor(txHash)}/attach`,
+      headers: asStaff(superadminToken),
+      payload: { invoiceId, note: 'half arrived; chasing the rest with the payer' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().invoiceStatus, 'underpaid');
+  });
+
+  test('a transfer cannot be attached twice', async () => {
+    /**
+     * The identity key shared with `payments` is what enforces this — not a reviewer
+     * being careful. Attaching one payer's transfer to two invoices would credit a
+     * merchant with money that is not theirs.
+     */
+    const due = 5n * 10n ** 18n;
+    const first = await createInvoice(due);
+    const second = await createInvoice(due);
+    const txHash = `0xstray${unique}06`;
+    await reconciliation.record({
+      chain: 'bsc',
+      txHash,
+      transferIndex: 0,
+      amount: due,
+      toAddress: first.depositAddress,
+      blockNumber: 505,
+      reason: 'no_matching_address',
+    });
+    const unmatchedId = await unmatchedIdFor(txHash);
+
+    await reauth();
+    const once = await app.inject({
+      method: 'POST',
+      url: `/admin/unmatched/${unmatchedId}/attach`,
+      headers: asStaff(superadminToken),
+      payload: { invoiceId: first.invoiceId, note: 'matched by address and amount' },
+    });
+    assert.equal(once.statusCode, 200, once.body);
+
+    await reauth();
+    const twice = await app.inject({
+      method: 'POST',
+      url: `/admin/unmatched/${unmatchedId}/attach`,
+      headers: asStaff(superadminToken),
+      payload: { invoiceId: second.invoiceId, note: 'attempting to attach a second time' },
+    });
+    assert.equal(twice.statusCode, 409);
+    assert.equal(twice.json().error, 'already_resolved');
+  });
+
+  test('a transfer cannot be attached to an invoice on another chain', async () => {
+    const { invoiceId } = await createInvoice(10n ** 18n);
+    const txHash = `0xstray${unique}07`;
+    await reconciliation.record({
+      chain: 'ton',
+      txHash,
+      transferIndex: 0,
+      amount: 10n ** 18n,
+      toAddress: 'EQsomewhere',
+      blockNumber: 506,
+      reason: 'memo_missing',
+    });
+
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/unmatched/${await unmatchedIdFor(txHash)}/attach`,
+      headers: asStaff(superadminToken),
+      payload: { invoiceId, note: 'deliberately crossing chains, should be refused' },
+    });
+    // A TON transfer credited to a BSC invoice marks it paid with money the
+    // settlement path cannot reach, and nothing downstream would notice.
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, 'chain_mismatch');
+  });
+
+  test('marking for return says plainly that nothing was sent', async () => {
+    const txHash = `0xstray${unique}08`;
+    await reconciliation.record({
+      chain: 'bsc',
+      txHash,
+      transferIndex: 0,
+      amount: 10n ** 18n,
+      toAddress: `0xnobody${unique}`,
+      fromAddress: '0xexchange-hot-wallet',
+      blockNumber: 507,
+      reason: 'no_matching_address',
+    });
+
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/unmatched/${await unmatchedIdFor(txHash)}/resolve`,
+      headers: asStaff(superadminToken),
+      payload: { resolution: 'returned', note: 'payer asked for it back by email' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    // An operator who believes the money already went back will stop chasing it.
+    assert.match(response.json().message, /No transfer has been made/);
+  });
+
+  // ── feature 05: system health ──────────────────────────────────────────────
+
+  test('health reports watcher lag per chain', async () => {
+    const stale = new Date(Date.now() - 15 * 60_000);
+    await db
+      .insert(schema.watchCursors)
+      .values({ chain: 'bsc', scannedTo: 900, lastPolledAt: stale })
+      .onConflictDoUpdate({
+        target: schema.watchCursors.chain,
+        set: { scannedTo: 900, lastPolledAt: stale },
+      });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/health',
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const bsc = (response.json().chains as ChainHealthJson[]).find((row) => row.chain === 'bsc');
+    assert.ok(bsc);
+    assert.equal(bsc.scannedTo, 900);
+    // The failure that costs money without producing an error.
+    assert.ok(bsc.staleForMs !== null && bsc.staleForMs > 10 * 60_000, `got ${bsc.staleForMs}`);
+  });
+
+  test('a never-polled chain reports null lag rather than a huge number', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/health',
+      headers: asStaff(supportToken),
+    });
+    const untouched = (response.json().chains as ChainHealthJson[]).find(
+      (row) => row.lastPolledAt === null,
+    );
+    // "Never started" and "stopped an hour ago" are different problems; reporting the
+    // first as an enormous lag would send an operator looking for the wrong one.
+    if (untouched) assert.equal(untouched.staleForMs, null);
+  });
+
+  test('health counts the reconciliation and review backlogs', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/health',
+      headers: asStaff(supportToken),
+    });
+    const body = response.json();
+    assert.ok(body.reconciliation.pending >= 1, 'this suite left unresolved rows');
+    assert.ok(body.reconciliation.oldestPendingAgeMs >= 0);
+    assert.ok(body.review.waiting >= 1, 'this suite left submissions at review');
+  });
+
+  test('health names the checks it cannot perform instead of implying all clear', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/health',
+      headers: asStaff(supportToken),
+    });
+    const unavailable = response.json().unavailable as string[];
+    // A page silently missing a check reads as healthy for whatever it omits.
+    assert.ok(unavailable.some((entry) => entry.startsWith('gas_wallet_balance')));
   });
 
   async function countAudit(action: string): Promise<number> {
