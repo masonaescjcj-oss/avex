@@ -133,13 +133,21 @@ describe('signed transactions on a real EVM', () => {
     const factoryAddress = deployment.result.createdAddress;
     assert.ok(factoryAddress, 'the deployment should produce an address');
 
-    // Now call `predict(bytes32,address)` on it with a second signed transaction.
+    // Now call `predict` on it with a second signed transaction. A zero fee, which
+    // still occupies its two words in the calldata.
     const salt = new Uint8Array(32).fill(9);
     const destination = '0x' + '44'.repeat(20);
-    const selector = core.selectorFor('predict(bytes32,address)');
+    const zeroAddress = `0x${'00'.repeat(20)}`;
+    const selector = core.selectorFor('predict(bytes32,address,address,uint16)');
     const call = await signAndRun({
       to: factoryAddress.toString(),
-      data: new Uint8Array([...selector, ...core.word(salt), ...core.addressWord(destination)]),
+      data: new Uint8Array([
+        ...selector,
+        ...core.word(salt),
+        ...core.addressWord(destination),
+        ...core.addressWord(zeroAddress),
+        ...core.word(new Uint8Array(32)),
+      ]),
     });
 
     assert.equal(call.result.execResult.exceptionError, undefined, 'the call must not revert');

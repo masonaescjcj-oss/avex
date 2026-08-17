@@ -16,13 +16,15 @@ function ethereumAt(gwei: number, ethUsd = 2000): GasSnapshot {
 }
 
 test('Ethereum settlement cost tracks live gas', () => {
-  // 150k gas at 0.047 gwei with ETH at $2000 — the quiet-market case.
+  // 400k gas at 0.047 gwei with ETH at $2000 — the quiet-market case. The gas
+  // figure is measured against the compiled forwarder, not chosen; see
+  // contracts/test/settlement-gas.test.mjs.
   const cheap = policy.settlementCostUsd(ethereumAt(0.047));
-  assert.ok(Math.abs(cheap.usd - 0.0141) < 0.0005, `expected ~$0.0141, got $${cheap.usd}`);
+  assert.ok(Math.abs(cheap.usd - 0.0376) < 0.0005, `expected ~$0.0376, got $${cheap.usd}`);
 
   // The same settlement during a spike.
   const spike = policy.settlementCostUsd(ethereumAt(9));
-  assert.ok(Math.abs(spike.usd - 2.7) < 0.01, `expected ~$2.70, got $${spike.usd}`);
+  assert.ok(Math.abs(spike.usd - 7.2) < 0.01, `expected ~$7.20, got $${spike.usd}`);
 });
 
 test('minimum invoice size rises automatically with gas', () => {
@@ -31,7 +33,19 @@ test('minimum invoice size rises automatically with gas', () => {
   const cheapMin = policy.minInvoiceUsd(ethereumAt(0.047));
   const spikeMin = policy.minInvoiceUsd(ethereumAt(9));
 
-  assert.ok(cheapMin < 2, `expected under $2 at 0.047 gwei, got $${cheapMin}`);
+  /**
+   * $3.76 at the quiet end, not the $2 an earlier 150,000-gas estimate implied.
+   *
+   * The bound is stated as a range rather than a ceiling because both directions
+   * are product facts worth catching. Above ~$5 and Ethereum stops being usable for
+   * ordinary payments even in a calm market, which is an argument for the cheaper
+   * chains rather than for a smaller constant. Below ~$2 and the estimate has
+   * drifted back down towards a figure the bytecode does not support.
+   */
+  assert.ok(
+    cheapMin > 2 && cheapMin < 5,
+    `expected $2-$5 at 0.047 gwei, got $${cheapMin}`,
+  );
   assert.ok(spikeMin > 250, `expected over $250 at 9 gwei, got $${spikeMin}`);
 });
 

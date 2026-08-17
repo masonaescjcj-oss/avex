@@ -13,11 +13,25 @@ export interface DepositTarget {
   readonly memo?: string;
 }
 
+/**
+ * A percentage cut taken at settlement, alongside the merchant's payout.
+ *
+ * Present on both derivation and settlement because on `unique`-address chains it
+ * is baked into the deposit address, so the two must be given identical values or
+ * they name different addresses. Optional, and absent means no fee — which is the
+ * case for every subscription-only merchant.
+ */
+export interface FeeSplit {
+  readonly feeDestination: string;
+  readonly feeBps: number;
+}
+
 export interface DeriveInput {
   readonly invoiceId: string;
   /** The merchant's own address. Funds may only ever move here. */
   readonly payoutAddress: string;
   readonly asset: Asset;
+  readonly fee?: FeeSplit | undefined;
 }
 
 /** One invoice's worth of funds waiting to be moved to the merchant. */
@@ -27,6 +41,14 @@ export interface SettlementRequest {
   readonly payoutAddress: string;
   readonly asset: Asset;
   readonly amount: bigint;
+  /**
+   * The fee this invoice was quoted with, read back from its record.
+   *
+   * Not a current configuration value. The deposit address commits to the fee, so
+   * sweeping with a different one derives an address nobody funded and the money
+   * stays where it is.
+   */
+  readonly fee?: FeeSplit | undefined;
 }
 
 export interface SettlementResult {

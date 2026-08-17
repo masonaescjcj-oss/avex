@@ -13,9 +13,17 @@ import type {
   PollResult,
   SettlementRequest,
   SettlementResult,
+  FeeSplit,
 } from '../ChainAdapter.js';
 import { chainConfig } from '../registry.js';
-import { invoiceSalt, predictForwarder, toChecksumAddress, type Create2Config } from './create2.js';
+import {
+  NO_FEE,
+  invoiceSalt,
+  predictForwarder,
+  toChecksumAddress,
+  type Create2Config,
+  type ForwarderFee,
+} from './create2.js';
 
 /** USD price of a chain's native token. Injected so the oracle stays swappable. */
 export interface PriceOracle {
@@ -60,7 +68,7 @@ const TRANSFER_TOPIC = toHex(
 );
 
 const SETTLE_BATCH_SELECTOR = toHex(
-  keccak256(new TextEncoder().encode('settleBatch((bytes32,address,address)[])')),
+  keccak256(new TextEncoder().encode('settleBatch((bytes32,address,address,uint16,address)[])')),
 ).slice(0, 10);
 
 interface RpcLog {
@@ -101,6 +109,7 @@ export class EvmAdapter implements ChainAdapter {
         this.config.create2,
         input.invoiceId,
         toChecksumAddress(input.payoutAddress),
+        feeOrNone(input.fee),
       ),
     };
   }
@@ -173,11 +182,16 @@ export class EvmAdapter implements ChainAdapter {
     if (batch.length === 0) return [];
 
     const data = encodeSettleBatch(
-      batch.map((request) => ({
-        salt: invoiceSalt(request.invoiceId),
-        destination: request.payoutAddress,
-        token: request.asset.contract ?? '0x0000000000000000000000000000000000000000',
-      })),
+      batch.map((request) => {
+        const fee = feeOrNone(request.fee);
+        return {
+          salt: invoiceSalt(request.invoiceId),
+          destination: request.payoutAddress,
+          feeDestination: fee.feeDestination,
+          feeBps: fee.feeBps,
+          token: request.asset.contract ?? '0x0000000000000000000000000000000000000000',
+        };
+      }),
     );
 
     const { hash, feePaid } = await this.signer.sendTransaction({
@@ -223,13 +237,28 @@ interface SettlementTuple {
   readonly salt: Uint8Array;
   readonly destination: string;
   readonly token: string;
+  /** Omit for no fee. Both fields travel together or neither does. */
+  readonly feeDestination?: string | undefined;
+  readonly feeBps?: number | undefined;
+}
+
+/** `undefined` and an explicit zero fee mean the same thing to the contract. */
+function feeOrNone(fee: FeeSplit | undefined): ForwarderFee {
+  if (!fee || fee.feeBps === 0) return NO_FEE;
+  if (!fee.feeDestination) {
+    throw new Error(`a fee of ${fee.feeBps}bps needs a fee destination`);
+  }
+  return { feeDestination: toChecksumAddress(fee.feeDestination), feeBps: fee.feeBps };
 }
 
 /**
- * ABI-encode `settleBatch((bytes32,address,address)[])`.
+ * ABI-encode `settleBatch((bytes32,address,address,uint16,address)[])`.
  *
  * The tuple is fully static, so the array encodes as offset, length, then the
- * elements packed end to end at 96 bytes each.
+ * elements packed end to end at 160 bytes each. Field order must match the struct
+ * declaration in Forwarder.sol exactly — the encoding carries no names, so a
+ * transposition of `feeDestination` and `token` would be a silent misdirection of
+ * funds rather than a decode error.
  */
 export function encodeSettleBatch(items: readonly SettlementTuple[]): string {
   const word = (bytes: Uint8Array): Uint8Array => {
@@ -238,15 +267,32 @@ export function encodeSettleBatch(items: readonly SettlementTuple[]): string {
     out.set(bytes, 32 - bytes.length);
     return out;
   };
+  const numberWord = (value: number): Uint8Array => {
+    if (!Number.isInteger(value) || value < 0) throw new Error(`not a non-negative int: ${value}`);
+    // Pad to an even number of hex digits, not to two: a batch of 256 renders as
+    // '100', which is an odd-length string and not decodable as bytes.
+    const hex = value.toString(16);
+    return word(fromHex(`0x${hex.length % 2 === 0 ? hex : `0${hex}`}`));
+  };
 
   const offset = word(new Uint8Array([0x20]));
-  const length = word(fromHex(`0x${items.length.toString(16).padStart(2, '0')}`));
+  const length = numberWord(items.length);
 
-  const elements = items.flatMap((item) => [
-    word(item.salt),
-    word(fromHex(item.destination)),
-    word(fromHex(item.token)),
-  ]);
+  const elements = items.flatMap((item) => {
+    // Normalise here rather than requiring every caller to spell out a zero fee.
+    // The alternative is that an omitted field reaches `fromHex` as `undefined` and
+    // fails several frames down, describing a string method rather than a fee.
+    const fee = feeOrNone(
+      item.feeBps ? { feeDestination: item.feeDestination ?? '', feeBps: item.feeBps } : undefined,
+    );
+    return [
+      word(item.salt),
+      word(fromHex(item.destination)),
+      word(fromHex(fee.feeDestination)),
+      numberWord(fee.feeBps),
+      word(fromHex(item.token)),
+    ];
+  });
 
   return SETTLE_BATCH_SELECTOR + toHex(concatBytes(offset, length, ...elements)).slice(2);
 }

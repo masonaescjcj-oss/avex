@@ -45,6 +45,16 @@ const BASE_FEE = 10n;
 
 const MERCHANT = '0x1111111111111111111111111111111111111111';
 const OTHER_MERCHANT = '0x2222222222222222222222222222222222222222';
+/** Where a percentage fee goes. AVEX's own address, on this chain. */
+const FEE_COLLECTOR = '0x3333333333333333333333333333333333333333';
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+/** No fee: the merchant receives everything the forwarder holds. */
+const NO_FEE = { feeDestination: ZERO_ADDRESS, feeBps: 0 };
+
+const PREDICT = 'predict(bytes32,address,address,uint16)';
+const DEPLOY = 'deploy(bytes32,address,address,uint16)';
+const SETTLE_BATCH = 'settleBatch((bytes32,address,address,uint16,address)[])';
 
 /** Selector for a signature, computed the same way the application does. */
 function selector(signature) {
@@ -60,6 +70,61 @@ function word(value) {
 
 function addressWord(address) {
   return address.toLowerCase().replace('0x', '').padStart(64, '0');
+}
+
+/**
+ * Calldata builders, so the ABI is written once.
+ *
+ * The struct is five static words in a fixed order and the encoding carries no
+ * field names, so transposing `feeDestination` and `token` would silently send a
+ * merchant's balance to the wrong place rather than fail to decode. One definition
+ * is one place for that to be wrong.
+ */
+function predictCall(invoiceId, destination, fee = NO_FEE) {
+  return (
+    selector(PREDICT) +
+    keccakHex(invoiceId).slice(2) +
+    addressWord(destination) +
+    addressWord(fee.feeDestination) +
+    word(BigInt(fee.feeBps))
+  );
+}
+
+function deployCall(invoiceId, destination, fee = NO_FEE) {
+  return (
+    selector(DEPLOY) +
+    keccakHex(invoiceId).slice(2) +
+    addressWord(destination) +
+    addressWord(fee.feeDestination) +
+    word(BigInt(fee.feeBps))
+  );
+}
+
+function settleBatchCall(items) {
+  let elements = '';
+  for (const item of items) {
+    const fee = item.fee ?? NO_FEE;
+    elements +=
+      keccakHex(item.invoiceId).slice(2) +
+      addressWord(item.destination) +
+      addressWord(fee.feeDestination) +
+      word(BigInt(fee.feeBps)) +
+      addressWord(item.token ?? ZERO_ADDRESS);
+  }
+  return selector(SETTLE_BATCH) + word(32n) + word(BigInt(items.length)) + elements;
+}
+
+/** The address the application would publish for these parameters. */
+function offChainAddress(factoryAddress, invoiceId, destination, fee = NO_FEE) {
+  return predictForwarder(
+    {
+      factory: factoryAddress.toString(),
+      forwarderCreationCode: artifacts.Forwarder.creationCode,
+    },
+    invoiceId,
+    destination,
+    fee,
+  );
 }
 
 describe('Forwarder on a real EVM', () => {
@@ -130,19 +195,11 @@ describe('Forwarder on a real EVM', () => {
     // same inside the EVM. A mismatch means every published address is wrong.
     const invoiceId = 'inv_01HQZX3E7K';
 
-    const offChain = predictForwarder(
-      {
-        factory: factoryAddress.toString(),
-        forwarderCreationCode: artifacts.Forwarder.creationCode,
-      },
-      invoiceId,
-      MERCHANT,
-    );
+    const offChain = offChainAddress(factoryAddress, invoiceId, MERCHANT);
 
-    const salt = core.keccak256Hex(invoiceId).slice(2);
     const result = await call(
       factoryAddress,
-      selector('predict(bytes32,address)') + salt + addressWord(MERCHANT),
+      predictCall(invoiceId, MERCHANT),
     );
 
     const onChain = `0x${bytesToHex(result.returnValue).slice(-40)}`;
@@ -157,19 +214,11 @@ describe('Forwarder on a real EVM', () => {
     // predict() agreeing with our arithmetic is necessary but not sufficient: the
     // EVM must also place the contract there when CREATE2 actually runs.
     const invoiceId = 'inv_deploy_check';
-    const predicted = predictForwarder(
-      {
-        factory: factoryAddress.toString(),
-        forwarderCreationCode: artifacts.Forwarder.creationCode,
-      },
-      invoiceId,
-      MERCHANT,
-    );
+    const predicted = offChainAddress(factoryAddress, invoiceId, MERCHANT);
 
-    const salt = core.keccak256Hex(invoiceId).slice(2);
     await call(
       factoryAddress,
-      selector('deploy(bytes32,address)') + salt + addressWord(MERCHANT),
+      deployCall(invoiceId, MERCHANT),
     );
 
     const code = await vm.stateManager.getCode(createAddressFromString(predicted.toLowerCase()));
@@ -178,17 +227,9 @@ describe('Forwarder on a real EVM', () => {
 
   test('the deployed forwarder is bound to its merchant and no other', async () => {
     const invoiceId = 'inv_binding_check';
-    const predicted = predictForwarder(
-      {
-        factory: factoryAddress.toString(),
-        forwarderCreationCode: artifacts.Forwarder.creationCode,
-      },
-      invoiceId,
-      MERCHANT,
-    );
+    const predicted = offChainAddress(factoryAddress, invoiceId, MERCHANT);
 
-    const salt = core.keccak256Hex(invoiceId).slice(2);
-    await call(factoryAddress, selector('deploy(bytes32,address)') + salt + addressWord(MERCHANT));
+    await call(factoryAddress, deployCall(invoiceId, MERCHANT));
 
     const result = await call(
       createAddressFromString(predicted.toLowerCase()),
@@ -204,20 +245,15 @@ describe('Forwarder on a real EVM', () => {
   test('the same invoice for a different merchant yields a different address', async () => {
     // Because the destination feeds the init code hash, an address cannot be
     // re-pointed after being handed out. This is the guarantee, stated as a test.
-    const config = {
-      factory: factoryAddress.toString(),
-      forwarderCreationCode: artifacts.Forwarder.creationCode,
-    };
 
-    const forMerchant = predictForwarder(config, 'inv_same', MERCHANT);
-    const forOther = predictForwarder(config, 'inv_same', OTHER_MERCHANT);
+    const forMerchant = offChainAddress(factoryAddress, 'inv_same', MERCHANT);
+    const forOther = offChainAddress(factoryAddress, 'inv_same', OTHER_MERCHANT);
     assert.notEqual(forMerchant, forOther);
 
     // And the EVM agrees, not just our arithmetic.
-    const salt = core.keccak256Hex('inv_same').slice(2);
     const predictedOther = await call(
       factoryAddress,
-      selector('predict(bytes32,address)') + salt + addressWord(OTHER_MERCHANT),
+      predictCall('inv_same', OTHER_MERCHANT),
     );
     assert.equal(
       `0x${bytesToHex(predictedOther.returnValue).slice(-40)}`.toLowerCase(),
@@ -236,11 +272,7 @@ describe('Forwarder on a real EVM', () => {
     );
 
     const invoiceId = 'inv_settlement';
-    const config = {
-      factory: factoryAddress.toString(),
-      forwarderCreationCode: artifacts.Forwarder.creationCode,
-    };
-    const depositAddress = predictForwarder(config, invoiceId, MERCHANT);
+    const depositAddress = offChainAddress(factoryAddress, invoiceId, MERCHANT);
 
     // Nothing is deployed there yet — exactly the state a payer sends into.
     const before_ = await vm.stateManager.getCode(
@@ -255,16 +287,10 @@ describe('Forwarder on a real EVM', () => {
     );
 
     // Settle: deploy and flush in one transaction.
-    const salt = core.keccak256Hex(invoiceId).slice(2);
-    const settlement =
-      selector('settleBatch((bytes32,address,address)[])') +
-      word(32n) + // offset to the array
-      word(1n) + // one element
-      salt +
-      addressWord(MERCHANT) +
-      addressWord(token.toString());
-
-    const result = await call(factoryAddress, settlement);
+    const result = await call(
+      factoryAddress,
+      settleBatchCall([{ invoiceId, destination: MERCHANT, token: token.toString() }]),
+    );
     assert.equal(result.exceptionError, undefined, 'settlement reverted');
 
     const merchantBalance = await call(
@@ -291,30 +317,23 @@ describe('Forwarder on a real EVM', () => {
       word(96n) + word(6n) + word(0n) + word(4n) + Buffer.from('USDC').toString('hex').padEnd(64, '0'),
     );
 
-    const config = {
-      factory: factoryAddress.toString(),
-      forwarderCreationCode: artifacts.Forwarder.creationCode,
-    };
     const invoices = ['batch_a', 'batch_b', 'batch_c'];
     const amount = 5n * 10n ** 6n;
 
     for (const invoiceId of invoices) {
-      const address = predictForwarder(config, invoiceId, MERCHANT);
+      const address = offChainAddress(factoryAddress, invoiceId, MERCHANT);
       await call(token, selector('mint(address,uint256)') + addressWord(address) + word(amount));
-    }
-
-    let elements = '';
-    for (const invoiceId of invoices) {
-      elements +=
-        core.keccak256Hex(invoiceId).slice(2) + addressWord(MERCHANT) + addressWord(token.toString());
     }
 
     const result = await call(
       factoryAddress,
-      selector('settleBatch((bytes32,address,address)[])') +
-        word(32n) +
-        word(BigInt(invoices.length)) +
-        elements,
+      settleBatchCall(
+        invoices.map((invoiceId) => ({
+          invoiceId,
+          destination: MERCHANT,
+          token: token.toString(),
+        })),
+      ),
     );
     assert.equal(result.exceptionError, undefined, 'batch settlement reverted');
 
@@ -331,11 +350,7 @@ describe('Forwarder on a real EVM', () => {
       word(96n) + word(18n) + word(100n) + word(4n) + Buffer.from('FEET').toString('hex').padEnd(64, '0'),
     );
 
-    const config = {
-      factory: factoryAddress.toString(),
-      forwarderCreationCode: artifacts.Forwarder.creationCode,
-    };
-    const depositAddress = predictForwarder(config, 'inv_fee', MERCHANT);
+    const depositAddress = offChainAddress(factoryAddress, 'inv_fee', MERCHANT);
 
     const amount = 100n * 10n ** 18n;
     await call(
@@ -343,15 +358,11 @@ describe('Forwarder on a real EVM', () => {
       selector('mint(address,uint256)') + addressWord(depositAddress) + word(amount),
     );
 
-    const salt = core.keccak256Hex('inv_fee').slice(2);
     await call(
       factoryAddress,
-      selector('settleBatch((bytes32,address,address)[])') +
-        word(32n) +
-        word(1n) +
-        salt +
-        addressWord(MERCHANT) +
-        addressWord(token.toString()),
+      settleBatchCall([
+        { invoiceId: 'inv_fee', destination: MERCHANT, token: token.toString() },
+      ]),
     );
 
     const balance = await call(token, selector('balanceOf(address)') + addressWord(MERCHANT));
@@ -364,11 +375,7 @@ describe('Forwarder on a real EVM', () => {
   });
 
   test('native value sent before deployment is forwarded on deployment', async () => {
-    const config = {
-      factory: factoryAddress.toString(),
-      forwarderCreationCode: artifacts.Forwarder.creationCode,
-    };
-    const depositAddress = predictForwarder(config, 'inv_native', MERCHANT);
+    const depositAddress = offChainAddress(factoryAddress, 'inv_native', MERCHANT);
     const target = createAddressFromString(depositAddress.toLowerCase());
 
     // Fund the empty address directly, as a payer sending the native asset would.
@@ -379,11 +386,7 @@ describe('Forwarder on a real EVM', () => {
       (await vm.stateManager.getAccount(createAddressFromString(MERCHANT.toLowerCase())))
         ?.balance ?? 0n;
 
-    const salt = core.keccak256Hex('inv_native').slice(2);
-    const result = await call(
-      factoryAddress,
-      selector('deploy(bytes32,address)') + salt + addressWord(MERCHANT),
-    );
+    const result = await call(factoryAddress, deployCall('inv_native', MERCHANT));
     assert.equal(result.exceptionError, undefined, 'deployment reverted');
 
     const merchantAfter =
@@ -393,6 +396,369 @@ describe('Forwarder on a real EVM', () => {
     // The constructor sweeps whatever was waiting, so a payer who sent before
     // deployment is not stranded.
     assert.equal(merchantAfter - merchantBefore, value);
+  });
+
+  // ── the fee split ─────────────────────────────────────────────────────────
+  //
+  // A percentage fee is the only way to charge in proportion to what a merchant
+  // actually processes, and the non-custodial design means money never passes
+  // through an account of ours to take it from. Splitting inside the forwarder is
+  // the answer, and it only holds if the split is part of the address.
+
+  async function tokenBalance(token, holder) {
+    const result = await call(token, selector('balanceOf(address)') + addressWord(holder));
+    return BigInt(bytesToHex(result.returnValue));
+  }
+
+  async function nativeBalance(address) {
+    const account = await vm.stateManager.getAccount(
+      createAddressFromString(address.toLowerCase()),
+    );
+    return account?.balance ?? 0n;
+  }
+
+  /** A plain 18-decimal token that takes no cut of its own. */
+  async function plainToken(symbol) {
+    return deploy(
+      artifacts.MockERC20.creationCode,
+      word(96n) +
+        word(18n) +
+        word(0n) +
+        word(4n) +
+        Buffer.from(symbol).toString('hex').padEnd(64, '0'),
+    );
+  }
+
+  test('a fee changes the deposit address, so it cannot be raised after quoting', async () => {
+    /**
+     * The guarantee the whole design rests on, now covering the fee as well as the
+     * destination. If AVEX decided to take 2% from an address quoted at 1%, CREATE2
+     * would put that contract somewhere else entirely — not at the address the
+     * payer funded. There is no version of this we could do quietly.
+     */
+    const free = offChainAddress(factoryAddress, 'inv_fee_bind', MERCHANT);
+    const onePercent = offChainAddress(factoryAddress, 'inv_fee_bind', MERCHANT, {
+      feeDestination: FEE_COLLECTOR,
+      feeBps: 100,
+    });
+    const twoPercent = offChainAddress(factoryAddress, 'inv_fee_bind', MERCHANT, {
+      feeDestination: FEE_COLLECTOR,
+      feeBps: 200,
+    });
+
+    assert.notEqual(free, onePercent, 'a fee must change the address');
+    assert.notEqual(onePercent, twoPercent, 'a different rate must change the address');
+
+    // And the EVM agrees with our arithmetic, which is the part that matters.
+    const result = await call(
+      factoryAddress,
+      predictCall('inv_fee_bind', MERCHANT, { feeDestination: FEE_COLLECTOR, feeBps: 100 }),
+    );
+    assert.equal(
+      `0x${bytesToHex(result.returnValue).slice(-40)}`.toLowerCase(),
+      onePercent.toLowerCase(),
+    );
+  });
+
+  test('sending the fee to a different collector changes the address too', async () => {
+    // Otherwise the rate would be committed but the recipient would not, and the
+    // fee could be redirected without changing the address the payer was given.
+    const toUs = offChainAddress(factoryAddress, 'inv_collector', MERCHANT, {
+      feeDestination: FEE_COLLECTOR,
+      feeBps: 100,
+    });
+    const toSomeoneElse = offChainAddress(factoryAddress, 'inv_collector', MERCHANT, {
+      feeDestination: OTHER_MERCHANT,
+      feeBps: 100,
+    });
+    assert.notEqual(toUs, toSomeoneElse);
+  });
+
+  test('a token settlement splits the fee and the merchant gets the rest', async () => {
+    const token = await plainToken('USDT');
+    const fee = { feeDestination: FEE_COLLECTOR, feeBps: 100 }; // 1%
+    const depositAddress = offChainAddress(factoryAddress, 'inv_split', MERCHANT, fee);
+
+    const amount = 1_000n * 10n ** 18n;
+    await call(
+      token,
+      selector('mint(address,uint256)') + addressWord(depositAddress) + word(amount),
+    );
+
+    const merchantBefore = await tokenBalance(token, MERCHANT);
+    const collectorBefore = await tokenBalance(token, FEE_COLLECTOR);
+
+    const result = await call(
+      factoryAddress,
+      settleBatchCall([
+        { invoiceId: 'inv_split', destination: MERCHANT, token: token.toString(), fee },
+      ]),
+    );
+    assert.equal(result.exceptionError, undefined, 'settlement reverted');
+
+    const collected = (await tokenBalance(token, FEE_COLLECTOR)) - collectorBefore;
+    const paid = (await tokenBalance(token, MERCHANT)) - merchantBefore;
+
+    assert.equal(collected, amount / 100n, 'the collector should have 1%');
+    assert.equal(paid, amount - amount / 100n, 'the merchant should have the other 99%');
+    // Conservation, asserted rather than assumed: nothing was created or burned.
+    assert.equal(collected + paid, amount);
+    assert.equal(await tokenBalance(token, depositAddress), 0n, 'nothing left behind');
+  });
+
+  test('a zero fee moves the whole balance and touches no collector', async () => {
+    // The common case — a subscription-only merchant. Worth its own test because a
+    // fee of zero must not cost an extra transfer, and must not send a zero-value
+    // transfer to the zero address.
+    const token = await plainToken('ZERO');
+    const depositAddress = offChainAddress(factoryAddress, 'inv_nofee', MERCHANT);
+
+    const amount = 42n * 10n ** 18n;
+    await call(
+      token,
+      selector('mint(address,uint256)') + addressWord(depositAddress) + word(amount),
+    );
+    const before = await tokenBalance(token, MERCHANT);
+
+    await call(
+      factoryAddress,
+      settleBatchCall([
+        { invoiceId: 'inv_nofee', destination: MERCHANT, token: token.toString() },
+      ]),
+    );
+
+    assert.equal((await tokenBalance(token, MERCHANT)) - before, amount);
+    assert.equal(await tokenBalance(token, ZERO_ADDRESS), 0n, 'nothing sent to the zero address');
+  });
+
+  test('the fee rounds down, so the remainder falls to the merchant', async () => {
+    /**
+     * An amount chosen so the fee does not divide evenly: 1% of 999 wei-equivalent
+     * units is 9.99. We take 9 and the merchant gets 990 — never the other way.
+     * "We round our own cut in our favour" is indefensible however small the number.
+     */
+    const token = await plainToken('ODD');
+    const fee = { feeDestination: FEE_COLLECTOR, feeBps: 100 };
+    const depositAddress = offChainAddress(factoryAddress, 'inv_round', MERCHANT, fee);
+
+    const amount = 999n;
+    await call(
+      token,
+      selector('mint(address,uint256)') + addressWord(depositAddress) + word(amount),
+    );
+    const merchantBefore = await tokenBalance(token, MERCHANT);
+    const collectorBefore = await tokenBalance(token, FEE_COLLECTOR);
+
+    await call(
+      factoryAddress,
+      settleBatchCall([
+        { invoiceId: 'inv_round', destination: MERCHANT, token: token.toString(), fee },
+      ]),
+    );
+
+    assert.equal((await tokenBalance(token, FEE_COLLECTOR)) - collectorBefore, 9n);
+    assert.equal((await tokenBalance(token, MERCHANT)) - merchantBefore, 990n);
+    // And no dust is stranded, which is what "send everything remaining" buys.
+    assert.equal(await tokenBalance(token, depositAddress), 0n);
+  });
+
+  test('a fee smaller than one unit is not charged at all', async () => {
+    // 1% of 50 units rounds to zero. The merchant receives everything and the
+    // settlement still succeeds — a fee that rounds away must not revert.
+    const token = await plainToken('TINY');
+    const fee = { feeDestination: FEE_COLLECTOR, feeBps: 100 };
+    const depositAddress = offChainAddress(factoryAddress, 'inv_tiny', MERCHANT, fee);
+
+    await call(token, selector('mint(address,uint256)') + addressWord(depositAddress) + word(50n));
+    const merchantBefore = await tokenBalance(token, MERCHANT);
+    const collectorBefore = await tokenBalance(token, FEE_COLLECTOR);
+
+    const result = await call(
+      factoryAddress,
+      settleBatchCall([
+        { invoiceId: 'inv_tiny', destination: MERCHANT, token: token.toString(), fee },
+      ]),
+    );
+    assert.equal(result.exceptionError, undefined, 'settlement reverted');
+
+    assert.equal((await tokenBalance(token, FEE_COLLECTOR)) - collectorBefore, 0n);
+    assert.equal((await tokenBalance(token, MERCHANT)) - merchantBefore, 50n);
+  });
+
+  test('a native settlement splits the fee', async () => {
+    const fee = { feeDestination: FEE_COLLECTOR, feeBps: 250 }; // 2.5%
+    const depositAddress = offChainAddress(factoryAddress, 'inv_native_fee', MERCHANT, fee);
+
+    const value = 400n * 10n ** 18n;
+    await vm.stateManager.putAccount(
+      createAddressFromString(depositAddress.toLowerCase()),
+      createAccount({ nonce: 0n, balance: value }),
+    );
+
+    const merchantBefore = await nativeBalance(MERCHANT);
+    const collectorBefore = await nativeBalance(FEE_COLLECTOR);
+
+    const result = await call(factoryAddress, deployCall('inv_native_fee', MERCHANT, fee));
+    assert.equal(result.exceptionError, undefined, 'deployment reverted');
+
+    const collected = (await nativeBalance(FEE_COLLECTOR)) - collectorBefore;
+    const paid = (await nativeBalance(MERCHANT)) - merchantBefore;
+
+    assert.equal(collected, (value * 250n) / 10_000n);
+    assert.equal(collected + paid, value, 'the whole balance moved');
+    assert.equal(await nativeBalance(depositAddress), 0n, 'nothing left in the forwarder');
+  });
+
+  test('a fee above the contract ceiling cannot be deployed', async () => {
+    /**
+     * `MAX_FEE_BPS` is what stops the immutability guarantee from being hollow. The
+     * address committing to a number is only reassuring if the number cannot be
+     * 10000, so the ceiling lives in the code rather than in our policy.
+     */
+    const tooHigh = { feeDestination: FEE_COLLECTOR, feeBps: 501 };
+    const result = await call(factoryAddress, deployCall('inv_greedy', MERCHANT, tooHigh));
+    assert.ok(result.exceptionError, 'deploying a 5.01% forwarder should revert');
+
+    // 5% exactly is the boundary and is allowed.
+    const atCeiling = { feeDestination: FEE_COLLECTOR, feeBps: 500 };
+    const ok = await call(factoryAddress, deployCall('inv_ceiling', MERCHANT, atCeiling));
+    assert.equal(ok.exceptionError, undefined, '5% exactly should be accepted');
+  });
+
+  test('the off-chain side refuses a fee the contract would reject', async () => {
+    /**
+     * Caught before an address is published, not after. A forwarder that reverts on
+     * deployment is worse than a rejected invoice: by then a payer has funded an
+     * address whose contract cannot be created, and the funds are unreachable.
+     */
+    assert.throws(
+      () =>
+        offChainAddress(factoryAddress, 'inv_greedy', MERCHANT, {
+          feeDestination: FEE_COLLECTOR,
+          feeBps: 501,
+        }),
+      /exceeds the contract's 500bps ceiling/,
+    );
+
+    assert.throws(
+      () =>
+        offChainAddress(factoryAddress, 'inv_burn', MERCHANT, {
+          feeDestination: ZERO_ADDRESS,
+          feeBps: 100,
+        }),
+      /needs a fee destination/,
+    );
+  });
+
+  test('a non-zero fee with nowhere to send it is refused on chain as well', async () => {
+    // Belt and braces: the off-chain guard above is the one that fires in practice,
+    // but the contract must not rely on being called correctly.
+    const result = await call(
+      factoryAddress,
+      deployCall('inv_burn_chain', MERCHANT, { feeDestination: ZERO_ADDRESS, feeBps: 100 }),
+    );
+    assert.ok(result.exceptionError, 'a fee to the zero address should revert');
+  });
+
+  test('a batch can mix fee-bearing and free invoices', async () => {
+    /**
+     * The realistic shape once both pricing models exist side by side: some
+     * merchants on a subscription, some on a percentage, settled in one
+     * transaction. The fee travels per invoice rather than per batch, so a mixed
+     * batch must not apply one invoice's fee to another's funds.
+     */
+    const token = await plainToken('MIXED');
+    const fee = { feeDestination: FEE_COLLECTOR, feeBps: 100 };
+    const amount = 1_000n * 10n ** 18n;
+
+    const paying = offChainAddress(factoryAddress, 'mix_paying', MERCHANT, fee);
+    const freeRide = offChainAddress(factoryAddress, 'mix_free', OTHER_MERCHANT);
+    for (const address of [paying, freeRide]) {
+      await call(token, selector('mint(address,uint256)') + addressWord(address) + word(amount));
+    }
+
+    const collectorBefore = await tokenBalance(token, FEE_COLLECTOR);
+    const merchantBefore = await tokenBalance(token, MERCHANT);
+    const otherBefore = await tokenBalance(token, OTHER_MERCHANT);
+
+    const result = await call(
+      factoryAddress,
+      settleBatchCall([
+        { invoiceId: 'mix_paying', destination: MERCHANT, token: token.toString(), fee },
+        { invoiceId: 'mix_free', destination: OTHER_MERCHANT, token: token.toString() },
+      ]),
+    );
+    assert.equal(result.exceptionError, undefined, 'mixed batch reverted');
+
+    // Exactly one invoice's worth of fee, from the invoice that carried one.
+    assert.equal((await tokenBalance(token, FEE_COLLECTOR)) - collectorBefore, amount / 100n);
+    assert.equal((await tokenBalance(token, MERCHANT)) - merchantBefore, amount - amount / 100n);
+    assert.equal(
+      (await tokenBalance(token, OTHER_MERCHANT)) - otherBefore,
+      amount,
+      'the subscription merchant should be untouched by the other invoice\'s fee',
+    );
+  });
+
+  test('a fee-on-transfer token still leaves nothing stranded', async () => {
+    /**
+     * Two fees interacting: the token takes 1% of every transfer, and we take 1% of
+     * the balance. Sending `balance - fee` to the merchant would revert here,
+     * because the fee transfer cost more than `fee`. Re-reading the balance is what
+     * makes this work — and what guarantees the forwarder ends up empty.
+     */
+    const token = await deploy(
+      artifacts.MockERC20.creationCode,
+      word(96n) +
+        word(18n) +
+        word(100n) +
+        word(4n) +
+        Buffer.from('FEE2').toString('hex').padEnd(64, '0'),
+    );
+    const fee = { feeDestination: FEE_COLLECTOR, feeBps: 100 };
+    const depositAddress = offChainAddress(factoryAddress, 'inv_double_fee', MERCHANT, fee);
+
+    const amount = 1_000n * 10n ** 18n;
+    await call(
+      token,
+      selector('mint(address,uint256)') + addressWord(depositAddress) + word(amount),
+    );
+
+    const result = await call(
+      factoryAddress,
+      settleBatchCall([
+        { invoiceId: 'inv_double_fee', destination: MERCHANT, token: token.toString(), fee },
+      ]),
+    );
+    assert.equal(result.exceptionError, undefined, 'settlement reverted on a fee-on-transfer token');
+    assert.equal(
+      await tokenBalance(token, depositAddress),
+      0n,
+      'the forwarder must end empty even when the token takes its own cut',
+    );
+  });
+
+  test('the forwarder reports the fee it was built with', async () => {
+    // A merchant can read these off the chain and check them against what they were
+    // quoted, without trusting our dashboard to tell them the truth.
+    const fee = { feeDestination: FEE_COLLECTOR, feeBps: 175 };
+    const predicted = offChainAddress(factoryAddress, 'inv_readback', MERCHANT, fee);
+    await call(factoryAddress, deployCall('inv_readback', MERCHANT, fee));
+
+    const target = createAddressFromString(predicted.toLowerCase());
+    const bps = await call(target, selector('feeBps()'));
+    const collector = await call(target, selector('feeDestination()'));
+    const destination = await call(target, selector('destination()'));
+
+    assert.equal(BigInt(bytesToHex(bps.returnValue)), 175n);
+    assert.equal(
+      `0x${bytesToHex(collector.returnValue).slice(-40)}`.toLowerCase(),
+      FEE_COLLECTOR.toLowerCase(),
+    );
+    assert.equal(
+      `0x${bytesToHex(destination.returnValue).slice(-40)}`.toLowerCase(),
+      MERCHANT.toLowerCase(),
+    );
   });
 
   test('the artifacts record the exact compiler settings', () => {

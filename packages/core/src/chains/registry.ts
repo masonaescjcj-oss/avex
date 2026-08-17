@@ -31,6 +31,39 @@ export type SettlementProfile =
       readonly kind: 'direct';
     };
 
+/**
+ * Measured settlement gas for the EVM forwarder, shared by every EVM chain.
+ *
+ * Identical bytecode means identical gas; only the price of gas differs, and that
+ * comes from a live snapshot rather than from this table. Both figures are measured
+ * against the compiled contract by contracts/test/settlement-gas.test.mjs, which
+ * fails if they drift — they are claims about bytecode, and a comment cannot check
+ * itself.
+ *
+ * The marginal cost of one more invoice in a batch, not the cost of a whole
+ * transaction: the 21,000-gas floor is paid once however many invoices ride along,
+ * so charging it per invoice would make every batch look uneconomic.
+ */
+
+/**
+ * CREATE2 deploy of a forwarder plus a token flush: 385,000 measured, rounded up.
+ *
+ * Dominated by the code deposit — 200 gas for each of the runtime's ~1,570 bytes —
+ * which is why deferring settlement until gas is cheap matters so much more here
+ * than the arithmetic inside the contract does.
+ */
+const EVM_GAS_DEPLOY_AND_FLUSH = 400_000;
+
+/**
+ * Flushing a forwarder that already exists: 17,300 measured, plus 25,000 for
+ * creating the payout account when it has never held this asset.
+ *
+ * An order of magnitude below a deploy, because there is no code to write. Kept as
+ * its own figure so a re-sweep of an existing forwarder is not deferred as though
+ * it cost a deployment.
+ */
+const EVM_GAS_FLUSH_ONLY = 45_000;
+
 export interface ChainConfig {
   readonly chain: ChainId;
   readonly displayName: string;
@@ -59,7 +92,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
     confirmations: { standard: 12, highValue: 32, highValueThresholdUsd: 10_000 },
-    settlement: { kind: 'evm', gasDeployAndFlushToken: 150_000, gasFlushNative: 60_000 },
+    settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
   },
 
   polygon: {
@@ -70,7 +103,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeDecimals: 18,
     // Polygon PoS has historically produced deep reorgs; stay conservative.
     confirmations: { standard: 64, highValue: 128, highValueThresholdUsd: 10_000 },
-    settlement: { kind: 'evm', gasDeployAndFlushToken: 150_000, gasFlushNative: 60_000 },
+    settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
   },
 
   bsc: {
@@ -80,7 +113,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeSymbol: 'BNB',
     nativeDecimals: 18,
     confirmations: { standard: 15, highValue: 30, highValueThresholdUsd: 10_000 },
-    settlement: { kind: 'evm', gasDeployAndFlushToken: 150_000, gasFlushNative: 60_000 },
+    settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
   },
 
   // Highest stablecoin volume of any chain here, and the one Iranian payers

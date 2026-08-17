@@ -273,7 +273,7 @@ describe('the full payment loop', () => {
           amount,
         },
       ],
-      { to: factory.toString(), data: settleData, gasLimit: 400_000n },
+      { to: factory.toString(), data: settleData, gasLimit: 900_000n },
       await adapter.probeGas(),
     );
 
