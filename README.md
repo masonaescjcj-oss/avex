@@ -360,15 +360,22 @@ quietly spending past a safety limit is worse, so an operator decides.
 
 ## Checkout
 
-`apps/checkout` is the payer-facing page. Built desktop-first, RTL, and
+`apps/checkout` is the payer-facing page. Built desktop-first, English, and
 self-contained — its content security policy forbids fetching anything, so the QR
 encoder is inlined from `dist/` at build time rather than copied by hand, and cannot
 drift from the module the tests exercise.
 
+It follows the AVEX product's design language rather than its own: pure black
+ground, acid lime spent on one thing per view, cards at a 14–20px radius, and
+monospace for every number and identifier. The QR module area stays pure white,
+because a tinted QR is one that sometimes fails to scan. Layout uses logical
+properties throughout, so adding a right-to-left locale later needs a string table
+and a `dir` attribute, not a re-layout.
+
 The design decision worth naming: **the network chooser shows what each network
 actually costs to settle**, ranked cheapest first. The fee engine already computes
 that figure, and a payer choosing a network is choosing what the transfer costs —
-every other checkout hides it. TON reads "رایگان" because settlement there genuinely
+every other checkout hides it. TON reads "Free" because settlement there genuinely
 is free.
 
 Beyond that: the amount and address are the page's two heroes because they are the

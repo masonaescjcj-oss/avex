@@ -1,4 +1,4 @@
-<title>پرداخت AVEX</title>
+<title>AVEX Pay</title>
 <style>
   /**
    * AVEX Pay checkout.
@@ -9,6 +9,10 @@
    * address, an amount and a fee all line up under each other and can be read
    * digit by digit. There is no light theme because AVEX has none — the tokens
    * are painted explicitly rather than inherited from the host.
+   *
+   * Copy is English and the layout is left-to-right. Nothing here is direction
+   * -locked: the box model uses logical properties, so adding a right-to-left
+   * locale later is a string table and a `dir` attribute, not a re-layout.
    */
   :root {
     --void: #000000;
@@ -34,7 +38,7 @@
     --coral: #FF5A4E;
     --coral-wash: rgba(255, 90, 78, 0.12);
 
-    --sans: 'Vazirmatn', 'IRANSansX', 'IRANSans', -apple-system, 'Segoe UI', Tahoma, sans-serif;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif;
     --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 
     --r-lg: 20px;
@@ -58,13 +62,11 @@
     color: var(--ink);
     font-family: var(--sans);
     font-size: var(--s0);
-    line-height: 1.75;
+    line-height: 1.65;
     -webkit-font-smoothing: antialiased;
   }
 
   .page {
-    direction: rtl;
-    text-align: right;
     max-width: 66rem;
     margin: 0 auto;
     padding: clamp(1rem, 3vw, 2rem) clamp(0.75rem, 3vw, 1.5rem) 3.5rem;
@@ -156,9 +158,11 @@
   .eyebrow {
     font-size: var(--s-2);
     letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--muted);
     margin: 0;
     font-weight: 600;
+    white-space: nowrap;
   }
   .eyebrow-mono { font-family: var(--mono); }
 
@@ -195,8 +199,6 @@
     align-items: baseline;
     gap: 0.5rem;
     flex-wrap: wrap;
-    direction: ltr;
-    justify-content: flex-start;
   }
   .amount-value {
     font-family: var(--mono);
@@ -245,7 +247,7 @@
     border-radius: var(--r-md);
     font: inherit;
     color: inherit;
-    text-align: right;
+    text-align: left;
     cursor: pointer;
     transition: background 140ms ease, border-color 140ms ease;
   }
@@ -318,6 +320,7 @@
   .field-label {
     font-size: var(--s-2);
     letter-spacing: 0.06em;
+    text-transform: uppercase;
     color: var(--muted);
     font-weight: 600;
   }
@@ -335,8 +338,6 @@
     padding: 0.6rem 0.75rem;
     font-family: var(--mono);
     font-size: var(--s-1);
-    direction: ltr;
-    text-align: left;
     overflow-wrap: anywhere;
     line-height: 1.6;
   }
@@ -394,7 +395,7 @@
     width: 100%;
     background: var(--lime);
     border-radius: var(--pill);
-    transform-origin: right center;
+    transform-origin: left center;
     transition: transform 1s linear;
   }
   .is-expired .lock-fill { background: var(--coral); }
@@ -483,10 +484,10 @@
     margin: 0;
     font-family: var(--mono);
     font-variant-numeric: tabular-nums;
-    direction: ltr;
-    text-align: left;
+    text-align: right;
     white-space: nowrap;
   }
+  .summary-row dd.prose { font-family: var(--sans); white-space: normal; }
   .summary-row.total {
     margin-top: 0.375rem;
     padding: 0.75rem 0.875rem;
@@ -502,7 +503,7 @@
     font-size: var(--s-1);
     color: var(--muted);
     margin: 0;
-    line-height: 1.7;
+    line-height: 1.65;
   }
   .fine strong { color: var(--ink); font-weight: 700; }
 
@@ -557,7 +558,7 @@
       <span class="brand-mark" aria-hidden="true">A</span>
       <span>AVEX <span class="brand-pay">Pay</span></span>
     </div>
-    <div class="invoice-ref">فاکتور <code dir="ltr">#INV-8F2C41</code></div>
+    <div class="invoice-ref">Invoice <code>#INV-8F2C41</code></div>
   </header>
 
   <div class="split">
@@ -565,64 +566,64 @@
     <!-- ══ main: the action ══════════════════════════════════════════════ -->
     <main class="panel">
       <div class="panel-head">
-        <h1>پرداخت به فروشگاه نمونه</h1>
-        <p class="eyebrow">مرحله <span class="eyebrow-mono" id="step-of">۲ از ۳</span></p>
+        <h1>Pay Example Store</h1>
+        <p class="eyebrow">Step <span class="eyebrow-mono" id="step-of">2</span> of 3</p>
       </div>
 
       <div class="body">
 
         <div class="status" id="status" data-state="awaiting">
           <span class="status-dot" aria-hidden="true"></span>
-          <span id="status-text">در انتظار پرداخت شما</span>
+          <span id="status-text">Waiting for your payment</span>
           <span class="confirmations" id="confirmations"></span>
         </div>
 
         <section class="amount-card">
-          <p class="eyebrow">💳 مبلغ قابل پرداخت</p>
+          <p class="eyebrow">💳 Amount due</p>
           <div class="amount">
             <span class="amount-value" id="amount">20.100000</span>
             <span class="amount-unit" id="amount-unit">USDT</span>
           </div>
-          <p class="amount-fiat">معادل <span dir="ltr">$20.00</span> — نرخ تا پایان شمارش زیر قفل است</p>
+          <p class="amount-fiat">Equal to <span>$20.00</span> — the rate holds until the countdown below runs out</p>
         </section>
 
         <section class="lock" id="lock">
           <div class="lock-line">
-            <span class="lock-left">⏳ قفل نرخ</span>
+            <span class="lock-left">⏳ Rate lock</span>
             <span class="lock-time" id="lock-time">14:59</span>
           </div>
           <div class="lock-track"><div class="lock-fill" id="lock-fill"></div></div>
         </section>
 
         <section class="chooser">
-          <p class="section-label">🌐 شبکه را انتخاب کنید</p>
+          <p class="section-label">🌐 Choose a network</p>
           <p class="chooser-note">
-            هزینه‌ی تسویه‌ی هر شبکه را شفاف نشان می‌دهیم — ارزان‌ترین گزینه بالاست.
+            We show what settling on each network costs — the cheapest option is at the top.
           </p>
-          <div class="net-table" role="radiogroup" aria-label="شبکه پرداخت" id="networks"></div>
+          <div class="net-table" role="radiogroup" aria-label="Payment network" id="networks"></div>
         </section>
 
         <section class="send-to">
-          <div class="qr-frame" id="qr" aria-label="کد QR آدرس واریز"></div>
+          <div class="qr-frame" id="qr" aria-label="QR code of the deposit address"></div>
 
           <div class="field">
-            <span class="field-label">📥 آدرس واریز</span>
+            <span class="field-label">📥 Deposit address</span>
             <div class="copyable">
               <code id="address">—</code>
-              <button class="copy-btn" type="button" data-copy="address">کپی</button>
+              <button class="copy-btn" type="button" data-copy="address">Copy</button>
             </div>
 
             <div id="memo-block" hidden>
               <div class="field" style="margin-top:.75rem">
-                <span class="field-label">🏷️ شناسه (memo)</span>
+                <span class="field-label">🏷️ Memo</span>
                 <div class="copyable">
                   <code id="memo">—</code>
-                  <button class="copy-btn" type="button" data-copy="memo">کپی</button>
+                  <button class="copy-btn" type="button" data-copy="memo">Copy</button>
                 </div>
               </div>
               <div class="memo-warning" style="margin-top:.5rem">
                 <span aria-hidden="true">⚠️</span>
-                <span><strong>memo الزامی است.</strong> بدون آن پرداخت شما به این فاکتور وصل نمی‌شود و نیاز به پیگیری دستی دارد.</span>
+                <span><strong>The memo is required.</strong> Without it your payment cannot be matched to this invoice and has to be traced by hand.</span>
               </div>
             </div>
           </div>
@@ -635,52 +636,52 @@
     <aside class="aside">
 
       <section class="panel">
-        <div class="panel-head"><h2>🧾 خلاصه</h2></div>
+        <div class="panel-head"><h2>🧾 Summary</h2></div>
         <div class="body">
           <dl class="summary">
-            <div class="summary-row"><dt>کالا</dt><dd style="font-family:var(--sans);direction:rtl;text-align:right;white-space:normal">اشتراک یک‌ساله</dd></div>
-            <div class="summary-row"><dt>مبلغ</dt><dd dir="ltr">$20.00</dd></div>
-            <div class="summary-row"><dt>هزینه‌ی تسویه</dt><dd dir="ltr" id="summary-cost">$0.0000</dd></div>
-            <div class="summary-row"><dt>نرخ</dt><dd dir="ltr" id="summary-rate">1 USDT = $1.00</dd></div>
-            <div class="summary-row total"><dt>پرداخت شما</dt><dd dir="ltr" id="summary-total">20.100000 USDT</dd></div>
+            <div class="summary-row"><dt>Item</dt><dd class="prose">Annual subscription</dd></div>
+            <div class="summary-row"><dt>Amount</dt><dd>$20.00</dd></div>
+            <div class="summary-row"><dt>Settlement cost</dt><dd id="summary-cost">$0.0000</dd></div>
+            <div class="summary-row"><dt>Rate</dt><dd id="summary-rate">1 USDT = $1.00</dd></div>
+            <div class="summary-row total"><dt>You send</dt><dd id="summary-total">20.100000 USDT</dd></div>
           </dl>
         </div>
       </section>
 
       <section class="panel">
-        <div class="panel-head"><h2>⚡ چه اتفاقی می‌افتد</h2></div>
+        <div class="panel-head"><h2>⚡ What happens next</h2></div>
         <div class="body">
           <ol class="steps" id="steps">
             <li class="step" data-state="done">
-              <span class="step-num">۱</span>
-              <span>فاکتور ساخته شد و نرخ قفل شد</span>
+              <span class="step-num">1</span>
+              <span>Invoice created and the rate locked</span>
             </li>
             <li class="step" data-state="active">
-              <span class="step-num">۲</span>
-              <span>مبلغ دقیق را به آدرس بالا بفرستید</span>
+              <span class="step-num">2</span>
+              <span>Send the exact amount to the address shown</span>
             </li>
             <li class="step">
-              <span class="step-num">۳</span>
-              <span>پس از تأیید شبکه، پرداخت شما نهایی می‌شود</span>
+              <span class="step-num">3</span>
+              <span>Once the network confirms, your payment is final</span>
             </li>
           </ol>
         </div>
       </section>
 
       <section class="panel">
-        <div class="panel-head"><h2>💎 چند نکته</h2></div>
+        <div class="panel-head"><h2>💎 Good to know</h2></div>
         <div class="body" style="gap:.75rem">
           <p class="fine">
-            این آدرس <strong>مخصوص همین فاکتور</strong> است و فقط می‌تواند به کیف فروشنده
-            پرداخت کند — AVEX در هیچ لحظه‌ای پول شما را نگه نمی‌دارد.
+            This address belongs to <strong>this invoice alone</strong> and can only pay the
+            merchant's own wallet — AVEX never holds your money at any point.
           </p>
           <p class="fine">
-            مبلغ کمتر از حد مجاز، فاکتور را «پرداخت ناقص» می‌کند و می‌توانید مابه‌التفاوت را
-            به همان آدرس بفرستید.
+            Paying less than the tolerance marks the invoice underpaid, and you can send the
+            difference to the same address.
           </p>
           <p class="fine">
-            فقط دارایی انتخاب‌شده را روی همان شبکه بفرستید. ارسال توکن دیگر یا شبکه‌ی دیگر
-            قابل بازگشت نیست.
+            Send only the selected asset on the selected network. Sending a different token,
+            or the right token on the wrong network, cannot be reversed.
           </p>
         </div>
       </section>
@@ -689,13 +690,13 @@
   </div>
 
   <div class="demo-bar">
-    <strong>نمایش تعاملی:</strong>
-    <span>حالت‌های زنده را ببینید —</span>
-    <button class="demo-btn" type="button" data-demo="confirming">پرداخت رسید</button>
-    <button class="demo-btn" type="button" data-demo="paid">تأیید شد</button>
-    <button class="demo-btn" type="button" data-demo="underpaid">پرداخت ناقص</button>
-    <button class="demo-btn" type="button" data-demo="expired">انقضای نرخ</button>
-    <button class="demo-btn" type="button" data-demo="awaiting">بازنشانی</button>
+    <strong>Interactive demo:</strong>
+    <span>step through the live states —</span>
+    <button class="demo-btn" type="button" data-demo="confirming">Payment seen</button>
+    <button class="demo-btn" type="button" data-demo="paid">Confirmed</button>
+    <button class="demo-btn" type="button" data-demo="underpaid">Underpaid</button>
+    <button class="demo-btn" type="button" data-demo="expired">Rate expired</button>
+    <button class="demo-btn" type="button" data-demo="awaiting">Reset</button>
   </div>
 
 </div>
@@ -715,31 +716,31 @@
    */
   const NETWORKS = [
     {
-      id: 'ton', label: 'TON', asset: 'USDT', decimals: 6, confirm: '~۵ ثانیه',
+      id: 'ton', label: 'TON', asset: 'USDT', decimals: 6, confirm: '~5 sec',
       cost: 0, memo: true,
       address: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
       amount: '20.020000',
     },
     {
-      id: 'solana', label: 'Solana', asset: 'USDT', decimals: 6, confirm: '~۱ ثانیه',
+      id: 'solana', label: 'Solana', asset: 'USDT', decimals: 6, confirm: '~1 sec',
       cost: 0.001,
       address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
       amount: '20.020000',
     },
     {
-      id: 'bsc', label: 'BNB Chain', asset: 'USDT', decimals: 18, confirm: '~۴۵ ثانیه',
+      id: 'bsc', label: 'BNB Chain', asset: 'USDT', decimals: 18, confirm: '~45 sec',
       cost: 0.015,
       address: '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52',
       amount: '20.100000',
     },
     {
-      id: 'polygon', label: 'Polygon', asset: 'USDT', decimals: 6, confirm: '~۳ دقیقه',
+      id: 'polygon', label: 'Polygon', asset: 'USDT', decimals: 6, confirm: '~3 min',
       cost: 0.015,
       address: '0x3Bd18aE2Cc41fD7719Ae5cB0c3aF9C4E7d21B860',
       amount: '20.100000',
     },
     {
-      id: 'ethereum', label: 'Ethereum', asset: 'USDT', decimals: 6, confirm: '~۳ دقیقه',
+      id: 'ethereum', label: 'Ethereum', asset: 'USDT', decimals: 6, confirm: '~3 min',
       cost: 0.014,
       address: '0xC91e5b2A4dF06BeF3F1a7b09C82d5Ae4f3B10E77',
       amount: '20.100000',
@@ -748,9 +749,9 @@
 
   const MEMO = 'AVEX-INV-8F2C41';
   const LOCK_SECONDS = 15 * 60;
+  const REQUIRED_CONFIRMATIONS = 15;
 
   const el = (id) => document.getElementById(id);
-  const fa = (value) => String(value).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]);
 
   let selected = NETWORKS[0];
   let state = 'awaiting';
@@ -760,7 +761,7 @@
   // ── network chooser ─────────────────────────────────────────────────────
 
   function costLabel(cost) {
-    if (cost === 0) return { text: 'رایگان', free: true };
+    if (cost === 0) return { text: 'Free', free: true };
     return { text: '$' + cost.toFixed(cost < 0.01 ? 4 : 3), free: false };
   }
 
@@ -875,7 +876,7 @@
         selection.addRange(range);
       }
       const original = button.textContent;
-      button.textContent = 'کپی شد';
+      button.textContent = 'Copied';
       button.dataset.copied = 'true';
       setTimeout(() => {
         button.textContent = original;
@@ -887,10 +888,12 @@
   // ── rate lock ───────────────────────────────────────────────────────────
 
   function renderLock() {
-    const minutes = Math.floor(Math.max(0, remaining) / 60);
-    const seconds = Math.max(0, remaining) % 60;
-    el('lock-time').textContent = fa(String(minutes).padStart(2, '0')) + ':' + fa(String(seconds).padStart(2, '0'));
-    el('lock-fill').style.transform = 'scaleX(' + Math.max(0, remaining) / LOCK_SECONDS + ')';
+    const left = Math.max(0, remaining);
+    const minutes = Math.floor(left / 60);
+    const seconds = left % 60;
+    el('lock-time').textContent =
+      String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+    el('lock-fill').style.transform = 'scaleX(' + left / LOCK_SECONDS + ')';
   }
 
   setInterval(() => {
@@ -903,11 +906,11 @@
   // ── state ───────────────────────────────────────────────────────────────
 
   const STATES = {
-    awaiting: { text: 'در انتظار پرداخت شما', step: 2 },
-    confirming: { text: 'پرداخت دیده شد — در انتظار تأیید شبکه', step: 3 },
-    paid: { text: 'پرداخت تأیید شد. می‌توانید این صفحه را ببندید.', step: 4 },
-    underpaid: { text: 'مبلغ کمتر از حد مجاز رسید — مابه‌التفاوت را بفرستید', step: 2 },
-    expired: { text: 'قفل نرخ منقضی شد — برای نرخ تازه صفحه را نوسازی کنید', step: 2 },
+    awaiting: { text: 'Waiting for your payment', step: 2 },
+    confirming: { text: 'Payment seen — waiting for the network to confirm', step: 3 },
+    paid: { text: 'Payment confirmed. You can close this page.', step: 4 },
+    underpaid: { text: 'Less than the amount due arrived — send the difference', step: 2 },
+    expired: { text: 'The rate lock expired — reload the page for a fresh rate', step: 2 },
   };
 
   function setState(next) {
@@ -917,7 +920,7 @@
     el('status').dataset.state = next;
     el('status-text').textContent = info.text;
     el('lock').parentElement.classList.toggle('is-expired', next === 'expired');
-    el('step-of').textContent = fa(Math.min(3, info.step)) + ' از ۳';
+    el('step-of').textContent = String(Math.min(3, info.step));
 
     // Once the payment is confirmed the rate lock means nothing and the network
     // can no longer be changed, so neither should still look live.
@@ -927,7 +930,7 @@
 
     // Confirmation progress is only meaningful while a transfer is maturing.
     el('confirmations').textContent =
-      next === 'confirming' ? fa(confirmations) + ' از ' + fa(15) + ' تأیید' : '';
+      next === 'confirming' ? confirmations + ' of ' + REQUIRED_CONFIRMATIONS + ' confirmations' : '';
 
     const steps = el('steps').children;
     for (let i = 0; i < steps.length; i++) {
@@ -953,12 +956,13 @@
       // Reached by the timer the lock is already at zero; jumped to by a button it
       // is not, and an "expired" banner beside 14:59 left reads as a broken page.
       if (target === 'expired') remaining = 0;
+
       if (target === 'confirming') {
         confirmations = 0;
         setState('confirming');
         confirmTimer = setInterval(() => {
           confirmations += 1;
-          if (confirmations >= 15) {
+          if (confirmations >= REQUIRED_CONFIRMATIONS) {
             clearInterval(confirmTimer);
             setState('paid');
           } else {

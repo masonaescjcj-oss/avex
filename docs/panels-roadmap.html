@@ -1,4 +1,4 @@
-<title>پنل‌های AVEX Pay</title>
+<title>AVEX Pay Panels</title>
 <style>
   :root {
     /* Extracted from the AVEX screenshots: pure black ground, acid lime accent. */
@@ -23,7 +23,7 @@
     --coral: #FF5A4E;
     --violet: #8B7CF6;
 
-    --sans: 'Vazirmatn', 'IRANSansX', 'IRANSans', -apple-system, 'Segoe UI', Tahoma, sans-serif;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif;
     --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 
     --r-lg: 20px;
@@ -45,8 +45,6 @@
   }
 
   .app {
-    direction: rtl;
-    text-align: right;
     max-width: 76rem;
     margin: 0 auto;
     padding: clamp(1rem, 3vw, 2.5rem) clamp(0.875rem, 3vw, 2rem) 5rem;
@@ -231,10 +229,10 @@
     background: var(--card);
   }
   table { width: 100%; border-collapse: collapse; font-size: 0.875rem; min-width: 32rem; }
-  th, td { text-align: right; padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th, td { text-align: left; padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
   thead th { background: var(--card-2); color: var(--muted); font-weight: 700; white-space: nowrap; }
   tbody tr:last-child td { border-bottom: none; }
-  td.m, th.m { font-family: var(--mono); font-variant-numeric: tabular-nums; direction: ltr; text-align: left; }
+  td.m, th.m { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
   /* ── callouts ───────────────────────────────────────────────────────── */
 
@@ -253,6 +251,8 @@
   .note-title { font-weight: 700; display: flex; align-items: center; gap: 0.4rem; }
   .note.warn .note-title { color: var(--amber); }
   .note.stop .note-title { color: var(--coral); }
+  .note.ok { border-inline-start-color: var(--teal); }
+  .note.ok .note-title { color: var(--teal); }
   .note p { margin: 0; color: var(--muted); }
   .note p strong { color: var(--ink); }
 
@@ -279,7 +279,10 @@
     color: var(--lime);
     font-variant-numeric: tabular-nums;
   }
+  .phase.done { border-color: rgba(46, 211, 160, 0.28); }
+  .phase.done .phase-id { color: var(--teal); }
   .phase-weeks { font-family: var(--mono); font-size: 0.6875rem; color: var(--faint); }
+  .phase.done .phase-weeks { color: var(--teal); }
   .phase-body { display: flex; flex-direction: column; gap: 0.3rem; }
   .phase-title { font-weight: 700; }
   .phase-desc { color: var(--muted); font-size: 0.875rem; }
@@ -304,55 +307,58 @@
 <div class="app">
 
   <header class="hero">
-    <span class="tag">◆ سند برنامه‌ریزی · نسخه ۲</span>
-    <h1>پنل ادمین، پنل نماینده، و API</h1>
+    <span class="tag">◆ Planning document · rev 2</span>
+    <h1>Admin panel, reseller panel, and the API</h1>
     <p class="lede">
-      قابلیت‌ها به ترتیب انجام، نه به ترتیب اهمیت. رده‌ی ۱ چیزهایی است که بدون آن‌ها
-      نمی‌توان سیستم را <em>اداره</em> کرد — نه اینکه محصول ناقص باشد، بلکه هر مشکل
-      مرچنت تبدیل به کوئری دستی روی دیتابیس می‌شود.
+      Features in build order, not in order of importance. Tier 1 is what you cannot
+      <em>operate</em> the system without — not because the product would be incomplete,
+      but because every merchant problem becomes a hand-written database query.
     </p>
 
     <div class="stat-strip">
-      <div class="stat"><div class="stat-value">20</div><div class="stat-label">قابلیت پنل ادمین</div></div>
-      <div class="stat"><div class="stat-value">14</div><div class="stat-label">قابلیت پنل نماینده</div></div>
-      <div class="stat"><div class="stat-value">6</div><div class="stat-label">زیردامنه</div></div>
-      <div class="stat"><div class="stat-value">324</div><div class="stat-label">تست موجود</div></div>
+      <div class="stat"><div class="stat-value">20</div><div class="stat-label">admin features</div></div>
+      <div class="stat"><div class="stat-value">14</div><div class="stat-label">reseller features</div></div>
+      <div class="stat"><div class="stat-value">6</div><div class="stat-label">subdomains</div></div>
+      <div class="stat"><div class="stat-value">324</div><div class="stat-label">tests passing</div></div>
     </div>
   </header>
 
   <!-- ═══════════ design language ═══════════ -->
   <section>
     <div class="sec-head">
-      <h2 class="sec-title">🎨 زبان طراحی — از AVEX استخراج شد</h2>
+      <h2 class="sec-title">🎨 Design language — extracted from AVEX</h2>
       <p class="sec-note">
-        از اسکرین‌شات‌هایی که فرستادی درآوردم. همین توکن‌ها روی هر سه پنل و صفحه‌ی
-        پرداخت اعمال می‌شوند تا AVEX Pay شبیه یک محصول الحاقی باشد، نه یک محصول غریبه.
+        Taken from the AVEX screenshots. These tokens apply to all three panels and to
+        the checkout page, so that AVEX Pay reads as part of the product rather than as
+        a stranger bolted onto it.
       </p>
     </div>
 
     <div class="swatches">
-      <div class="swatch"><div class="chip" style="background:#000000"></div><div class="swatch-meta"><div class="swatch-name">زمینه</div><div class="swatch-hex">#000000</div></div></div>
-      <div class="swatch"><div class="chip" style="background:#121212"></div><div class="swatch-meta"><div class="swatch-name">کارت</div><div class="swatch-hex">#121212</div></div></div>
-      <div class="swatch"><div class="chip" style="background:#C6F73F"></div><div class="swatch-meta"><div class="swatch-name">لایم — اصلی</div><div class="swatch-hex">#C6F73F</div></div></div>
-      <div class="swatch"><div class="chip" style="background:#2ED3A0"></div><div class="swatch-meta"><div class="swatch-name">زنده / مثبت</div><div class="swatch-hex">#2ED3A0</div></div></div>
-      <div class="swatch"><div class="chip" style="background:#F5A623"></div><div class="swatch-meta"><div class="swatch-name">هشدار</div><div class="swatch-hex">#F5A623</div></div></div>
-      <div class="swatch"><div class="chip" style="background:#FF5A4E"></div><div class="swatch-meta"><div class="swatch-name">بحرانی</div><div class="swatch-hex">#FF5A4E</div></div></div>
+      <div class="swatch"><div class="chip" style="background:#000000"></div><div class="swatch-meta"><div class="swatch-name">Ground</div><div class="swatch-hex">#000000</div></div></div>
+      <div class="swatch"><div class="chip" style="background:#121212"></div><div class="swatch-meta"><div class="swatch-name">Card</div><div class="swatch-hex">#121212</div></div></div>
+      <div class="swatch"><div class="chip" style="background:#C6F73F"></div><div class="swatch-meta"><div class="swatch-name">Lime — primary</div><div class="swatch-hex">#C6F73F</div></div></div>
+      <div class="swatch"><div class="chip" style="background:#2ED3A0"></div><div class="swatch-meta"><div class="swatch-name">Live / positive</div><div class="swatch-hex">#2ED3A0</div></div></div>
+      <div class="swatch"><div class="chip" style="background:#F5A623"></div><div class="swatch-meta"><div class="swatch-name">Warning</div><div class="swatch-hex">#F5A623</div></div></div>
+      <div class="swatch"><div class="chip" style="background:#FF5A4E"></div><div class="swatch-meta"><div class="swatch-name">Critical</div><div class="swatch-hex">#FF5A4E</div></div></div>
     </div>
 
     <ul class="plain">
-      <li><strong>مشکی خالص</strong> زمینه، کارت‌های خاکستری تیره با گردی ۱۴–۲۰ پیکسل، دکمه‌های قرص‌شکل.</li>
-      <li><strong>لایم فقط برای کنش اصلی و عدد کلیدی.</strong> در AVEX لایم کم اما قاطع استفاده شده — همان انضباط را نگه می‌داریم.</li>
-      <li><strong>مونواسپیس برای هر عدد و شناسه</strong> — موجودی، قیمت، آدرس، شناسه‌ی فاکتور. AVEX همین کار را می‌کند (<span class="m">#isaac</span>، <span class="m">Elo 19865</span>، <span class="m">1,948 AX</span>).</li>
-      <li><strong>ایموجی به‌عنوان نشانگر بخش</strong> — بخشی از لحن AVEX است، نه تزئین.</li>
-      <li><strong>تک‌تم تاریک.</strong> AVEX تم روشن ندارد؛ ساختن یکی برای Pay آن را از خانواده جدا می‌کند.</li>
+      <li><strong>Pure black</strong> ground, dark grey cards at a 14–20px radius, pill buttons.</li>
+      <li><strong>Lime only for the primary action and the key number.</strong> AVEX uses it sparingly but decisively — keep that discipline.</li>
+      <li><strong>Monospace for every number and identifier</strong> — balances, prices, addresses, invoice IDs. AVEX already does this (<span class="m">#isaac</span>, <span class="m">Elo 19865</span>, <span class="m">1,948 AX</span>).</li>
+      <li><strong>Emoji as section markers</strong> — part of the AVEX voice, not decoration.</li>
+      <li><strong>One dark theme.</strong> AVEX has no light theme; building one for Pay would separate it from the family.</li>
     </ul>
 
-    <div class="note warn">
-      <div class="note-title">▲ صفحه‌ی پرداختی که ساختم باید بازطراحی شود</div>
+    <div class="note ok">
+      <div class="note-title">✓ The checkout page has been restyled</div>
       <p>
-        آن را با کاغذ گرم و پترول ساختم — قبل از دیدن AVEX. <strong>با هویت شما هم‌خوان
-        نیست.</strong> منطق و تعامل و انکودر QR درست است و می‌ماند؛ فقط لایه‌ی توکن‌های
-        رنگ و تایپ عوض می‌شود. حدود نیم روز کار.
+        It was originally built in warm paper and petrol, before the AVEX screenshots
+        existed, and <strong>did not match the product's identity</strong>. The palette,
+        type and radii now follow the tokens above; the logic, interactions and QR
+        encoder were left untouched. Verified by rendering in Chromium at 1280px and
+        390px. Done in phase 05.
       </p>
     </div>
   </section>
@@ -360,200 +366,200 @@
   <!-- ═══════════ admin panel ═══════════ -->
   <section>
     <div class="sec-head">
-      <h2 class="sec-title">🛡️ پنل ادمین — مال خودمان</h2>
+      <h2 class="sec-title">🛡️ Admin panel — ours</h2>
       <p class="sec-note">
-        این ابزار تیم AVEX است، نه مرچنت. معیار انتخاب رده‌ی ۱ ساده بود: بدون آن،
-        حل یک مشکل نیاز به <code>psql</code> دارد — و در سیستم پول، دسترسی دستی به
-        دیتابیس هم خطرناک است هم غیرقابل حسابرسی.
+        This is the AVEX team's tool, not the merchant's. The test for Tier 1 was
+        simple: without it, resolving a problem requires <code>psql</code> — and in a
+        money system, hand access to the database is both dangerous and unauditable.
       </p>
     </div>
 
     <div class="tier">
       <div class="tier-head">
-        <span class="tier-badge t1">رده ۱</span>
-        <span class="tier-name">بدون این‌ها نمی‌توان سیستم را اداره کرد</span>
-        <span class="tier-why">۳–۴ هفته</span>
+        <span class="tier-badge t1">Tier 1</span>
+        <span class="tier-name">Cannot operate the system without these</span>
+        <span class="tier-why">3–4 weeks</span>
       </div>
       <ol class="features">
         <li class="feature">
           <span class="fnum">01</span>
           <div class="fbody">
-            <div class="fname">فهرست و جزئیات مرچنت</div>
-            <div class="fwhy">وضعیت KYB، سطح ریسک، حجم، شبکه‌های فعال، تعلیق و رفع تعلیق. تعلیق باید <strong>فوری</strong> باشد و جلوی صدور اینوویس جدید را بگیرد.</div>
+            <div class="fname">Merchant list and detail</div>
+            <div class="fwhy">KYB state, risk tier, volume, enabled networks, suspend and reinstate. Suspension must take effect <strong>immediately</strong> and stop new invoices being issued.</div>
           </div>
-          <span class="fmeta">پایه</span>
+          <span class="fmeta">foundation</span>
         </li>
         <li class="feature">
           <span class="fnum">02</span>
           <div class="fbody">
-            <div class="fname">صف بازبینی قرارداد</div>
-            <div class="fwhy">نتیجه‌ی probe فاز ۳ با تمام یافته‌ها، و تصمیم تأیید یا رد با یادداشت. <strong>الان تنها راه تغییر verdict، دستکاری دیتابیس است.</strong></div>
+            <div class="fname">Contract review queue</div>
+            <div class="fwhy">The phase-3 probe result with every finding, and an approve-or-reject decision with a note. <strong>Right now the only way to change a verdict is to edit the database.</strong></div>
           </div>
-          <span class="fmeta">فاز ۳ آماده</span>
+          <span class="fmeta">phase 3 ready</span>
         </li>
         <li class="feature">
           <span class="fnum">03</span>
           <div class="fbody">
-            <div class="fname">پایش تسویه</div>
-            <div class="fwhy">عمق صف، gas فعلی، تعویق‌ها، تراکنش گیرکرده، و <strong>موجودی و runway کیف gas</strong>. اجراکننده این اعداد را از قبل تولید می‌کند؛ فقط جایی برای دیدن ندارند.</div>
+            <div class="fname">Settlement monitor</div>
+            <div class="fwhy">Queue depth, current gas, deferrals, stuck transactions, and <strong>gas wallet balance and runway</strong>. The runner already produces these figures; they have nowhere to be seen.</div>
           </div>
-          <span class="fmeta">فاز ۴ آماده</span>
+          <span class="fmeta">phase 4 ready</span>
         </li>
         <li class="feature">
           <span class="fnum">04</span>
           <div class="fbody">
-            <div class="fname">تطبیق پرداخت بی‌صاحب</div>
-            <div class="fwhy">TON بدون memo، مبلغ اشتباه، دارایی اشتباه. اختصاص دستی به فاکتور یا مسیر بازگشت. <strong>هر پرداخت بی‌صاحب یک مشتری عصبانی است</strong> و بدون این ابزار حلش ساعت‌ها می‌برد.</div>
+            <div class="fname">Unmatched payment reconciliation</div>
+            <div class="fwhy">TON without a memo, wrong amount, wrong asset. Manual assignment to an invoice, or a return path. <strong>Every unmatched payment is an angry customer</strong>, and without this tool each one takes hours.</div>
           </div>
-          <span class="fmeta">بحرانی</span>
+          <span class="fmeta">critical</span>
         </li>
         <li class="feature">
           <span class="fnum">05</span>
           <div class="fbody">
-            <div class="fname">سلامت سیستم</div>
-            <div class="fwhy">وضعیت RPC هر شبکه، قطع‌کننده‌های باز اوراکل، <strong>عقب‌افتادگی واچر هر شبکه</strong>، نرخ خطای وبهوک. عقب‌افتادگی واچر یعنی پرداخت‌ها دیده نمی‌شوند — و بی‌صدا اتفاق می‌افتد.</div>
+            <div class="fname">System health</div>
+            <div class="fwhy">Per-network RPC state, open oracle breakers, <strong>per-network watcher lag</strong>, webhook error rate. Watcher lag means payments are not being seen — and it happens silently.</div>
           </div>
-          <span class="fmeta">بحرانی</span>
+          <span class="fmeta">critical</span>
         </li>
         <li class="feature">
           <span class="fnum">06</span>
           <div class="fbody">
-            <div class="fname">جست‌وجوی لاگ حسابرسی</div>
-            <div class="fwhy">بین همه‌ی مرچنت‌ها، با فیلتر بازیگر و کنش و هدف. جدولش از فاز ۱ وجود دارد و پر می‌شود؛ فقط خوانده نمی‌شود.</div>
+            <div class="fname">Audit log search</div>
+            <div class="fwhy">Across all merchants, filtered by actor, action and target. The table has existed since phase 1 and is being written to; nothing reads it.</div>
           </div>
-          <span class="fmeta">فاز ۱ آماده</span>
+          <span class="fmeta">phase 1 ready</span>
         </li>
       </ol>
     </div>
 
     <div class="tier">
       <div class="tier-head">
-        <span class="tier-badge t2">رده ۲</span>
-        <span class="tier-name">با رشد حجم لازم می‌شوند</span>
-        <span class="tier-why">۳–۴ هفته</span>
+        <span class="tier-badge t2">Tier 2</span>
+        <span class="tier-name">Needed as volume grows</span>
+        <span class="tier-why">3–4 weeks</span>
       </div>
       <ol class="features">
         <li class="feature">
           <span class="fnum">07</span>
           <div class="fbody">
-            <div class="fname">تطبیق مالی روزانه</div>
-            <div class="fwhy">آن‌چین در برابر دیتابیس، هر شبکه هر روز، با آلارم انحراف. <strong>این تنها چیزی است که می‌گوید حساب‌ها درست است</strong> — و اگر نباشد، اشتباه ماه‌ها پنهان می‌ماند.</div>
+            <div class="fname">Daily financial reconciliation</div>
+            <div class="fwhy">On-chain against the database, per network, per day, with a drift alarm. <strong>This is the only thing that says the books are right</strong> — and without it a mistake stays hidden for months.</div>
           </div>
-          <span class="fmeta">مهم</span>
+          <span class="fmeta">important</span>
         </li>
         <li class="feature">
           <span class="fnum">08</span>
           <div class="fbody">
-            <div class="fname">جست‌وجوی فاکتور و پرداخت (سراسری)</div>
-            <div class="fwhy">ابزار پشتیبانی. با هش تراکنش، آدرس، شناسه، یا مبلغ.</div>
+            <div class="fname">Global invoice and payment search</div>
+            <div class="fwhy">The support tool. By transaction hash, address, identifier or amount.</div>
           </div>
-          <span class="fmeta">پشتیبانی</span>
+          <span class="fmeta">support</span>
         </li>
         <li class="feature">
           <span class="fnum">09</span>
           <div class="fbody">
-            <div class="fname">تأیید بازپرداخت</div>
-            <div class="fwhy">بازپرداخت کریپتو باید به آدرس فرستنده برود — و اگر آن کیف داغ صرافی باشد، <strong>پول گم می‌شود</strong>. تشخیص آدرس صرافی و تأیید اجباری مقصد.</div>
+            <div class="fname">Refund approval</div>
+            <div class="fwhy">A crypto refund has to go to the sending address — and if that is an exchange's hot wallet, <strong>the money is lost</strong>. Exchange-address detection and a mandatory destination confirmation.</div>
           </div>
-          <span class="fmeta">خطرناک</span>
+          <span class="fmeta">dangerous</span>
         </li>
         <li class="feature">
           <span class="fnum">10</span>
           <div class="fbody">
-            <div class="fname">مدیریت فهرست دارایی سراسری</div>
-            <div class="fwhy">افزودن دارایی curated، پرچم ریسک، اجبار <code>fixed_rate</code>. الان فهرست در کد است و تغییرش ریلیز می‌خواهد.</div>
+            <div class="fname">Global asset list management</div>
+            <div class="fwhy">Add a curated asset, flag risk, force <code>fixed_rate</code>. The list currently lives in code, so changing it needs a release.</div>
           </div>
-          <span class="fmeta">عملیاتی</span>
+          <span class="fmeta">operational</span>
         </li>
         <li class="feature">
           <span class="fnum">11</span>
           <div class="fbody">
-            <div class="fname">نرخ اختصاصی مرچنت</div>
-            <div class="fwhy">درصد مذاکره‌شده برای مرچنت پرحجم، با کف تعیین‌شده. لازمه‌ی فروش سازمانی.</div>
+            <div class="fname">Per-merchant pricing</div>
+            <div class="fwhy">A negotiated rate for a high-volume merchant, with an enforced floor. A prerequisite for enterprise sales.</div>
           </div>
-          <span class="fmeta">تجاری</span>
+          <span class="fmeta">commercial</span>
         </li>
         <li class="feature">
           <span class="fnum">12</span>
           <div class="fbody">
-            <div class="fname">نمای پشتیبانی (impersonate)</div>
-            <div class="fwhy">دیدن داشبورد مرچنت برای رفع مشکل — <strong>فقط خواندنی و کاملاً در لاگ حسابرسی</strong>. بدون این دو قید، خودش تبدیل به بردار حمله می‌شود.</div>
+            <div class="fname">Support view (impersonation)</div>
+            <div class="fwhy">Seeing a merchant's dashboard to resolve a problem — <strong>read-only and fully in the audit log</strong>. Without both constraints it becomes an attack vector itself.</div>
           </div>
-          <span class="fmeta">با احتیاط</span>
+          <span class="fmeta">handle with care</span>
         </li>
         <li class="feature">
           <span class="fnum">13</span>
           <div class="fbody">
-            <div class="fname">بازرس تحویل وبهوک</div>
-            <div class="fwhy">تاریخچه‌ی هر مرچنت، دلیل شکست، و ارسال مجدد. سرویس و جدولش از فاز ۴ آماده است.</div>
+            <div class="fname">Webhook delivery inspector</div>
+            <div class="fwhy">Per-merchant history, failure reason, and replay. The service and its table are ready from phase 4.</div>
           </div>
-          <span class="fmeta">فاز ۴ آماده</span>
+          <span class="fmeta">phase 4 ready</span>
         </li>
       </ol>
     </div>
 
     <div class="tier">
       <div class="tier-head">
-        <span class="tier-badge t3">رده ۳</span>
-        <span class="tier-name">مقیاس و عملیات</span>
-        <span class="tier-why">۴–۵ هفته</span>
+        <span class="tier-badge t3">Tier 3</span>
+        <span class="tier-name">Scale and operations</span>
+        <span class="tier-why">4–5 weeks</span>
       </div>
       <ol class="features">
         <li class="feature">
           <span class="fnum">14</span>
           <div class="fbody">
-            <div class="fname">مدیریت کیف gas</div>
-            <div class="fwhy">جداسازی داغ و گرم، سقف خرج هر شبکه، درخواست شارژ. اجراکننده سقف را اعمال می‌کند؛ تنظیمش باید بدون دیپلوی باشد.</div>
+            <div class="fname">Gas wallet management</div>
+            <div class="fwhy">Hot and warm separation, per-network spend cap, top-up request. The runner enforces the cap; setting it should not need a deploy.</div>
           </div>
-          <span class="fmeta">عملیاتی</span>
+          <span class="fmeta">operational</span>
         </li>
         <li class="feature">
           <span class="fnum">15</span>
           <div class="fbody">
-            <div class="fname">کنترل دستی قطع‌کننده</div>
-            <div class="fwhy">بستن یا باز کردن یک شبکه یا دارایی با دست. وقتی چیزی عجیب است، <strong>اپراتور باید بتواند فوری متوقف کند</strong> بدون ریلیز.</div>
+            <div class="fname">Manual breaker control</div>
+            <div class="fwhy">Open or close a network or an asset by hand. When something looks wrong, <strong>an operator must be able to stop it immediately</strong>, without a release.</div>
           </div>
-          <span class="fmeta">ایمنی</span>
+          <span class="fmeta">safety</span>
         </li>
         <li class="feature">
           <span class="fnum">16</span>
           <div class="fbody">
-            <div class="fname">مسیردهی هشدار</div>
-            <div class="fwhy">چه کسی برای چه چیزی page می‌شود. هشدارها از فاز ۲ و ۴ تولید می‌شوند و فعلاً فقط در لاگ می‌نشینند.</div>
+            <div class="fname">Alert routing</div>
+            <div class="fwhy">Who gets paged for what. Alerts are produced in phases 2 and 4 and currently only sit in the log.</div>
           </div>
-          <span class="fmeta">عملیاتی</span>
+          <span class="fmeta">operational</span>
         </li>
         <li class="feature">
           <span class="fnum">17</span>
           <div class="fbody">
-            <div class="fname">جریان پذیرش مرچنت</div>
-            <div class="fwhy">تأیید ثبت‌نام، درخواست مدارک، سطح‌بندی. تا زمانی که پذیرش دستی است، این صف تو را از گم شدن نجات می‌دهد.</div>
+            <div class="fname">Merchant onboarding flow</div>
+            <div class="fwhy">Approve a signup, request documents, assign a tier. While onboarding is manual, this queue is what stops applications getting lost.</div>
           </div>
-          <span class="fmeta">رشد</span>
+          <span class="fmeta">growth</span>
         </li>
         <li class="feature">
           <span class="fnum">18</span>
           <div class="fbody">
-            <div class="fname">گزارش و خروجی</div>
-            <div class="fwhy">حجم، درآمد، اقتصاد هر شبکه، خروجی CSV برای حساب‌داری.</div>
+            <div class="fname">Reporting and export</div>
+            <div class="fwhy">Volume, revenue, per-network economics, CSV export for accounting.</div>
           </div>
-          <span class="fmeta">تجاری</span>
+          <span class="fmeta">commercial</span>
         </li>
         <li class="feature">
           <span class="fnum">19</span>
           <div class="fbody">
-            <div class="fname">فلگ قابلیت هر مرچنت</div>
-            <div class="fwhy">دسترسی به شبکه‌ی جدید، قابلیت بتا، سقف حجم دوره‌ی بتا.</div>
+            <div class="fname">Per-merchant feature flags</div>
+            <div class="fwhy">Access to a new network, beta features, a volume ceiling during beta.</div>
           </div>
-          <span class="fmeta">رشد</span>
+          <span class="fmeta">growth</span>
         </li>
         <li class="feature">
           <span class="fnum">20</span>
           <div class="fbody">
-            <div class="fname">تطبیق استارز و Fragment</div>
-            <div class="fwhy">موجودی استارز، قفل ۲۱ روزه، رصد برداشت. مسیر استارز چرخه‌ی عمر جدا دارد و باید جدا هم دیده شود.</div>
+            <div class="fname">Stars and Fragment reconciliation</div>
+            <div class="fwhy">Stars balance, the 21-day lock, withdrawal tracking. The Stars path has its own lifecycle and needs its own view.</div>
           </div>
-          <span class="fmeta">فاز ۸</span>
+          <span class="fmeta">phase 10</span>
         </li>
       </ol>
     </div>
@@ -562,164 +568,166 @@
   <!-- ═══════════ reseller panel ═══════════ -->
   <section>
     <div class="sec-head">
-      <h2 class="sec-title">🤝 پنل نماینده</h2>
+      <h2 class="sec-title">🤝 Reseller panel</h2>
       <p class="sec-note">
-        نماینده مرچنت می‌آورد و کمیسیون می‌گیرد. کل ارزش این پنل یک چیز است:
-        <strong>نماینده باید بتواند درآمدش را خودش ببیند و اثباتش کند</strong> — وگرنه هر
-        ماه به پشتیبانی پیام می‌دهد و اعتماد از بین می‌رود.
+        A reseller brings merchants and earns commission. The whole value of this panel
+        is one thing: <strong>a reseller must be able to see their own earnings and
+        prove them</strong> — otherwise they message support every month and trust
+        erodes.
       </p>
     </div>
 
     <div class="tier">
       <div class="tier-head">
-        <span class="tier-badge t1">رده ۱</span>
-        <span class="tier-name">حداقل قابل عرضه</span>
-        <span class="tier-why">۲–۳ هفته</span>
+        <span class="tier-badge t1">Tier 1</span>
+        <span class="tier-name">Minimum shippable</span>
+        <span class="tier-why">2–3 weeks</span>
       </div>
       <ol class="features">
         <li class="feature">
           <span class="fnum">01</span>
           <div class="fbody">
-            <div class="fname">لینک و کد معرف، با انتساب</div>
-            <div class="fwhy">انتساب باید <strong>در لحظه‌ی ثبت‌نام قطعی شود و بعد تغییرنکردنی باشد</strong> — انتساب قابل‌تغییر یعنی دعوا بر سر کمیسیون.</div>
+            <div class="fname">Referral link and code, with attribution</div>
+            <div class="fwhy">Attribution must be <strong>fixed at signup and immutable thereafter</strong> — reassignable attribution means arguments over commission.</div>
           </div>
-          <span class="fmeta">پایه</span>
+          <span class="fmeta">foundation</span>
         </li>
         <li class="feature">
           <span class="fnum">02</span>
           <div class="fbody">
-            <div class="fname">فهرست مرچنت‌های خودش</div>
-            <div class="fwhy">وضعیت و حجم — <strong>بدون دیدن فاکتور و مشتریان آن‌ها</strong>. نماینده حق دیدن داده‌ی تجاری مرچنت را ندارد.</div>
+            <div class="fname">Their own merchant list</div>
+            <div class="fwhy">Status and volume — <strong>without seeing those merchants' invoices or customers</strong>. A reseller has no right to a merchant's commercial data.</div>
           </div>
-          <span class="fmeta">مرزبندی</span>
+          <span class="fmeta">boundary</span>
         </li>
         <li class="feature">
           <span class="fnum">03</span>
           <div class="fbody">
-            <div class="fname">داشبورد کمیسیون</div>
-            <div class="fwhy">کسب‌شده، در انتظار، پرداخت‌شده — به تفکیک مرچنت و دوره، با <strong>مبنای محاسبه‌ی قابل بازبینی</strong>. عدد بدون توضیح، تیکت می‌سازد.</div>
+            <div class="fname">Commission dashboard</div>
+            <div class="fwhy">Earned, pending, paid — broken down by merchant and period, with an <strong>auditable calculation basis</strong>. A number with no explanation generates a ticket.</div>
           </div>
-          <span class="fmeta">قلب پنل</span>
+          <span class="fmeta">heart of the panel</span>
         </li>
         <li class="feature">
           <span class="fnum">04</span>
           <div class="fbody">
-            <div class="fname">درخواست و تاریخچه‌ی تسویه</div>
-            <div class="fwhy">حداقل مبلغ، دوره‌ی انتظار، آدرس دریافت. <strong>تغییر آدرس دریافت نماینده هم باید همان تأخیر ۲۴ ساعته را داشته باشد</strong> — همان بردار حمله است.</div>
+            <div class="fname">Payout request and history</div>
+            <div class="fwhy">Minimum amount, waiting period, receiving address. <strong>Changing a reseller's receiving address must carry the same 24-hour delay</strong> — it is the same attack vector.</div>
           </div>
-          <span class="fmeta">امنیتی</span>
+          <span class="fmeta">security</span>
         </li>
       </ol>
     </div>
 
     <div class="tier">
       <div class="tier-head">
-        <span class="tier-badge t2">رده ۲</span>
-        <span class="tier-name">رشد شبکه‌ی فروش</span>
-        <span class="tier-why">۲–۳ هفته</span>
+        <span class="tier-badge t2">Tier 2</span>
+        <span class="tier-name">Growing the sales network</span>
+        <span class="tier-why">2–3 weeks</span>
       </div>
       <ol class="features">
         <li class="feature">
           <span class="fnum">05</span>
           <div class="fbody">
-            <div class="fname">پله‌های کمیسیون بر اساس حجم</div>
-            <div class="fwhy">نمایش پله‌ی فعلی و فاصله تا پله‌ی بعد. انگیزه‌ی واقعی می‌سازد و با فرهنگ Elo و Rank خود AVEX هم‌خوان است.</div>
+            <div class="fname">Volume-based commission tiers</div>
+            <div class="fwhy">Show the current tier and the distance to the next. Real motivation, and consistent with AVEX's own Elo and Rank culture.</div>
           </div>
-          <span class="fmeta">انگیزشی</span>
+          <span class="fmeta">motivational</span>
         </li>
         <li class="feature">
           <span class="fnum">06</span>
           <div class="fbody">
-            <div class="fname">ثبت‌نام مرچنت به نمایندگی</div>
-            <div class="fwhy">پیش‌پر کردن فرم و ارسال دعوت. <strong>مرچنت باید خودش رمز و دومرحله‌ای بسازد</strong> — نماینده هرگز نباید به حساب مرچنت دسترسی داشته باشد.</div>
+            <div class="fname">Signing up a merchant on their behalf</div>
+            <div class="fwhy">Pre-fill the form and send an invitation. <strong>The merchant must set their own password and second factor</strong> — a reseller must never have access to a merchant account.</div>
           </div>
-          <span class="fmeta">مرزبندی</span>
+          <span class="fmeta">boundary</span>
         </li>
         <li class="feature">
           <span class="fnum">07</span>
           <div class="fbody">
-            <div class="fname">بسته‌ی بازاریابی</div>
-            <div class="fwhy">بنر، متن آماده، راهنمای اتصال فارسی، ویدیو. بازار ایران با محتوای فارسی حرکت می‌کند.</div>
+            <div class="fname">Marketing kit</div>
+            <div class="fwhy">Banners, prepared copy, an integration guide in Persian, video. The Iranian market moves on Persian-language content.</div>
           </div>
-          <span class="fmeta">فروش</span>
+          <span class="fmeta">sales</span>
         </li>
         <li class="feature">
           <span class="fnum">08</span>
           <div class="fbody">
-            <div class="fname">نمای تیکت مرچنت‌ها</div>
-            <div class="fwhy">فقط خواندنی، با امکان ارجاع به AVEX. نماینده خط اول پشتیبانی است.</div>
+            <div class="fname">View of their merchants' tickets</div>
+            <div class="fwhy">Read-only, with escalation to AVEX. The reseller is first-line support.</div>
           </div>
-          <span class="fmeta">پشتیبانی</span>
+          <span class="fmeta">support</span>
         </li>
         <li class="feature">
           <span class="fnum">09</span>
           <div class="fbody">
-            <div class="fname">کلید API فقط‌خواندنی نماینده</div>
-            <div class="fwhy">برای داشبورد خودش. دامنه‌اش فقط آمار تجمیعی مرچنت‌های خودش — نه فاکتور، نه مشتری.</div>
+            <div class="fname">Read-only reseller API key</div>
+            <div class="fwhy">For their own dashboard. Scoped to aggregate statistics for their own merchants only — no invoices, no customers.</div>
           </div>
-          <span class="fmeta">فنی</span>
+          <span class="fmeta">technical</span>
         </li>
       </ol>
     </div>
 
     <div class="tier">
       <div class="tier-head">
-        <span class="tier-badge t3">رده ۳</span>
-        <span class="tier-name">اختیاری، بعد از اثبات مدل</span>
-        <span class="tier-why">۳–۴ هفته</span>
+        <span class="tier-badge t3">Tier 3</span>
+        <span class="tier-name">Optional, once the model is proven</span>
+        <span class="tier-why">3–4 weeks</span>
       </div>
       <ol class="features">
         <li class="feature">
           <span class="fnum">10</span>
           <div class="fbody">
-            <div class="fname">برندینگ سفید صفحه‌ی پرداخت</div>
-            <div class="fwhy">لوگوی نماینده روی checkout مرچنت‌هایش. فروش سازمانی را باز می‌کند.</div>
+            <div class="fname">White-labelled checkout</div>
+            <div class="fwhy">The reseller's logo on their merchants' checkout. Opens up enterprise sales.</div>
           </div>
-          <span class="fmeta">تجاری</span>
+          <span class="fmeta">commercial</span>
         </li>
         <li class="feature">
           <span class="fnum">11</span>
           <div class="fbody">
-            <div class="fname">قیمت‌گذاری در بازه‌ی مجاز</div>
-            <div class="fwhy">نماینده درصد مرچنتش را در بازه‌ای که AVEX تعیین می‌کند بچیند؛ مابه‌التفاوت کمیسیون او.</div>
+            <div class="fname">Pricing within an allowed band</div>
+            <div class="fwhy">The reseller sets their merchant's rate within a band AVEX defines; the difference is their commission.</div>
           </div>
-          <span class="fmeta">تجاری</span>
+          <span class="fmeta">commercial</span>
         </li>
         <li class="feature">
           <span class="fnum">12</span>
           <div class="fbody">
-            <div class="fname">جدول رده‌بندی نمایندگان</div>
-            <div class="fwhy">با فرهنگ گیمیفیکیشن AVEX (Elo، Rank، Streak) کاملاً جور است و رقابت سالم می‌سازد.</div>
+            <div class="fname">Reseller leaderboard</div>
+            <div class="fwhy">Fits AVEX's gamification culture (Elo, Rank, Streak) exactly, and creates healthy competition.</div>
           </div>
-          <span class="fmeta">انگیزشی</span>
+          <span class="fmeta">motivational</span>
         </li>
         <li class="feature">
           <span class="fnum">13</span>
           <div class="fbody">
-            <div class="fname">آموزش و صلاحیت</div>
-            <div class="fwhy">نماینده‌ای که محصول را نفهمیده، مرچنت بدقلق می‌آورد و بار پشتیبانی را بالا می‌برد.</div>
+            <div class="fname">Training and certification</div>
+            <div class="fwhy">A reseller who does not understand the product brings difficult merchants and raises the support load.</div>
           </div>
-          <span class="fmeta">کیفیت</span>
+          <span class="fmeta">quality</span>
         </li>
         <li class="feature">
           <span class="fnum">14</span>
           <div class="fbody">
-            <div class="fname">زیرنماینده — حداکثر دو سطح</div>
-            <div class="fwhy">اگر لازم شد، <strong>سقف دو سطح</strong>. عمیق‌تر از آن، ساختار شبیه بازاریابی شبکه‌ای می‌شود و هم اعتبار برند هم دسترسی به زیرساخت را به خطر می‌اندازد.</div>
+            <div class="fname">Sub-resellers — two levels maximum</div>
+            <div class="fwhy">If it becomes necessary, <strong>cap it at two levels</strong>. Deeper than that the structure resembles multi-level marketing, which risks both the brand and access to the infrastructure.</div>
           </div>
-          <span class="fmeta">با احتیاط</span>
+          <span class="fmeta">handle with care</span>
         </li>
       </ol>
     </div>
 
     <div class="note warn">
-      <div class="note-title">▲ یک نکته‌ی جدی درباره‌ی کمیسیون</div>
+      <div class="note-title">▲ One serious point about commission</div>
       <p>
-        کمیسیون روی <strong>حجم پرداخت</strong> در بسیاری از حوزه‌های قضایی مدل «نمایندگی
-        پرداخت» حساب می‌شود و مقررات خودش را دارد. اگر روزی مرچنت خارج از ایران بگیری،
-        این ساختار همان چیزی است که اول بررسی می‌شود. الان محدودش کن به بازار داخل و
-        <strong>مبنای محاسبه را از روز اول شفاف و قابل حسابرسی نگه دار</strong> — بازسازی
-        تاریخی کمیسیون بعداً تقریباً غیرممکن است.
+        Commission charged on <strong>payment volume</strong> is treated as a regulated
+        "payment agent" model in many jurisdictions. If you ever take merchants outside
+        Iran, this structure is the first thing that gets examined. Keep it to the
+        domestic market for now, and
+        <strong>keep the calculation basis transparent and auditable from day one</strong> —
+        reconstructing commission history after the fact is close to impossible.
       </p>
     </div>
   </section>
@@ -727,142 +735,142 @@
   <!-- ═══════════ api & docs ═══════════ -->
   <section>
     <div class="sec-head">
-      <h2 class="sec-title">🔑 API، کلیدها و مستندات</h2>
+      <h2 class="sec-title">🔑 API, keys and documentation</h2>
       <p class="sec-note">
-        زیرساخت کلید از فاز ۱ آماده است — کلید دامنه‌دار، حالت تست و زنده، ذخیره‌ی هش‌شده،
-        و ممنوعیت دسترسی‌های نیازمند دومرحله‌ای برای کلید بی‌سر. آنچه مانده سطح عمومی API
-        و مستندات است.
+        The key infrastructure has been ready since phase 1 — scoped keys, test and live
+        modes, hashed storage, and a prohibition on headless keys holding
+        elevation-gated scopes. What remains is the public API surface and the docs.
       </p>
     </div>
 
     <div class="tbl-wrap">
       <table>
         <thead>
-          <tr><th>زیردامنه</th><th>برای</th><th>دسترسی</th></tr>
+          <tr><th>Subdomain</th><th>For</th><th>Access</th></tr>
         </thead>
         <tbody>
-          <tr><td class="m">api.avex…</td><td>API عمومی مرچنت</td><td>کلید API</td></tr>
-          <tr><td class="m">pay.avex…</td><td>صفحه‌ی پرداخت میزبانی‌شده</td><td>عمومی، با توکن فاکتور</td></tr>
-          <tr><td class="m">docs.avex…</td><td>مستندات و مرجع API</td><td>عمومی</td></tr>
-          <tr><td class="m">dash.avex…</td><td>داشبورد مرچنت</td><td>ورود + دومرحله‌ای</td></tr>
-          <tr><td class="m">partners.avex…</td><td>پنل نماینده</td><td>ورود + دومرحله‌ای</td></tr>
-          <tr><td class="m">admin.avex…</td><td>پنل ادمین</td><td>ورود + دومرحله‌ای + محدودیت IP</td></tr>
+          <tr><td class="m">api.avex…</td><td>Public merchant API</td><td>API key</td></tr>
+          <tr><td class="m">pay.avex…</td><td>Hosted checkout page</td><td>Public, with an invoice token</td></tr>
+          <tr><td class="m">docs.avex…</td><td>Documentation and API reference</td><td>Public</td></tr>
+          <tr><td class="m">dash.avex…</td><td>Merchant dashboard</td><td>Login + second factor</td></tr>
+          <tr><td class="m">partners.avex…</td><td>Reseller panel</td><td>Login + second factor</td></tr>
+          <tr><td class="m">admin.avex…</td><td>Admin panel</td><td>Login + second factor + IP allowlist</td></tr>
         </tbody>
       </table>
     </div>
 
     <div class="note stop">
-      <div class="note-title">■ پنل ادمین روی همان دامنه‌ی مرچنت نباشد</div>
+      <div class="note-title">■ The admin panel must not share an origin with the merchant dashboard</div>
       <p>
-        زیردامنه‌ی جدا، محدودیت IP، و کوکی جدا. اگر روی همان مبدأ باشد، <strong>یک XSS
-        در داشبورد مرچنت به پنل ادمین هم می‌رسد</strong> — و پنل ادمین می‌تواند مرچنت
-        تعلیق کند و verdict قرارداد را عوض کند.
+        Separate subdomain, IP allowlist, separate cookie. On the same origin,
+        <strong>an XSS in the merchant dashboard reaches the admin panel too</strong> —
+        and the admin panel can suspend merchants and change contract verdicts.
       </p>
     </div>
 
     <div class="sec-head" style="margin-top:.5rem">
-      <h2 class="sec-title" style="font-size:1.25rem">سطح API که باید منتشر شود</h2>
+      <h2 class="sec-title" style="font-size:1.25rem">The API surface to publish</h2>
     </div>
     <div class="tbl-wrap">
       <table>
-        <thead><tr><th class="m">endpoint</th><th>کار</th><th>نکته</th></tr></thead>
+        <thead><tr><th class="m">endpoint</th><th>Does</th><th>Note</th></tr></thead>
         <tbody>
-          <tr><td class="m">POST /v1/quotes</td><td>قفل نرخ</td><td>سه حالت قیمت‌گذاری</td></tr>
-          <tr><td class="m">POST /v1/invoices</td><td>ساخت فاکتور</td><td><code>Idempotency-Key</code> اجباری</td></tr>
-          <tr><td class="m">GET /v1/invoices/:id</td><td>وضعیت فاکتور</td><td>polling برای کسی که وبهوک ندارد</td></tr>
-          <tr><td class="m">GET /v1/invoices</td><td>فهرست و فیلتر</td><td>صفحه‌بندی مبنی بر cursor</td></tr>
-          <tr><td class="m">POST /v1/invoices/:id/refund</td><td>بازپرداخت</td><td>نیاز به تأیید مقصد</td></tr>
-          <tr><td class="m">GET /v1/assets</td><td>دارایی‌های فعال</td><td>با هزینه‌ی تسویه‌ی زنده</td></tr>
-          <tr><td class="m">GET /v1/prices</td><td>نرخ‌ها</td><td>وضعیت قطع‌کننده هم برمی‌گردد</td></tr>
-          <tr><td class="m">GET /v1/payouts</td><td>تاریخچه‌ی تسویه</td><td>با تفکیک کارمزد</td></tr>
-          <tr><td class="m">/v1/webhook-endpoints</td><td>مدیریت وبهوک</td><td>secret یک بار نمایش</td></tr>
+          <tr><td class="m">POST /v1/quotes</td><td>Lock a rate</td><td>Three pricing modes</td></tr>
+          <tr><td class="m">POST /v1/invoices</td><td>Create an invoice</td><td><code>Idempotency-Key</code> required</td></tr>
+          <tr><td class="m">GET /v1/invoices/:id</td><td>Invoice state</td><td>Polling, for anyone without webhooks</td></tr>
+          <tr><td class="m">GET /v1/invoices</td><td>List and filter</td><td>Cursor-based pagination</td></tr>
+          <tr><td class="m">POST /v1/invoices/:id/refund</td><td>Refund</td><td>Destination confirmation required</td></tr>
+          <tr><td class="m">GET /v1/assets</td><td>Enabled assets</td><td>With live settlement cost</td></tr>
+          <tr><td class="m">GET /v1/prices</td><td>Rates</td><td>Returns breaker state too</td></tr>
+          <tr><td class="m">GET /v1/payouts</td><td>Payout history</td><td>With a fee breakdown</td></tr>
+          <tr><td class="m">/v1/webhook-endpoints</td><td>Webhook management</td><td>Secret shown once</td></tr>
         </tbody>
       </table>
     </div>
 
     <ul class="plain" style="margin-top:.25rem">
-      <li><strong>هدرها:</strong> <code>Authorization: Bearer ak_live_…</code> · <code>Idempotency-Key</code> · <code>AVEX-Version</code> برای نسخه‌بندی</li>
-      <li><strong>خطا:</strong> شکل ثابت با <code>error</code> و <code>message</code> و <code>fields</code> — قابل پارس، و قابل نمایش به کاربر نهایی</li>
-      <li><strong>حالت تست:</strong> کلید <code>ak_test_</code> باید یک زنجیره‌ی جعلی بزند تا مرچنت بدون خرج کردن پول کل چرخه را تست کند. <strong>بدون این، هر مرچنت اولین تستش را با پول واقعی می‌کند.</strong></li>
+      <li><strong>Headers:</strong> <code>Authorization: Bearer ak_live_…</code> · <code>Idempotency-Key</code> · <code>AVEX-Version</code> for versioning</li>
+      <li><strong>Errors:</strong> one fixed shape with <code>error</code>, <code>message</code> and <code>fields</code> — parseable, and safe to show an end user</li>
+      <li><strong>Test mode:</strong> an <code>ak_test_</code> key must drive a fake chain so a merchant can exercise the whole cycle without spending money. <strong>Without it, every merchant's first test is with real funds.</strong></li>
     </ul>
 
     <div class="sec-head" style="margin-top:.5rem">
-      <h2 class="sec-title" style="font-size:1.25rem">مستندات — به ترتیب اهمیت</h2>
+      <h2 class="sec-title" style="font-size:1.25rem">Documentation — in order of importance</h2>
     </div>
     <ul class="plain">
-      <li><strong>شروع سریع در ۵ دقیقه</strong> — از کلید تا اولین فاکتور تست. اگر این بخش کار نکند، بقیه‌ی مستندات خوانده نمی‌شود.</li>
-      <li><strong>تأیید وبهوک با کد اجرایی</strong> در Node و PHP و Python. اکثر باگ‌های اتصال همین‌جاست.</li>
-      <li><strong>چرخه‌ی عمر فاکتور</strong> با نمودار وضعیت‌ها، شامل <code>underpaid</code> و <code>overpaid</code> و بازگردانی reorg.</li>
-      <li><strong>راهنمای شبکه‌ها</strong> — هزینه، سرعت، الزام memo، و حداقل مبلغ هر شبکه.</li>
-      <li><strong>پلاگین WooCommerce</strong> — بازار ایران عمدتاً وردپرس است؛ این از SDK هم مهم‌تر است.</li>
-      <li>SDK برای Node و PHP و Python، مجموعه‌ی Postman، و مرجع خطاها.</li>
+      <li><strong>Five-minute quickstart</strong> — from key to first test invoice. If this section does not work, nothing else gets read.</li>
+      <li><strong>Webhook verification with runnable code</strong> in Node, PHP and Python. Most integration bugs live here.</li>
+      <li><strong>Invoice lifecycle</strong> with a state diagram, including <code>underpaid</code>, <code>overpaid</code> and reorg reversal.</li>
+      <li><strong>Network guide</strong> — cost, speed, memo requirement and minimum amount per network.</li>
+      <li><strong>WooCommerce plugin</strong> — the Iranian market is largely WordPress, which makes this more important than the SDKs.</li>
+      <li>SDKs for Node, PHP and Python, a Postman collection, and an error reference.</li>
     </ul>
   </section>
 
   <!-- ═══════════ build order ═══════════ -->
   <section>
     <div class="sec-head">
-      <h2 class="sec-title">🗺️ ترتیب ساخت</h2>
+      <h2 class="sec-title">🗺️ Build order</h2>
       <p class="sec-note">
-        ادامه‌ی رودمپ اصلی. فاز ۱ تا ۴ انجام شده؛ این‌ها از اینجا به بعد.
+        Continuing the main roadmap. Phases 1–5 are done; these are what follows.
       </p>
     </div>
 
     <div class="phases">
-      <div class="phase">
-        <div><div class="phase-id">05</div><div class="phase-weeks">۱–۲ هفته</div></div>
+      <div class="phase done">
+        <div><div class="phase-id">05</div><div class="phase-weeks">done</div></div>
         <div class="phase-body">
-          <div class="phase-title">بازطراحی صفحه‌ی پرداخت با هویت AVEX</div>
-          <div class="phase-desc">توکن‌های مشکی و لایم، کارت‌های گرد، اعداد مونو. منطق و QR دست‌نخورده. سریع‌ترین کاری که محصول را «خودی» می‌کند.</div>
+          <div class="phase-title">Restyle the checkout in AVEX's identity</div>
+          <div class="phase-desc">Black and lime tokens, rounded cards, monospace numbers. Logic and QR untouched. Also raised body-text contrast off a failing 3.1:1 and made the rate lock and network chooser inert once a payment settles.</div>
         </div>
       </div>
       <div class="phase">
-        <div><div class="phase-id">06</div><div class="phase-weeks">۳–۴ هفته</div></div>
+        <div><div class="phase-id">06</div><div class="phase-weeks">3–4 weeks</div></div>
         <div class="phase-body">
-          <div class="phase-title">پنل ادمین رده ۱</div>
-          <div class="phase-desc">شش قابلیت اول. <strong>قبل از هر مرچنت واقعی</strong> — چون بدون آن‌ها اداره‌ی سیستم یعنی دسترسی دستی به دیتابیس.</div>
+          <div class="phase-title">Admin panel, Tier 1</div>
+          <div class="phase-desc">The first six features. <strong>Before any real merchant</strong> — without them, operating the system means hand access to the database.</div>
         </div>
       </div>
       <div class="phase">
-        <div><div class="phase-id">07</div><div class="phase-weeks">۴–۵ هفته</div></div>
+        <div><div class="phase-id">07</div><div class="phase-weeks">4–5 weeks</div></div>
         <div class="phase-body">
-          <div class="phase-title">داشبورد مرچنت</div>
-          <div class="phase-desc">راه‌اندازی، آدرس تسویه، فعال‌سازی دارایی، فاکتورها، وبهوک، کلید API. با هویت AVEX.</div>
+          <div class="phase-title">Merchant dashboard</div>
+          <div class="phase-desc">Onboarding, payout address, asset enablement, invoices, webhooks, API keys. In AVEX's identity.</div>
         </div>
       </div>
       <div class="phase">
-        <div><div class="phase-id">08</div><div class="phase-weeks">۲–۳ هفته</div></div>
+        <div><div class="phase-id">08</div><div class="phase-weeks">2–3 weeks</div></div>
         <div class="phase-body">
-          <div class="phase-title">API عمومی، حالت تست، مستندات</div>
-          <div class="phase-desc">سطح API با idempotency، زنجیره‌ی جعلی برای کلید تست، مستندات و پلاگین WooCommerce.</div>
+          <div class="phase-title">Public API, test mode, documentation</div>
+          <div class="phase-desc">The API surface with idempotency, a fake chain for test keys, the docs and the WooCommerce plugin.</div>
         </div>
       </div>
       <div class="phase">
-        <div><div class="phase-id">09</div><div class="phase-weeks">۲–۳ هفته</div></div>
+        <div><div class="phase-id">09</div><div class="phase-weeks">2–3 weeks</div></div>
         <div class="phase-body">
-          <div class="phase-title">پنل نماینده رده ۱</div>
-          <div class="phase-desc">معرف، فهرست مرچنت، داشبورد کمیسیون، تسویه. مبنای محاسبه از روز اول قابل حسابرسی.</div>
+          <div class="phase-title">Reseller panel, Tier 1</div>
+          <div class="phase-desc">Referrals, merchant list, commission dashboard, payouts. Calculation basis auditable from day one.</div>
         </div>
       </div>
       <div class="phase">
-        <div><div class="phase-id">10</div><div class="phase-weeks">۳–۴ هفته</div></div>
+        <div><div class="phase-id">10</div><div class="phase-weeks">3–4 weeks</div></div>
         <div class="phase-body">
-          <div class="phase-title">سطح تلگرام و استارز</div>
-          <div class="phase-desc">بات با <code>XTR</code>، Mini App محدود به TON، رصد Fragment. اینجا AVEX Pay به خود AVEX وصل می‌شود.</div>
+          <div class="phase-title">Telegram and Stars surface</div>
+          <div class="phase-desc">A bot using <code>XTR</code>, a Mini App restricted to TON, Fragment tracking. This is where AVEX Pay connects back to AVEX itself.</div>
         </div>
       </div>
       <div class="phase">
-        <div><div class="phase-id">11</div><div class="phase-weeks">۵–۷ هفته</div></div>
+        <div><div class="phase-id">11</div><div class="phase-weeks">5–7 weeks</div></div>
         <div class="phase-body">
-          <div class="phase-title">شبکه‌های باقی‌مانده + ادمین رده ۲</div>
-          <div class="phase-desc">ترون با delegation انرژی، سولانا، اتریوم با گیت gas. و تطبیق مالی روزانه.</div>
+          <div class="phase-title">Remaining networks + admin Tier 2</div>
+          <div class="phase-desc">Tron with energy delegation, Solana, Ethereum behind a gas gate. And daily financial reconciliation.</div>
         </div>
       </div>
       <div class="phase">
-        <div><div class="phase-id">12</div><div class="phase-weeks">۳–۴ هفته</div></div>
+        <div><div class="phase-id">12</div><div class="phase-weeks">3–4 weeks</div></div>
         <div class="phase-body">
-          <div class="phase-title">سخت‌سازی و بتای بسته</div>
-          <div class="phase-desc">observability، تست بار، بازبینی امنیتی، runbook. سپس ۵ تا ۱۰ مرچنت واقعی با سقف حجم.</div>
+          <div class="phase-title">Hardening and closed beta</div>
+          <div class="phase-desc">Observability, load testing, security review, runbooks. Then 5–10 real merchants under a volume ceiling.</div>
         </div>
       </div>
     </div>
@@ -871,19 +879,19 @@
   <!-- ═══════════ decisions needed ═══════════ -->
   <section>
     <div class="sec-head">
-      <h2 class="sec-title">❓ چیزی که از تو می‌خواهم</h2>
+      <h2 class="sec-title">❓ What I need from you</h2>
     </div>
     <ul class="plain">
-      <li><strong>دامنه.</strong> زیردامنه‌ها را با placeholder نوشتم؛ دامنه‌ی واقعی را بگو تا در کد و مستندات ثابت شود.</li>
-      <li><strong>مدل کمیسیون نماینده.</strong> درصدی از کارمزد AVEX، یا درصدی از حجم؟ اولی ریسک کمتری دارد و محاسبه‌اش شفاف‌تر است.</li>
-      <li><strong>AX و AVEX Pay چه نسبتی دارند؟</strong> آیا مرچنت می‌تواند با AX پرداخت بگیرد؟ اگر بله، AX یک دارایی <code>fixed_rate</code> در فهرست curated می‌شود و مسیر کاملاً متفاوتی از کریپتوی عمومی دارد.</li>
-      <li><strong>ترتیب بعدی.</strong> پیشنهاد من فاز ۵ است — بازطراحی صفحه‌ی پرداخت. کم‌هزینه‌ترین کاری که محصول را بخشی از AVEX نشان می‌دهد.</li>
+      <li><strong>The domain.</strong> The subdomains above are placeholders; give me the real domain so it can be fixed in code and docs.</li>
+      <li><strong>The reseller commission model.</strong> A share of the AVEX fee, or a share of volume? The first carries less risk and is more transparent to calculate.</li>
+      <li><strong>How do AX and AVEX Pay relate?</strong> Can a merchant accept AX? If so, AX becomes a <code>fixed_rate</code> asset on the curated list and follows a very different path from general crypto.</li>
+      <li><strong>Next up.</strong> Phase 06, the admin panel's Tier 1. The domain answer shapes it, since the panel needs its own origin.</li>
     </ul>
   </section>
 
   <footer>
-    <p>AVEX Pay · سند پنل‌ها و API · نسخه ۲ · شاخه‌ی <span class="m">claude/avex-pay-setup-cnlasi</span></p>
-    <p>توکن‌های رنگ از اسکرین‌شات‌های AVEX استخراج شده‌اند. تخمین‌ها برای تیم ۱–۲ نفره است.</p>
+    <p>AVEX Pay · panels and API document · rev 2 · branch <span class="m">claude/avex-pay-setup-cnlasi</span></p>
+    <p>Colour tokens extracted from the AVEX screenshots. Estimates assume a team of one to two.</p>
   </footer>
 
 </div>
