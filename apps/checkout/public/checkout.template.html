@@ -1,0 +1,915 @@
+<title>پرداخت AVEX</title>
+<style>
+  :root {
+    --paper: #F5F4F1;
+    --surface: #FFFFFF;
+    --sunk: #EDEDE8;
+    --ink: #13191C;
+    --muted: #5A666B;
+    --faint: #8B9599;
+    --rule: #E0E0DA;
+    --rule-firm: #C8CBC4;
+
+    --petrol: #17434E;
+    --petrol-soft: #E3EDEF;
+    --marigold: #A9660A;
+    --marigold-soft: #FAEFDC;
+    --settled: #1B6B4C;
+    --settled-soft: #E3F0E9;
+    --alarm: #9C302A;
+    --alarm-soft: #F8E7E5;
+
+    --fa: 'Vazirmatn', 'IRANSansX', 'IRANSans', Tahoma, system-ui, sans-serif;
+    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+    --s-1: 0.8125rem;
+    --s0: 0.9375rem;
+    --s1: 1.0625rem;
+    --s2: 1.3125rem;
+    --s3: 1.75rem;
+    --s4: 2.5rem;
+    --s5: 3.5rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0C1114;
+      --surface: #131A1D;
+      --sunk: #0F1518;
+      --ink: #E6EDEF;
+      --muted: #93A1A6;
+      --faint: #6A777C;
+      --rule: #223035;
+      --rule-firm: #33454B;
+
+      --petrol: #6FB4C4;
+      --petrol-soft: #16303660;
+      --marigold: #E0A33F;
+      --marigold-soft: #2E220E60;
+      --settled: #57C298;
+      --settled-soft: #14312460;
+      --alarm: #E58278;
+      --alarm-soft: #2F1A1860;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #0C1114;
+    --surface: #131A1D;
+    --sunk: #0F1518;
+    --ink: #E6EDEF;
+    --muted: #93A1A6;
+    --faint: #6A777C;
+    --rule: #223035;
+    --rule-firm: #33454B;
+
+    --petrol: #6FB4C4;
+    --petrol-soft: #16303660;
+    --marigold: #E0A33F;
+    --marigold-soft: #2E220E60;
+    --settled: #57C298;
+    --settled-soft: #14312460;
+    --alarm: #E58278;
+    --alarm-soft: #2F1A1860;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--fa);
+    font-size: var(--s0);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    direction: rtl;
+    text-align: right;
+    max-width: 68rem;
+    margin: 0 auto;
+    padding: clamp(1rem, 3vw, 2.5rem) clamp(0.875rem, 3vw, 2rem) 4rem;
+  }
+
+  /* ── masthead ───────────────────────────────────────────────────────── */
+
+  .masthead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-bottom: 0.875rem;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: clamp(1.25rem, 3vw, 2rem);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: var(--mono);
+    font-size: var(--s-1);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--petrol);
+    font-weight: 600;
+  }
+  .brand-mark {
+    width: 0.75rem;
+    height: 0.75rem;
+    border: 2px solid currentColor;
+    border-radius: 1px;
+    transform: rotate(45deg);
+  }
+
+  .invoice-ref {
+    font-family: var(--mono);
+    font-size: var(--s-1);
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── layout ─────────────────────────────────────────────────────────── */
+
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    gap: clamp(1rem, 2.5vw, 2rem);
+    align-items: start;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+  }
+
+  .panel-head {
+    padding: 0.875rem 1.25rem;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  h1 { font-size: var(--s2); font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: var(--s1); font-weight: 700; margin: 0; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0;
+  }
+
+  .body { padding: 1.25rem; display: flex; flex-direction: column; gap: 1.25rem; }
+
+  /* ── the amount, the page's hero ────────────────────────────────────── */
+
+  .amount-block { display: flex; flex-direction: column; gap: 0.25rem; }
+
+  .amount {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .amount-value {
+    font-family: var(--mono);
+    font-size: clamp(1.875rem, 5vw, var(--s4));
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    direction: ltr;
+  }
+  .amount-unit {
+    font-family: var(--mono);
+    font-size: var(--s1);
+    color: var(--muted);
+  }
+  .amount-fiat {
+    font-size: var(--s-1);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── network chooser: the distinctive part ──────────────────────────── */
+
+  .chooser { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .chooser-note {
+    font-size: var(--s-1);
+    color: var(--muted);
+    margin: 0;
+  }
+
+  .net-table { border: 1px solid var(--rule); border-radius: 3px; overflow: hidden; }
+
+  .net-row {
+    display: grid;
+    grid-template-columns: 1.5rem minmax(0, 1fr) auto auto;
+    gap: 0.75rem;
+    align-items: center;
+    width: 100%;
+    padding: 0.6875rem 0.875rem;
+    background: var(--surface);
+    border: none;
+    border-bottom: 1px solid var(--rule);
+    font: inherit;
+    color: inherit;
+    text-align: right;
+    cursor: pointer;
+    transition: background 120ms ease;
+  }
+  .net-row:last-child { border-bottom: none; }
+  .net-row:hover { background: var(--sunk); }
+  .net-row:focus-visible { outline: 2px solid var(--petrol); outline-offset: -2px; }
+  .net-row[aria-checked="true"] { background: var(--petrol-soft); }
+
+  .dot {
+    width: 0.875rem;
+    height: 0.875rem;
+    border: 1.5px solid var(--rule-firm);
+    border-radius: 50%;
+    position: relative;
+  }
+  .net-row[aria-checked="true"] .dot { border-color: var(--petrol); }
+  .net-row[aria-checked="true"] .dot::after {
+    content: '';
+    position: absolute;
+    inset: 2.5px;
+    background: var(--petrol);
+    border-radius: 50%;
+  }
+
+  .net-name { font-family: var(--mono); font-size: var(--s0); }
+  .net-time {
+    font-family: var(--mono);
+    font-size: var(--s-1);
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .net-cost {
+    font-family: var(--mono);
+    font-size: var(--s-1);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    padding: 0.05rem 0.4rem;
+    border-radius: 2px;
+    background: var(--sunk);
+    color: var(--muted);
+  }
+  .net-cost.free { background: var(--settled-soft); color: var(--settled); font-weight: 600; }
+
+  /* ── address + qr ───────────────────────────────────────────────────── */
+
+  .send-to { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 1.25rem; align-items: start; }
+
+  .qr-frame {
+    background: #FFFFFF;
+    padding: 0.625rem;
+    border: 1px solid var(--rule-firm);
+    border-radius: 3px;
+    line-height: 0;
+  }
+  .qr-frame svg { display: block; width: 8.5rem; height: 8.5rem; }
+
+  .field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .field-label {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  .copyable {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--rule-firm);
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--sunk);
+  }
+  .copyable code {
+    flex: 1;
+    min-width: 0;
+    padding: 0.5rem 0.625rem;
+    font-family: var(--mono);
+    font-size: var(--s-1);
+    direction: ltr;
+    text-align: left;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+  }
+  .copy-btn {
+    flex: none;
+    padding: 0 0.75rem;
+    border: none;
+    border-inline-start: 1px solid var(--rule-firm);
+    background: var(--surface);
+    color: var(--petrol);
+    font: inherit;
+    font-size: var(--s-1);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .copy-btn:hover { background: var(--petrol-soft); }
+  .copy-btn:focus-visible { outline: 2px solid var(--petrol); outline-offset: -2px; }
+  .copy-btn[data-copied="true"] { color: var(--settled); }
+
+  .memo-warning {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    background: var(--marigold-soft);
+    border-inline-start: 2px solid var(--marigold);
+    border-radius: 2px;
+    font-size: var(--s-1);
+    color: var(--ink);
+  }
+  .memo-warning strong { color: var(--marigold); }
+
+  /* ── rate lock: a depleting rule, not a clock ───────────────────────── */
+
+  .lock { display: flex; flex-direction: column; gap: 0.375rem; }
+  .lock-line {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: var(--s-1);
+  }
+  .lock-left { color: var(--muted); }
+  .lock-time {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--marigold);
+    font-weight: 600;
+  }
+  .lock-track { height: 2px; background: var(--rule); border-radius: 2px; overflow: hidden; }
+  .lock-fill {
+    height: 100%;
+    width: 100%;
+    background: var(--marigold);
+    transform-origin: right center;
+    transition: transform 1s linear;
+  }
+  .is-expired .lock-fill { background: var(--alarm); }
+  .is-expired .lock-time { color: var(--alarm); }
+
+  /* ── status ─────────────────────────────────────────────────────────── */
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-radius: 3px;
+    font-size: var(--s0);
+    background: var(--marigold-soft);
+    color: var(--ink);
+    border-inline-start: 3px solid var(--marigold);
+  }
+  .status[data-state="paid"] { background: var(--settled-soft); border-inline-start-color: var(--settled); }
+  .status[data-state="underpaid"], .status[data-state="expired"] {
+    background: var(--alarm-soft);
+    border-inline-start-color: var(--alarm);
+  }
+  .status-dot {
+    width: 0.5rem; height: 0.5rem; border-radius: 50%;
+    background: var(--marigold); flex: none;
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  .status[data-state="paid"] .status-dot { background: var(--settled); animation: none; }
+  .status[data-state="underpaid"] .status-dot,
+  .status[data-state="expired"] .status-dot { background: var(--alarm); animation: none; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .confirmations {
+    font-family: var(--mono);
+    font-size: var(--s-1);
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    margin-inline-start: auto;
+  }
+
+  /* ── steps ──────────────────────────────────────────────────────────── */
+
+  .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .step {
+    display: grid;
+    grid-template-columns: 1.375rem minmax(0, 1fr);
+    gap: 0.625rem;
+    padding: 0.5rem 0;
+    font-size: var(--s-1);
+    color: var(--faint);
+  }
+  .step + .step { border-top: 1px dashed var(--rule); }
+  .step-num {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    width: 1.375rem; height: 1.375rem;
+    display: grid; place-items: center;
+    border: 1px solid var(--rule-firm);
+    border-radius: 50%;
+    font-variant-numeric: tabular-nums;
+  }
+  .step[data-state="done"] { color: var(--muted); }
+  .step[data-state="done"] .step-num {
+    background: var(--settled); border-color: var(--settled); color: var(--surface);
+  }
+  .step[data-state="active"] { color: var(--ink); }
+  .step[data-state="active"] .step-num {
+    border-color: var(--marigold); color: var(--marigold); font-weight: 700;
+  }
+
+  /* ── aside ──────────────────────────────────────────────────────────── */
+
+  .summary { display: flex; flex-direction: column; }
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    font-size: var(--s-1);
+  }
+  .summary-row + .summary-row { border-top: 1px solid var(--rule); }
+  .summary-row dt { color: var(--muted); margin: 0; }
+  .summary-row dd {
+    margin: 0;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    direction: ltr;
+    text-align: left;
+  }
+  .summary-row.total { border-top: 2px solid var(--rule-firm); padding-top: 0.625rem; }
+  .summary-row.total dd { font-size: var(--s1); font-weight: 600; }
+
+  .fine {
+    font-size: 0.8125rem;
+    color: var(--faint);
+    margin: 0;
+    line-height: 1.6;
+  }
+
+  .demo-bar {
+    margin-top: 1.5rem;
+    padding: 0.75rem 1rem;
+    border: 1px dashed var(--rule-firm);
+    border-radius: 3px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: var(--s-1);
+    color: var(--muted);
+  }
+  .demo-bar strong { color: var(--ink); font-weight: 600; }
+  .demo-btn {
+    padding: 0.25rem 0.625rem;
+    border: 1px solid var(--rule-firm);
+    background: var(--surface);
+    color: var(--ink);
+    border-radius: 2px;
+    font: inherit;
+    font-size: var(--s-1);
+    cursor: pointer;
+  }
+  .demo-btn:hover { border-color: var(--petrol); color: var(--petrol); }
+  .demo-btn:focus-visible { outline: 2px solid var(--petrol); outline-offset: 1px; }
+
+  @media (max-width: 60rem) {
+    .split { grid-template-columns: minmax(0, 1fr); }
+    .send-to { grid-template-columns: minmax(0, 1fr); }
+    .qr-frame { justify-self: start; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span> AVEX PAY</div>
+    <div class="invoice-ref">فاکتور <span dir="ltr">#INV-8F2C41</span></div>
+  </header>
+
+  <div class="split">
+
+    <!-- ══ main: the action ══════════════════════════════════════════════ -->
+    <main class="panel">
+      <div class="panel-head">
+        <h1>پرداخت به فروشگاه نمونه</h1>
+        <p class="eyebrow">مرحله <span id="step-of">۲ از ۳</span></p>
+      </div>
+
+      <div class="body">
+
+        <div class="status" id="status" data-state="awaiting">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status-text">در انتظار پرداخت شما</span>
+          <span class="confirmations" id="confirmations"></span>
+        </div>
+
+        <section class="amount-block">
+          <p class="eyebrow">مبلغ قابل پرداخت</p>
+          <div class="amount">
+            <span class="amount-value" id="amount">20.100000</span>
+            <span class="amount-unit" id="amount-unit">USDT</span>
+          </div>
+          <p class="amount-fiat">معادل <span dir="ltr">$20.00</span> — نرخ تا پایان شمارش زیر قفل است</p>
+        </section>
+
+        <section class="lock" id="lock">
+          <div class="lock-line">
+            <span class="lock-left">قفل نرخ</span>
+            <span class="lock-time" id="lock-time">14:59</span>
+          </div>
+          <div class="lock-track"><div class="lock-fill" id="lock-fill"></div></div>
+        </section>
+
+        <section class="chooser">
+          <p class="eyebrow">شبکه را انتخاب کنید</p>
+          <p class="chooser-note">
+            هزینه‌ی تسویه‌ی هر شبکه را شفاف نشان می‌دهیم — ارزان‌ترین گزینه بالاست.
+          </p>
+          <div class="net-table" role="radiogroup" aria-label="شبکه پرداخت" id="networks"></div>
+        </section>
+
+        <section class="send-to">
+          <div class="qr-frame" id="qr" aria-label="کد QR آدرس واریز"></div>
+
+          <div class="field">
+            <span class="field-label">آدرس واریز</span>
+            <div class="copyable">
+              <code id="address">—</code>
+              <button class="copy-btn" type="button" data-copy="address">کپی</button>
+            </div>
+
+            <div id="memo-block" hidden>
+              <div class="field" style="margin-top:.75rem">
+                <span class="field-label">شناسه (memo)</span>
+                <div class="copyable">
+                  <code id="memo">—</code>
+                  <button class="copy-btn" type="button" data-copy="memo">کپی</button>
+                </div>
+              </div>
+              <div class="memo-warning" style="margin-top:.5rem">
+                <span aria-hidden="true">▲</span>
+                <span><strong>memo الزامی است.</strong> بدون آن پرداخت شما به این فاکتور وصل نمی‌شود و نیاز به پیگیری دستی دارد.</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+
+    <!-- ══ aside: context ════════════════════════════════════════════════ -->
+    <aside style="display:flex;flex-direction:column;gap:1rem">
+
+      <section class="panel">
+        <div class="panel-head"><h2>خلاصه</h2></div>
+        <div class="body">
+          <dl class="summary">
+            <div class="summary-row"><dt>کالا</dt><dd>اشتراک یک‌ساله</dd></div>
+            <div class="summary-row"><dt>مبلغ</dt><dd dir="ltr">$20.00</dd></div>
+            <div class="summary-row"><dt>هزینه‌ی تسویه</dt><dd dir="ltr" id="summary-cost">$0.0000</dd></div>
+            <div class="summary-row"><dt>نرخ</dt><dd dir="ltr" id="summary-rate">1 USDT = $1.00</dd></div>
+            <div class="summary-row total"><dt>پرداخت شما</dt><dd dir="ltr" id="summary-total">20.100000 USDT</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>چه اتفاقی می‌افتد</h2></div>
+        <div class="body">
+          <ol class="steps" id="steps">
+            <li class="step" data-state="done">
+              <span class="step-num">۱</span>
+              <span>فاکتور ساخته شد و نرخ قفل شد</span>
+            </li>
+            <li class="step" data-state="active">
+              <span class="step-num">۲</span>
+              <span>مبلغ دقیق را به آدرس بالا بفرستید</span>
+            </li>
+            <li class="step">
+              <span class="step-num">۳</span>
+              <span>پس از تأیید شبکه، پرداخت شما نهایی می‌شود</span>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>چند نکته</h2></div>
+        <div class="body" style="gap:.75rem">
+          <p class="fine">
+            این آدرس <strong>مخصوص همین فاکتور</strong> است و فقط می‌تواند به کیف فروشنده
+            پرداخت کند — AVEX در هیچ لحظه‌ای پول شما را نگه نمی‌دارد.
+          </p>
+          <p class="fine">
+            مبلغ کمتر از حد مجاز، فاکتور را «پرداخت ناقص» می‌کند و می‌توانید مابه‌التفاوت را
+            به همان آدرس بفرستید.
+          </p>
+          <p class="fine">
+            فقط دارایی انتخاب‌شده را روی همان شبکه بفرستید. ارسال توکن دیگر یا شبکه‌ی دیگر
+            قابل بازگشت نیست.
+          </p>
+        </div>
+      </section>
+
+    </aside>
+  </div>
+
+  <div class="demo-bar">
+    <strong>نمایش تعاملی:</strong>
+    <span>حالت‌های زنده را ببینید —</span>
+    <button class="demo-btn" type="button" data-demo="confirming">پرداخت رسید</button>
+    <button class="demo-btn" type="button" data-demo="paid">تأیید شد</button>
+    <button class="demo-btn" type="button" data-demo="underpaid">پرداخت ناقص</button>
+    <button class="demo-btn" type="button" data-demo="expired">انقضای نرخ</button>
+    <button class="demo-btn" type="button" data-demo="awaiting">بازنشانی</button>
+  </div>
+
+</div>
+
+<script>
+/* @inject:qr */
+
+(() => {
+  'use strict';
+
+  /**
+   * Networks, ordered cheapest settlement first.
+   *
+   * The costs are the figures FeePolicy produces for a single settlement, and
+   * showing them is the point: a payer choosing a network is choosing what the
+   * transfer costs, and every other checkout hides that.
+   */
+  const NETWORKS = [
+    {
+      id: 'ton', label: 'TON', asset: 'USDT', decimals: 6, confirm: '~۵ ثانیه',
+      cost: 0, memo: true,
+      address: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
+      amount: '20.020000',
+    },
+    {
+      id: 'solana', label: 'Solana', asset: 'USDT', decimals: 6, confirm: '~۱ ثانیه',
+      cost: 0.001,
+      address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+      amount: '20.020000',
+    },
+    {
+      id: 'bsc', label: 'BNB Chain', asset: 'USDT', decimals: 18, confirm: '~۴۵ ثانیه',
+      cost: 0.015,
+      address: '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52',
+      amount: '20.100000',
+    },
+    {
+      id: 'polygon', label: 'Polygon', asset: 'USDT', decimals: 6, confirm: '~۳ دقیقه',
+      cost: 0.015,
+      address: '0x3Bd18aE2Cc41fD7719Ae5cB0c3aF9C4E7d21B860',
+      amount: '20.100000',
+    },
+    {
+      id: 'ethereum', label: 'Ethereum', asset: 'USDT', decimals: 6, confirm: '~۳ دقیقه',
+      cost: 0.014,
+      address: '0xC91e5b2A4dF06BeF3F1a7b09C82d5Ae4f3B10E77',
+      amount: '20.100000',
+    },
+  ];
+
+  const MEMO = 'AVEX-INV-8F2C41';
+  const LOCK_SECONDS = 15 * 60;
+
+  const el = (id) => document.getElementById(id);
+  const fa = (value) => String(value).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]);
+
+  let selected = NETWORKS[0];
+  let state = 'awaiting';
+  let remaining = LOCK_SECONDS;
+  let confirmations = 0;
+
+  // ── network chooser ─────────────────────────────────────────────────────
+
+  function costLabel(cost) {
+    if (cost === 0) return { text: 'رایگان', free: true };
+    return { text: '$' + cost.toFixed(cost < 0.01 ? 4 : 3), free: false };
+  }
+
+  function renderNetworks() {
+    const container = el('networks');
+    container.textContent = '';
+
+    for (const network of NETWORKS) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'net-row';
+      row.setAttribute('role', 'radio');
+      row.setAttribute('aria-checked', String(network.id === selected.id));
+
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.setAttribute('aria-hidden', 'true');
+
+      const name = document.createElement('span');
+      name.className = 'net-name';
+      name.textContent = network.label;
+
+      const time = document.createElement('span');
+      time.className = 'net-time';
+      time.textContent = network.confirm;
+
+      const cost = costLabel(network.cost);
+      const costEl = document.createElement('span');
+      costEl.className = 'net-cost' + (cost.free ? ' free' : '');
+      costEl.textContent = cost.text;
+
+      row.append(dot, name, time, costEl);
+      row.addEventListener('click', () => {
+        selected = network;
+        confirmations = 0;
+        renderNetworks();
+        renderSelection();
+      });
+      container.append(row);
+    }
+  }
+
+  // ── address, QR, amounts ────────────────────────────────────────────────
+
+  function renderQr(text) {
+    const frame = el('qr');
+    frame.textContent = '';
+
+    let code;
+    try {
+      code = encodeQr(text);
+    } catch {
+      // An address too long for the supported versions must not render a wrong
+      // symbol — better to show nothing than something that scans to the wrong place.
+      frame.textContent = '';
+      return;
+    }
+
+    const NS = 'http://www.w3.org/2000/svg';
+    const quiet = 2;
+    const span = code.size + quiet * 2;
+
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + span + ' ' + span);
+    svg.setAttribute('shape-rendering', 'crispEdges');
+    svg.setAttribute('role', 'img');
+
+    const background = document.createElementNS(NS, 'rect');
+    background.setAttribute('width', String(span));
+    background.setAttribute('height', String(span));
+    background.setAttribute('fill', '#FFFFFF');
+    svg.append(background);
+
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', qrToSvgPath(code).replace(/M(\d+) (\d+)/g,
+      (_m, x, y) => 'M' + (Number(x) + quiet) + ' ' + (Number(y) + quiet)));
+    path.setAttribute('fill', '#000000');
+    svg.append(path);
+
+    frame.append(svg);
+  }
+
+  function renderSelection() {
+    el('address').textContent = selected.address;
+    el('amount').textContent = selected.amount;
+    el('amount-unit').textContent = selected.asset;
+    el('summary-total').textContent = selected.amount + ' ' + selected.asset;
+
+    const cost = costLabel(selected.cost);
+    el('summary-cost').textContent = selected.cost === 0 ? '$0.0000' : '$' + selected.cost.toFixed(4);
+
+    el('memo-block').hidden = !selected.memo;
+    el('memo').textContent = MEMO;
+
+    // On a shared-address chain the memo is what identifies the invoice, so it
+    // belongs in the QR too rather than only in the copyable field.
+    renderQr(selected.memo ? selected.address + '?memo=' + MEMO : selected.address);
+  }
+
+  // ── copy ────────────────────────────────────────────────────────────────
+
+  for (const button of document.querySelectorAll('[data-copy]')) {
+    button.addEventListener('click', async () => {
+      const value = el(button.dataset.copy).textContent;
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch {
+        // A denied clipboard must not look like a broken button.
+        const range = document.createRange();
+        range.selectNodeContents(el(button.dataset.copy));
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      const original = button.textContent;
+      button.textContent = 'کپی شد';
+      button.dataset.copied = 'true';
+      setTimeout(() => {
+        button.textContent = original;
+        delete button.dataset.copied;
+      }, 1600);
+    });
+  }
+
+  // ── rate lock ───────────────────────────────────────────────────────────
+
+  function renderLock() {
+    const minutes = Math.floor(Math.max(0, remaining) / 60);
+    const seconds = Math.max(0, remaining) % 60;
+    el('lock-time').textContent = fa(String(minutes).padStart(2, '0')) + ':' + fa(String(seconds).padStart(2, '0'));
+    el('lock-fill').style.transform = 'scaleX(' + Math.max(0, remaining) / LOCK_SECONDS + ')';
+  }
+
+  setInterval(() => {
+    if (state === 'paid' || state === 'expired') return;
+    remaining -= 1;
+    if (remaining <= 0) setState('expired');
+    renderLock();
+  }, 1000);
+
+  // ── state ───────────────────────────────────────────────────────────────
+
+  const STATES = {
+    awaiting: { text: 'در انتظار پرداخت شما', step: 2 },
+    confirming: { text: 'پرداخت دیده شد — در انتظار تأیید شبکه', step: 3 },
+    paid: { text: 'پرداخت تأیید شد. می‌توانید این صفحه را ببندید.', step: 4 },
+    underpaid: { text: 'مبلغ کمتر از حد مجاز رسید — مابه‌التفاوت را بفرستید', step: 2 },
+    expired: { text: 'قفل نرخ منقضی شد — برای نرخ تازه صفحه را نوسازی کنید', step: 2 },
+  };
+
+  function setState(next) {
+    state = next;
+    const info = STATES[next];
+
+    el('status').dataset.state = next;
+    el('status-text').textContent = info.text;
+    el('lock').parentElement.classList.toggle('is-expired', next === 'expired');
+    el('step-of').textContent = fa(Math.min(3, info.step)) + ' از ۳';
+
+    // Confirmation progress is only meaningful while a transfer is maturing.
+    el('confirmations').textContent =
+      next === 'confirming' ? fa(confirmations) + ' از ' + fa(15) + ' تأیید' : '';
+
+    const steps = el('steps').children;
+    for (let i = 0; i < steps.length; i++) {
+      const position = i + 1;
+      steps[i].dataset.state =
+        position < info.step ? 'done' : position === info.step ? 'active' : '';
+    }
+    if (next === 'paid') for (const step of steps) step.dataset.state = 'done';
+
+    renderLock();
+  }
+
+  let confirmTimer = null;
+  for (const button of document.querySelectorAll('[data-demo]')) {
+    button.addEventListener('click', () => {
+      const target = button.dataset.demo;
+      clearInterval(confirmTimer);
+
+      if (target === 'awaiting') {
+        remaining = LOCK_SECONDS;
+        confirmations = 0;
+      }
+      if (target === 'confirming') {
+        confirmations = 0;
+        setState('confirming');
+        confirmTimer = setInterval(() => {
+          confirmations += 1;
+          if (confirmations >= 15) {
+            clearInterval(confirmTimer);
+            setState('paid');
+          } else {
+            setState('confirming');
+          }
+        }, 400);
+        return;
+      }
+      setState(target);
+    });
+  }
+
+  renderNetworks();
+  renderSelection();
+  setState('awaiting');
+})();
+</script>

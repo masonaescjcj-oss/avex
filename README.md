@@ -13,6 +13,7 @@ twelve-phase build plan.
 ```
 packages/core     chain adapters, fee policy, settlement, invoice domain
 apps/api          platform: identity, organisations, credentials, audit
+apps/checkout     the payer-facing page, and its QR encoder
 contracts         Forwarder.sol, and its verification on a real EVM
 ```
 
@@ -357,9 +358,48 @@ than in this repository. If a replacement would exceed the cost ceiling, the run
 refuses and alerts instead of bumping — leaving settlement blocked is bad, but
 quietly spending past a safety limit is worse, so an operator decides.
 
+## Checkout
+
+`apps/checkout` is the payer-facing page. Built desktop-first, RTL, and
+self-contained — its content security policy forbids fetching anything, so the QR
+encoder is inlined from `dist/` at build time rather than copied by hand, and cannot
+drift from the module the tests exercise.
+
+The design decision worth naming: **the network chooser shows what each network
+actually costs to settle**, ranked cheapest first. The fee engine already computes
+that figure, and a payer choosing a network is choosing what the transfer costs —
+every other checkout hides it. TON reads "رایگان" because settlement there genuinely
+is free.
+
+Beyond that: the amount and address are the page's two heroes because they are the
+two things a payer must get right; the rate lock is a depleting rule rather than a
+digital clock; a memo-based chain shows the memo as a blocking warning rather than a
+footnote, since a transfer without one needs manual reconciliation; and a denied
+clipboard selects the text instead of looking like a broken button.
+
+```bash
+cd apps/checkout && npm run build   # compiles the encoder, inlines it, writes the page
+cd apps/checkout && npm test        # encoder tests
+```
+
+### The QR encoder
+
+Written in-tree — byte mode, error correction level M, versions 1 to 6, which covers
+any address or payment URI we produce. Every version in that range uses equal-sized
+error-correction blocks, so the interleaving that makes higher versions fiddly never
+arises.
+
+Reed-Solomon over GF(256) and the BCH format bits are checked against the standard's
+published values, along with module counts, finder and timing patterns, and mask
+determinism — two renders of one invoice must not differ. Oversized input is refused
+rather than truncated, because a truncated symbol scans cleanly to the wrong address.
+
+What those tests cannot establish is that a phone reads the result. **A physical scan
+test is still required before this is shown to a payer.**
+
 ## What is not built yet
 
-Phases 5 onward: hosted checkout, merchant dashboard, public API and SDKs,
+Mobile checkout, and phases 6 onward: hosted checkout, merchant dashboard, public API and SDKs,
 the Telegram surface, admin panel, remaining chains, hardening. See the roadmap.
 
 The reviewer-facing side of vetting is Phase 9: the probe, verdicts and audit

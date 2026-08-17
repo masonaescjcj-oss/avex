@@ -58,6 +58,10 @@ jobs:
         working-directory: contracts
         run: npm test
 
+      - name: Test checkout
+        working-directory: apps/checkout
+        run: npm test
+
       - name: Apply migrations
         working-directory: apps/api
         run: npx drizzle-kit migrate

@@ -1,0 +1,13 @@
+{
+  "name": "@avex/checkout",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Payer-facing checkout",
+  "scripts": {
+    "build": "tsc -b && node build-page.mjs",
+    "typecheck": "tsc -b --dry",
+    "test": "npm run build && node --test \"dist/**/*.test.js\""
+  },
+  "dependencies": {}
+}
