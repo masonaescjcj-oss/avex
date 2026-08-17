@@ -87,6 +87,15 @@ upgrade path. Deployment is deferred: the address is published while no code
 exists at it, and the contract is deployed in the same transaction that forwards
 the funds.
 
+### The whole loop, verified end to end
+
+`contracts/test/full-loop.test.mjs` runs the pieces together in the order a real
+payment does — derive a deposit address, pay into it, detect and credit, settle,
+merchant's balance increases — on a real EVM, in-process. That sequence is Phase 4's
+exit criterion, so it is checked on every commit rather than once by hand against a
+testnet. The only thing separating it from BNB Chain is which RPC endpoint the
+adapter points at.
+
 ### Verified by execution, not by argument
 
 The address arithmetic was already checked against the EIP-1014 vectors. What
