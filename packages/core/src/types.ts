@@ -46,6 +46,20 @@ export interface Asset {
   readonly contract?: string;
 }
 
+/**
+ * A percentage cut taken at settlement, alongside the merchant's payout.
+ *
+ * Lives here rather than beside the chain adapters because an invoice carries one:
+ * on `unique`-address chains it is part of what the deposit address commits to, so
+ * derivation and settlement must be handed identical values or they name different
+ * addresses.
+ */
+export interface FeeSplit {
+  readonly feeDestination: string;
+  /** Basis points of the swept amount. Capped by the forwarder at 500 (5%). */
+  readonly feeBps: number;
+}
+
 export type InvoiceStatus =
   /** Created; deposit target handed to the payer; nothing seen yet. */
   | 'pending'
@@ -84,6 +98,21 @@ export interface Invoice {
   readonly depositAddress: string;
   /** Present only on `shared-memo` chains. */
   readonly memo?: string;
+
+  /**
+   * The percentage cut taken at settlement, fixed when this invoice was created.
+   *
+   * Recorded on the invoice rather than read from configuration at sweep time, and
+   * that is not a preference. On `unique`-address chains the fee is part of the
+   * init code that produced `depositAddress`, so settling with a different fee
+   * derives a different address — one nobody funded — and the money would sit in
+   * the forwarder indefinitely. Changing our pricing must not orphan invoices
+   * already in flight, so the fee is snapshotted here and the snapshot is what
+   * settlement uses.
+   *
+   * Absent means no fee, which is every subscription-only merchant.
+   */
+  readonly fee?: FeeSplit;
 
   /**
    * Accepted deviation from `amountDue`, in basis points. Exchanges round

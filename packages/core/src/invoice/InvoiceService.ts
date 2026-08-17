@@ -4,6 +4,7 @@ import type { SettlementQueue } from '../sweep/SettlementQueue.js';
 import type {
   Asset,
   ChainId,
+  FeeSplit,
   IncomingPayment,
   Invoice,
   InvoiceStatus,
@@ -31,6 +32,14 @@ export interface CreateInvoiceInput {
   readonly ttlMs: number;
   /** Defaults to 50 bps, which absorbs typical exchange withdrawal rounding. */
   readonly toleranceBps?: number;
+  /**
+   * Percentage cut to take at settlement. Absent means none.
+   *
+   * Snapshotted onto the invoice, because on `unique`-address chains it feeds the
+   * deposit address. Changing our pricing later must not orphan invoices already
+   * quoted, so nothing downstream re-reads a live value.
+   */
+  readonly fee?: FeeSplit;
 }
 
 export type InvoiceEvent =
@@ -72,6 +81,7 @@ export class InvoiceService {
       invoiceId: input.id,
       payoutAddress: input.payoutAddress,
       asset: input.asset,
+      ...(input.fee === undefined ? {} : { fee: input.fee }),
     });
 
     const invoice: Invoice = {
@@ -84,6 +94,8 @@ export class InvoiceService {
       payoutAddress: input.payoutAddress,
       depositAddress: target.address,
       ...(target.memo === undefined ? {} : { memo: target.memo }),
+      // Snapshotted, so settlement reproduces the address this payer was given.
+      ...(input.fee === undefined ? {} : { fee: input.fee }),
       toleranceBps: input.toleranceBps ?? DEFAULT_TOLERANCE_BPS,
       createdAt: now,
       expiresAt: now + input.ttlMs,
@@ -142,6 +154,10 @@ export class InvoiceService {
         payoutAddress: invoice.payoutAddress,
         asset: invoice.asset,
         amount: invoice.amountPaid,
+        // The fee this invoice was quoted with, not whatever we charge today. A
+        // different fee derives a different deposit address, and the funds are at
+        // this one.
+        ...(invoice.fee === undefined ? {} : { fee: invoice.fee }),
       });
     }
 

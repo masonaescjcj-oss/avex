@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -590,6 +591,23 @@ export const invoices = pgTable(
     /** Captured at creation: the address active then, not whatever is active now. */
     payoutAddress: text('payout_address').notNull(),
 
+    /**
+     * The percentage cut to take when this invoice is swept, fixed at creation.
+     *
+     * Snapshotted for the same reason `payoutAddress` is, only more sharply: on EVM
+     * chains the fee is a constructor argument to the forwarder, so it is part of
+     * the init code that produced `deposit_address`. Settling with a different fee
+     * derives a *different* address, which no payer funded, and the money would stay
+     * in the forwarder with nothing able to reach it. Changing our pricing must
+     * therefore never reach an invoice already quoted.
+     *
+     * Zero — the default, and the case for every subscription-only merchant — means
+     * the merchant receives the whole balance.
+     */
+    feeBps: integer('fee_bps').notNull().default(0),
+    /** Null whenever `fee_bps` is zero: there is nowhere for nothing to go. */
+    feeDestination: text('fee_destination'),
+
     toleranceBps: integer('tolerance_bps').notNull().default(50),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -604,6 +622,21 @@ export const invoices = pgTable(
     index('invoices_org_created_idx').on(table.organizationId, table.createdAt),
     index('invoices_status_idx').on(table.status),
     index('invoices_chain_memo_idx').on(table.chain, table.memo),
+
+    /**
+     * The fee invariants, enforced here rather than only in application code.
+     *
+     * Both mirror a `revert` in Forwarder.sol. A row that violates either one
+     * describes a forwarder that cannot be deployed, so the invoice would take a
+     * payment to an address whose contract can never exist — the funds would be
+     * unreachable. That is not a state worth being able to represent, and the
+     * database is the one layer every write path goes through.
+     */
+    check('invoices_fee_bps_ceiling', sql`${table.feeBps} between 0 and 500`),
+    check(
+      'invoices_fee_has_destination',
+      sql`${table.feeBps} = 0 or ${table.feeDestination} is not null`,
+    ),
   ],
 );
 

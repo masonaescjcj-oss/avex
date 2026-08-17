@@ -2,28 +2,18 @@ import type {
   AddressModel,
   Asset,
   ChainId,
+  FeeSplit,
   GasSnapshot,
   IncomingPayment,
 } from '../types.js';
+
+export type { FeeSplit };
 
 /** Where the payer sends funds for one invoice. */
 export interface DepositTarget {
   readonly address: string;
   /** Set only on `shared-memo` chains; the payer MUST include it. */
   readonly memo?: string;
-}
-
-/**
- * A percentage cut taken at settlement, alongside the merchant's payout.
- *
- * Present on both derivation and settlement because on `unique`-address chains it
- * is baked into the deposit address, so the two must be given identical values or
- * they name different addresses. Optional, and absent means no fee — which is the
- * case for every subscription-only merchant.
- */
-export interface FeeSplit {
-  readonly feeDestination: string;
-  readonly feeBps: number;
 }
 
 export interface DeriveInput {

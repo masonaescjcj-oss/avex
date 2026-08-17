@@ -64,6 +64,13 @@
       "when": 1786996739822,
       "tag": "0008_stormy_master_mold",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786998799740,
+      "tag": "0009_heavy_paper_doll",
+      "breakpoints": true
     }
   ]
 }
