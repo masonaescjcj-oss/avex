@@ -1,7 +1,7 @@
-import { and, asc, count, desc, eq, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, isNull, lt, lte, sql } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
-import { organizations, subscriptionCharges, subscriptions } from '../db/schema.js';
+import { invoices, organizations, payments, subscriptionCharges, subscriptions } from '../db/schema.js';
 import type { AuditService } from './audit.js';
 import type { StaffRole } from './staff-rbac.js';
 
@@ -25,6 +25,17 @@ export const DEFAULT_MONTHLY_PRICE_USD_MICROS = 49_000_000n;
 
 /** A new merchant gets two weeks before the first charge. */
 export const DEFAULT_TRIAL_DAYS = 14;
+
+/**
+ * Volume below which a period costs nothing: $1,500 in micro-dollars.
+ *
+ * The reason this exists is arithmetic. A flat $49 is 2.5% of a $2,000 month and 0.1% of
+ * a $50,000 one, so a pure subscription charges the smallest merchants the most — the
+ * opposite of what a gateway trying to grow wants. Making small volume free removes the
+ * barrier for someone testing the product and only starts charging once the merchant is
+ * plainly making money from it.
+ */
+export const DEFAULT_FREE_TIER_USD_MICROS = 1_500_000_000n;
 
 /**
  * How long a late payment is tolerated before new invoices stop.
@@ -52,6 +63,7 @@ export interface SubscriptionOptions {
   readonly monthlyPriceUsdMicros?: bigint;
   readonly trialDays?: number;
   readonly graceDays?: number;
+  readonly freeTierUsdMicros?: bigint;
 }
 
 /** What the gateway needs to know before letting a merchant issue an invoice. */
@@ -69,6 +81,7 @@ export class SubscriptionService {
   private readonly price: bigint;
   private readonly trialDays: number;
   private readonly graceDays: number;
+  private readonly freeTier: bigint;
 
   constructor(
     private readonly db: Database,
@@ -78,6 +91,68 @@ export class SubscriptionService {
     this.price = options.monthlyPriceUsdMicros ?? DEFAULT_MONTHLY_PRICE_USD_MICROS;
     this.trialDays = options.trialDays ?? DEFAULT_TRIAL_DAYS;
     this.graceDays = options.graceDays ?? DEFAULT_GRACE_DAYS;
+    this.freeTier = options.freeTierUsdMicros ?? DEFAULT_FREE_TIER_USD_MICROS;
+  }
+
+  /**
+   * What a merchant processed in a window, split by how trustworthy the figure is.
+   *
+   * The split is the point. `verified` comes from rates we set — the quote locked on the
+   * invoice, or our own oracle. `declared` comes from a `fixed_rate` a merchant chose
+   * for a token nobody else prices, which they have an obvious incentive to understate
+   * when a threshold is involved. `unknown` is volume we could not price at all.
+   *
+   * Both verified and declared count towards the free tier, because refusing to count a
+   * merchant's own token would penalise a legitimate use. But declared volume is
+   * returned separately so that a merchant sitting just under the threshold entirely on
+   * self-declared rates is visible to an operator rather than invisible. Prevention
+   * where it is cheap; detection where it is not.
+   */
+  async assessedVolume(
+    organizationId: string,
+    window: { readonly from: Date; readonly to: Date },
+  ): Promise<{
+    readonly verifiedUsdMicros: bigint;
+    readonly declaredUsdMicros: bigint;
+    readonly unpricedPayments: number;
+    readonly totalUsdMicros: bigint;
+  }> {
+    const rows = await this.db
+      .select({
+        source: payments.valueSource,
+        total: sql<string>`coalesce(sum(${payments.valueUsdMicros}), 0)::text`,
+        rows: count(),
+      })
+      .from(payments)
+      .innerJoin(invoices, eq(invoices.id, payments.invoiceId))
+      .where(
+        and(
+          eq(invoices.organizationId, organizationId),
+          // Reversed payments are not volume. A reorg that took a payment back must not
+          // keep a merchant above the threshold for a month that did not happen.
+          isNull(payments.reversedAt),
+          gte(payments.creditedAt, window.from),
+          lt(payments.creditedAt, window.to),
+        ),
+      )
+      .groupBy(payments.valueSource);
+
+    let verified = 0n;
+    let declared = 0n;
+    let unpriced = 0;
+
+    for (const row of rows) {
+      if (row.source === 'quote' || row.source === 'oracle') verified += BigInt(row.total);
+      else if (row.source === 'merchant_rate') declared += BigInt(row.total);
+      else unpriced += row.rows;
+    }
+
+    return {
+      verifiedUsdMicros: verified,
+      declaredUsdMicros: declared,
+      unpricedPayments: unpriced,
+      totalUsdMicros: verified + declared,
+    };
   }
 
   /**
@@ -129,7 +204,40 @@ export class SubscriptionService {
       .orderBy(desc(subscriptionCharges.periodStart))
       .limit(24);
 
-    return { subscription, charges, verdict: verdictFor(subscription, charges) };
+    /**
+     * Where they stand against the free threshold, for the period in progress.
+     *
+     * Shown rather than left to be discovered at billing time. A merchant who is going
+     * to be charged $49 this month should be able to see it coming while the month is
+     * still running — and one who is comfortably free should not have to wonder.
+     *
+     * `willBeFree` is explicitly about the volume so far. Volume only goes up within a
+     * period, so a `true` here can become `false` later; the naming says "on today's
+     * figures", not "guaranteed".
+     */
+    const periodStart = subscription.currentPeriodStart ?? subscription.createdAt;
+    const volume = await this.assessedVolume(organizationId, {
+      from: periodStart,
+      to: new Date(),
+    });
+
+    return {
+      subscription,
+      charges,
+      verdict: verdictFor(subscription, charges),
+      freeTier: {
+        thresholdUsdMicros: this.freeTier.toString(),
+        processedUsdMicros: volume.totalUsdMicros.toString(),
+        verifiedUsdMicros: volume.verifiedUsdMicros.toString(),
+        declaredUsdMicros: volume.declaredUsdMicros.toString(),
+        unpricedPayments: volume.unpricedPayments,
+        remainingUsdMicros: (
+          volume.totalUsdMicros >= this.freeTier ? 0n : this.freeTier - volume.totalUsdMicros
+        ).toString(),
+        willBeFree: volume.totalUsdMicros < this.freeTier,
+        periodStart,
+      },
+    };
   }
 
   /**
@@ -187,10 +295,12 @@ export class SubscriptionService {
    */
   async runBilling(now: Date = new Date()): Promise<{
     readonly charged: number;
+    readonly freed: number;
     readonly markedPastDue: number;
     readonly markedUnpaid: number;
   }> {
     let charged = 0;
+    let freed = 0;
     let markedPastDue = 0;
     let markedUnpaid = 0;
 
@@ -217,6 +327,19 @@ export class SubscriptionService {
         continue;
       }
 
+      /**
+       * Assess the period that just ended, not a trailing window.
+       *
+       * "You processed under the threshold during the month you are being billed for"
+       * is a statement a merchant can check against their own records. A rolling
+       * 30-day window at the moment the job happens to run is not.
+       */
+      const volume = await this.assessedVolume(subscription.organizationId, {
+        from: subscription.currentPeriodStart ?? addDays(periodStart, -31),
+        to: periodStart,
+      });
+      const free = volume.totalUsdMicros < this.freeTier;
+
       const inserted = await this.db
         .insert(subscriptionCharges)
         .values({
@@ -224,14 +347,62 @@ export class SubscriptionService {
           organizationId: subscription.organizationId,
           periodStart,
           periodEnd,
-          amountUsdMicros: subscription.priceUsdMicros,
+          // A zero-amount row rather than no row at all. "Why was this merchant not
+          // billed in March" has an answer either way, and a missing period cannot
+          // give one.
+          amountUsdMicros: free ? '0' : subscription.priceUsdMicros,
+          status: free ? 'free_tier' : 'due',
+          paidAt: free ? now : null,
+          note: free
+            ? `free tier: $${(Number(volume.totalUsdMicros) / 1e6).toFixed(2)} processed ` +
+              `(verified $${(Number(volume.verifiedUsdMicros) / 1e6).toFixed(2)}, ` +
+              `declared $${(Number(volume.declaredUsdMicros) / 1e6).toFixed(2)})`
+            : null,
         })
         .onConflictDoNothing({
           target: [subscriptionCharges.subscriptionId, subscriptionCharges.periodStart],
         })
         .returning({ id: subscriptionCharges.id });
 
-      if (inserted.length > 0) charged += 1;
+      if (inserted.length > 0 && !free) charged += 1;
+      if (inserted.length > 0 && free) freed += 1;
+
+      if (free) {
+        // Nothing is owed, so the subscription stays current and no grace starts.
+        await this.db
+          .update(subscriptions)
+          .set({
+            status: 'active',
+            currentPeriodStart: periodStart,
+            currentPeriodEnd: periodEnd,
+            graceEndsAt: null,
+          })
+          .where(eq(subscriptions.id, subscription.id));
+
+        // Recorded when the free month rested entirely on rates the merchant set
+        // themselves, which is the one shape of this that deserves a second look.
+        if (
+          volume.declaredUsdMicros > 0n &&
+          volume.verifiedUsdMicros < this.freeTier / 2n &&
+          volume.declaredUsdMicros >= this.freeTier / 2n
+        ) {
+          await this.audit.record({
+            organizationId: subscription.organizationId,
+            action: 'subscription.free_tier_needs_review',
+            targetType: 'subscription',
+            targetId: subscription.id,
+            metadata: {
+              verifiedUsdMicros: volume.verifiedUsdMicros.toString(),
+              declaredUsdMicros: volume.declaredUsdMicros.toString(),
+              unpricedPayments: volume.unpricedPayments,
+              reason:
+                'free-tier eligibility rests mostly on merchant-declared rates, which we ' +
+                'cannot verify',
+            },
+          });
+        }
+        continue;
+      }
 
       // A charge exists and is unpaid, so the merchant is late from this moment. The
       // grace window starts now rather than at the previous period's end, so a
@@ -261,7 +432,7 @@ export class SubscriptionService {
       .returning({ id: subscriptions.id });
     markedUnpaid = expired.length;
 
-    return { charged, markedPastDue, markedUnpaid };
+    return { charged, freed, markedPastDue, markedUnpaid };
   }
 
   /**

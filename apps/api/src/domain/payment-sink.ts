@@ -4,6 +4,9 @@ import { and, eq, isNull } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
 import { invoices, payments } from '../db/schema.js';
+
+/** Mirrors `paymentValueSourceEnum`; guarded by the schema drift test. */
+export type PaymentValueSource = 'quote' | 'oracle' | 'merchant_rate' | 'unknown';
 import type { AuditService } from './audit.js';
 import type { WebhookService } from './webhook-service.js';
 
@@ -25,8 +28,25 @@ export class DatabasePaymentSink implements PaymentSink {
     private readonly db: Database,
     private readonly audit: AuditService,
     private readonly webhooks: WebhookService,
-    /** USD value of a token amount, for confirmation tiering. */
+    /**
+     * USD value of a token amount.
+     *
+     * Used for two things now: choosing how many confirmations to require, and
+     * recording what the payment was worth so platform billing can assess volume. The
+     * second use is why the result is persisted rather than only consulted — see
+     * `payments.valueUsdMicros`.
+     */
     private readonly valueUsd: (payment: IncomingPayment) => number,
+    /**
+     * Where the valuation came from, if the caller can say.
+     *
+     * Defaults to `unknown`, which counts as nothing towards a volume threshold and is
+     * visible as such. A caller that knows better should say so — treating an
+     * unpriceable payment as zero silently is bad, but treating it as verified would be
+     * worse.
+     */
+    private readonly valueSource: (payment: IncomingPayment) => PaymentValueSource = () =>
+      'unknown',
   ) {}
 
   async credit(payment: IncomingPayment): Promise<void> {
@@ -65,6 +85,7 @@ export class DatabasePaymentSink implements PaymentSink {
         amount: payment.amount.toString(),
         blockNumber: payment.blockNumber,
         fromAddress: null,
+        ...this.valuation(payment),
       })
       // The exactly-once guarantee, enforced by the database rather than by
       // remembering to check first.
@@ -105,6 +126,31 @@ export class DatabasePaymentSink implements PaymentSink {
         txHash: payment.txHash,
       });
     }
+  }
+
+  /**
+   * The recorded value of a payment, in micro-dollars, with its provenance.
+   *
+   * Integer micro-dollars from a float USD figure, rounded down. Rounding down means a
+   * merchant is never pushed over a billing threshold by a rounding artefact — the
+   * direction to be wrong in when the consequence is charging someone.
+   */
+  private valuation(payment: IncomingPayment): {
+    valueUsdMicros: string | null;
+    valueSource: PaymentValueSource;
+  } {
+    const source = this.valueSource(payment);
+    let usd: number;
+    try {
+      usd = this.valueUsd(payment);
+    } catch {
+      // A pricing failure must never stop a payment being credited. The merchant's
+      // money has arrived; what it was worth in dollars is our bookkeeping problem.
+      return { valueUsdMicros: null, valueSource: 'unknown' };
+    }
+
+    if (!Number.isFinite(usd) || usd < 0) return { valueUsdMicros: null, valueSource: 'unknown' };
+    return { valueUsdMicros: BigInt(Math.floor(usd * 1_000_000)).toString(), valueSource: source };
   }
 
   async reverse(paymentKey: string, reason: string): Promise<void> {

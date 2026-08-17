@@ -339,6 +339,61 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
 
   const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
+  /**
+   * Give a merchant USD volume in a period, so billing does not treat them as free-tier.
+   *
+   * Defaults to `valueSource: 'quote'`, which is what a real invoice with a locked rate
+   * produces. The overrides exist because the free tier turns on *how* a figure was
+   * arrived at, not just its size: a merchant-declared rate counts but is flagged, an
+   * unpriced payment counts for nothing, and a reversed one must count for nothing too.
+   */
+  async function giveVolume(
+    orgId: string,
+    usd: number,
+    creditedAt: Date = new Date(Date.now() - 60_000),
+    options: {
+      readonly source?: 'quote' | 'oracle' | 'merchant_rate' | 'unknown';
+      readonly reversed?: boolean;
+    } = {},
+  ): Promise<void> {
+    const assetId = await insertAsset('approved', `VOL${randomBytes(2).toString('hex')}`);
+    const [invoice] = await db
+      .insert(schema.invoices)
+      .values({
+        organizationId: orgId,
+        assetId,
+        amountDue: (10n ** 18n).toString(),
+        chain: 'bsc',
+        depositAddress: `0x${randomBytes(20).toString('hex')}`,
+        payoutAddress: `0x${randomBytes(20).toString('hex')}`,
+        expiresAt: new Date(Date.now() + 3600_000),
+      })
+      .returning({ id: schema.invoices.id });
+
+    const source = options.source ?? 'quote';
+    await db.insert(schema.payments).values({
+      invoiceId: invoice!.id,
+      chain: 'bsc',
+      txHash: `0xvolume${randomBytes(14).toString('hex')}`,
+      transferIndex: 0,
+      amount: (10n ** 18n).toString(),
+      blockNumber: 700,
+      creditedAt,
+      // `unknown` means we could not price it, so there is no figure to carry — writing
+      // one anyway would let an unpriceable payment count towards a dollar threshold.
+      valueUsdMicros: source === 'unknown' ? null : BigInt(Math.round(usd * 1e6)).toString(),
+      valueSource: source,
+      ...(options.reversed
+        ? { reversedAt: new Date(creditedAt.getTime() + 60_000), reversedReason: 'reorg' }
+        : {}),
+    });
+  }
+
+  /** Above the free threshold, so a period is actually billed. */
+  const billableVolume = (orgId: string, creditedAt?: Date) =>
+    giveVolume(orgId, 5_000, creditedAt);
+
+
   // ── credential separation ──────────────────────────────────────────────────
 
   test('a merchant session cannot reach the admin panel', async () => {
@@ -1796,6 +1851,8 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     const org = await freshMerchant('cycle');
     // Start the subscription with a trial that has already ended.
     await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    // Above the free threshold, or the period would rightly cost nothing.
+    await billableVolume(org, daysAgo(10));
 
     const report = await subscriptionsService.runBilling();
     assert.ok(report.charged >= 1, 'a charge should have been raised');
@@ -1817,6 +1874,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
      */
     const org = await freshMerchant('twice');
     await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await billableVolume(org, daysAgo(10));
 
     await subscriptionsService.runBilling();
     const afterFirst = (await subscriptionsService.forOrganization(org)).charges.length;
@@ -1829,6 +1887,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   test('once grace expires new invoices are refused, with a reason a merchant can act on', async () => {
     const org = await freshMerchant('expired');
     await subscriptionsService.ensureForOrganization(org, daysAgo(40));
+    await billableVolume(org, daysAgo(30));
     await subscriptionsService.runBilling();
 
     // Age the grace window past its end, as a fortnight of silence would.
@@ -1851,6 +1910,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   test('paying the charge brings the merchant current', async () => {
     const org = await freshMerchant('pays');
     await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await billableVolume(org, daysAgo(10));
     await subscriptionsService.runBilling();
 
     const { charges } = await subscriptionsService.forOrganization(org);
@@ -1872,6 +1932,8 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     // A merchant three months behind who pays one month is still behind.
     const org = await freshMerchant('partial');
     await subscriptionsService.ensureForOrganization(org, daysAgo(100));
+    await billableVolume(org, daysAgo(80));
+    await billableVolume(org, daysAgo(50));
     await subscriptionsService.runBilling();
     await subscriptionsService.runBilling();
 
@@ -1887,6 +1949,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   test('paying the same charge twice is refused', async () => {
     const org = await freshMerchant('double');
     await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await billableVolume(org, daysAgo(10));
     await subscriptionsService.runBilling();
     const due = (await subscriptionsService.forOrganization(org)).charges[0]!;
 
@@ -1900,6 +1963,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   test('staff can write off a charge, and the reason is recorded', async () => {
     const org = await freshMerchant('waived');
     await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await billableVolume(org, daysAgo(10));
     await subscriptionsService.runBilling();
     const due = (await subscriptionsService.forOrganization(org)).charges[0]!;
 
@@ -1928,6 +1992,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   test('writing off revenue needs a fresh second factor', async () => {
     const org = await freshMerchant('elevate');
     await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await billableVolume(org, daysAgo(10));
     await subscriptionsService.runBilling();
     const due = (await subscriptionsService.forOrganization(org)).charges[0]!;
 
@@ -1993,6 +2058,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   test('a scheduled cancellation ends the subscription when the period rolls', async () => {
     const org = await freshMerchant('ends');
     await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await billableVolume(org, daysAgo(10));
     await subscriptionsService.cancelAtPeriodEnd(org, null);
     await subscriptionsService.runBilling();
 
@@ -2007,6 +2073,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   test('a negotiated price applies to future periods only', async () => {
     const org = await freshMerchant('priced');
     await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await billableVolume(org, daysAgo(10));
     await subscriptionsService.runBilling();
     const before = (await subscriptionsService.forOrganization(org)).charges[0]!;
 
@@ -2056,6 +2123,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
      */
     const org = await freshMerchant('monthend');
     await subscriptionsService.ensureForOrganization(org, new Date('2026-01-31T00:00:00Z'));
+    await billableVolume(org, new Date('2026-01-31T12:00:00Z'));
     await db
       .update(schema.subscriptions)
       .set({
@@ -2070,6 +2138,271 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     assert.equal(period.periodStart.toISOString().slice(0, 10), '2026-01-31');
     // February has 28 days in 2026, so the period ends on the 28th, not in March.
     assert.equal(period.periodEnd.toISOString().slice(0, 10), '2026-02-28');
+  });
+
+  // ── the free tier ──────────────────────────────────────────────────────────
+  //
+  // Under $1,500 processed in a period, the period costs nothing. These tests exist
+  // because the rule is a threshold on a number we compute, and every threshold has
+  // two failure modes worth pinning: charging someone who should be free, and
+  // letting volume that should not count push someone under the line.
+
+  test('a merchant under the free threshold is not charged, and stays current', async () => {
+    const org = await freshMerchant('freetier');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    // Well under $1,500 for the period.
+    await giveVolume(org, 400, daysAgo(10));
+
+    const report = await subscriptionsService.runBilling();
+    assert.ok(report.freed >= 1, 'a free period should have been recorded');
+
+    const { subscription, charges, verdict } = await subscriptionsService.forOrganization(org);
+    const period = charges[0]!;
+    // A zero-amount row rather than no row: "why was this merchant not billed" needs
+    // an answer, and a missing period cannot give one.
+    assert.equal(period.status, 'free_tier');
+    assert.equal(period.amountUsdMicros, '0');
+    assert.ok(period.paidAt, 'a free period is settled the moment it is assessed');
+    assert.match(period.note ?? '', /free tier: \$400\.00 processed/);
+
+    // Nothing is owed, so nothing is late and no grace window opens.
+    assert.equal(subscription.status, 'active');
+    assert.equal(subscription.graceEndsAt, null);
+    assert.equal(verdict.mayIssueInvoices, true);
+    assert.equal(verdict.amountDueUsdMicros, '0');
+  });
+
+  test('the threshold is exclusive: exactly $1,500 is billed', async () => {
+    /**
+     * Both sides of the boundary, in one place. "Free below $1,500" has to mean
+     * something exact, and an off-by-one here is the difference between a merchant
+     * being billed and not.
+     */
+    const under = await freshMerchant('under');
+    await subscriptionsService.ensureForOrganization(under, daysAgo(20));
+    await giveVolume(under, 1_499.99, daysAgo(10));
+
+    const at = await freshMerchant('atthreshold');
+    await subscriptionsService.ensureForOrganization(at, daysAgo(20));
+    await giveVolume(at, 1_500, daysAgo(10));
+
+    await subscriptionsService.runBilling();
+
+    assert.equal((await subscriptionsService.forOrganization(under)).charges[0]?.status, 'free_tier');
+    const billed = (await subscriptionsService.forOrganization(at)).charges[0];
+    assert.equal(billed?.status, 'due');
+    assert.equal(billed?.amountUsdMicros, '49000000');
+  });
+
+  test('volume split across several payments accumulates towards the threshold', async () => {
+    // Otherwise a merchant could stay free forever by taking $400 at a time.
+    const org = await freshMerchant('accumulates');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    for (let index = 0; index < 4; index += 1) {
+      await giveVolume(org, 400, daysAgo(10));
+    }
+
+    await subscriptionsService.runBilling();
+    // $1,600 in total, so the period is billed even though no single payment was large.
+    assert.equal((await subscriptionsService.forOrganization(org)).charges[0]?.status, 'due');
+  });
+
+  test('reversed payments do not count towards the threshold', async () => {
+    /**
+     * A reorg that took a payment back must not keep a merchant above the line for a
+     * month that, in the end, did not happen. Billing someone $49 for volume that was
+     * undone is the kind of error a merchant is entitled to be angry about.
+     */
+    const org = await freshMerchant('reversed');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await giveVolume(org, 5_000, daysAgo(10), { reversed: true });
+    await giveVolume(org, 200, daysAgo(10));
+
+    await subscriptionsService.runBilling();
+
+    const period = (await subscriptionsService.forOrganization(org)).charges[0];
+    assert.equal(period?.status, 'free_tier');
+    // $200 counted, the reversed $5,000 did not.
+    assert.match(period?.note ?? '', /\$200\.00 processed/);
+  });
+
+  test('volume outside the billed period does not count towards it', async () => {
+    /**
+     * The window is the period being billed, not a trailing 30 days at whatever moment
+     * the job happens to run — that is the only version a merchant can check against
+     * their own records.
+     */
+    const org = await freshMerchant('window');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    // Long before this period started.
+    await giveVolume(org, 9_000, daysAgo(200));
+    await giveVolume(org, 100, daysAgo(10));
+
+    await subscriptionsService.runBilling();
+    assert.equal((await subscriptionsService.forOrganization(org)).charges[0]?.status, 'free_tier');
+  });
+
+  test('assessedVolume separates rates we set from rates a merchant declared', async () => {
+    const org = await freshMerchant('assessed');
+    const from = daysAgo(30);
+    const to = new Date();
+
+    await giveVolume(org, 600, daysAgo(20), { source: 'quote' });
+    await giveVolume(org, 100, daysAgo(20), { source: 'oracle' });
+    await giveVolume(org, 300, daysAgo(20), { source: 'merchant_rate' });
+    await giveVolume(org, 8_000, daysAgo(20), { source: 'unknown' });
+
+    const volume = await subscriptionsService.assessedVolume(org, { from, to });
+    // A quote and our own oracle are both figures we stand behind, so they pool.
+    assert.equal(volume.verifiedUsdMicros, 700_000_000n);
+    assert.equal(volume.declaredUsdMicros, 300_000_000n);
+    // Counted as a payment we could not price, contributing no dollars — so a token we
+    // have no rate for cannot be used to manufacture volume either way.
+    assert.equal(volume.unpricedPayments, 1);
+    assert.equal(volume.totalUsdMicros, 1_000_000_000n);
+  });
+
+  test('a free month resting on merchant-declared rates is flagged for review', async () => {
+    /**
+     * The gaming vector: a merchant adds their own token, declares it worth almost
+     * nothing, and stays under the threshold on paper. We cannot prevent this — an
+     * illiquid token has no rate to check against — so we make it visible instead.
+     * Detection where prevention is not available.
+     */
+    const before = await countAudit('subscription.free_tier_needs_review');
+
+    const org = await freshMerchant('declared');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    // Mostly declared, and above half the threshold: eligibility turns on our trusting
+    // a number the merchant chose.
+    await giveVolume(org, 1_200, daysAgo(10), { source: 'merchant_rate' });
+    await giveVolume(org, 50, daysAgo(10), { source: 'quote' });
+
+    await subscriptionsService.runBilling();
+
+    // Still free — the flag is a note to an operator, not a penalty applied to the bill.
+    assert.equal((await subscriptionsService.forOrganization(org)).charges[0]?.status, 'free_tier');
+    assert.equal(await countAudit('subscription.free_tier_needs_review'), before + 1);
+  });
+
+  test('an ordinary free month is not flagged', async () => {
+    /**
+     * The other half of the previous test, and the one that decides whether the flag is
+     * worth having. A signal that fires on every small merchant is noise, and an
+     * operator learns to ignore it.
+     */
+    const before = await countAudit('subscription.free_tier_needs_review');
+
+    const org = await freshMerchant('quiet');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await giveVolume(org, 900, daysAgo(10), { source: 'quote' });
+
+    await subscriptionsService.runBilling();
+
+    assert.equal((await subscriptionsService.forOrganization(org)).charges[0]?.status, 'free_tier');
+    assert.equal(await countAudit('subscription.free_tier_needs_review'), before);
+  });
+
+  test('a merchant who grows past the threshold starts being billed', async () => {
+    /**
+     * Free is a property of a period, not of a merchant. Someone quiet in one month and
+     * busy in the next must be billed for the second without any operator action.
+     */
+    const org = await freshMerchant('grows');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(70));
+    await giveVolume(org, 300, daysAgo(60));
+    await subscriptionsService.runBilling();
+
+    const first = (await subscriptionsService.forOrganization(org)).charges[0]!;
+    assert.equal(first.status, 'free_tier');
+
+    // The next period, with real volume in it. Dated inside that period's window —
+    // volume credited after it closed belongs to the period after.
+    await giveVolume(org, 4_000, daysAgo(40));
+    await subscriptionsService.runBilling();
+
+    const { subscription, charges } = await subscriptionsService.forOrganization(org);
+    assert.ok(charges.length >= 2, 'a second period should have been assessed');
+    const second = charges[0]!;
+    assert.equal(second.status, 'due');
+    assert.equal(second.amountUsdMicros, '49000000');
+    assert.equal(subscription.status, 'past_due');
+  });
+
+  test('a free period still rolls the subscription forward', async () => {
+    /**
+     * If a free month left the period boundary where it was, the next run would assess
+     * the same period again — and the merchant would never be billed no matter how much
+     * they went on to process.
+     */
+    const org = await freshMerchant('rolls');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await giveVolume(org, 100, daysAgo(10));
+
+    const beforeRun = (await subscriptionsService.forOrganization(org)).subscription;
+    await subscriptionsService.runBilling();
+    const afterRun = (await subscriptionsService.forOrganization(org)).subscription;
+
+    assert.ok(
+      afterRun.currentPeriodEnd! > beforeRun.currentPeriodEnd!,
+      'the period must have moved on',
+    );
+    // And a repeat run is still a no-op, exactly as it is for a billed period.
+    const charges = (await subscriptionsService.forOrganization(org)).charges.length;
+    await subscriptionsService.runBilling();
+    assert.equal((await subscriptionsService.forOrganization(org)).charges.length, charges);
+  });
+
+  test('a free-tier merchant is not listed as owing money', async () => {
+    // The outstanding list is what an operator chases. A merchant who owes nothing
+    // appearing on it would send someone to ask for $49 that was never due.
+    const org = await freshMerchant('notowing');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await giveVolume(org, 250, daysAgo(10));
+    await subscriptionsService.runBilling();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/billing/outstanding',
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const merchants = response.json().merchants as { organizationId: string }[];
+    assert.ok(
+      !merchants.some((merchant) => merchant.organizationId === org),
+      'a free-tier merchant owes nothing and must not appear',
+    );
+  });
+
+  test('the merchant can see where they stand against the free threshold', async () => {
+    /**
+     * A $49 charge should be visible while the month is still running, not discovered
+     * on the day it lands. This is the number the billing page shows.
+     */
+    const org = await freshMerchant('standing');
+    // A period already in progress, which is the only state this view is read in.
+    await subscriptionsService.ensureForOrganization(org, daysAgo(5));
+    await giveVolume(org, 1_100, daysAgo(2));
+    await giveVolume(org, 150, daysAgo(1), { source: 'merchant_rate' });
+
+    const { freeTier } = await subscriptionsService.forOrganization(org);
+    assert.equal(freeTier.thresholdUsdMicros, '1500000000');
+    assert.equal(freeTier.processedUsdMicros, '1250000000');
+    assert.equal(freeTier.verifiedUsdMicros, '1100000000');
+    assert.equal(freeTier.declaredUsdMicros, '150000000');
+    assert.equal(freeTier.remainingUsdMicros, '250000000');
+    assert.equal(freeTier.willBeFree, true);
+  });
+
+  test('a merchant already over the threshold is shown nothing remaining, not a negative', async () => {
+    // Subtracting past zero would render as "-$3,500 remaining", which reads as credit.
+    const org = await freshMerchant('over');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(5));
+    await giveVolume(org, 5_000, daysAgo(2));
+
+    const { freeTier } = await subscriptionsService.forOrganization(org);
+    assert.equal(freeTier.remainingUsdMicros, '0');
+    assert.equal(freeTier.willBeFree, false);
   });
 
   async function countAudit(action: string): Promise<number> {

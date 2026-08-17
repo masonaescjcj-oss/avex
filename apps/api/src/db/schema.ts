@@ -615,6 +615,17 @@ export const invoices = pgTable(
  * restart and RPC providers replay logs, so without this a merchant gets paid
  * twice for one payment.
  */
+export const paymentValueSourceEnum = pgEnum('payment_value_source', [
+  /** From the rate locked on the invoice's own quote — our figure, at the time. */
+  'quote',
+  /** From our price oracle at credit time. */
+  'oracle',
+  /** From a rate the merchant set for an asset nobody else prices. Unverifiable. */
+  'merchant_rate',
+  /** No price was available at all. Counts as nothing, and is visible as such. */
+  'unknown',
+]);
+
 export const payments = pgTable(
   'payments',
   {
@@ -633,6 +644,25 @@ export const payments = pgTable(
     blockHash: text('block_hash'),
     /** The payer's address, needed to offer a refund anywhere sensible. */
     fromAddress: text('from_address'),
+
+    /**
+     * What this transfer was worth in micro-dollars when it was credited.
+     *
+     * Recorded rather than recomputed, because the value of a payment is a fact about
+     * the moment it arrived. Valuing last month's volume at today's price would make a
+     * merchant's free-tier eligibility move with the market after the fact.
+     */
+    valueUsdMicros: numeric('value_usd_micros', { precision: 78, scale: 0 }),
+    /**
+     * Where that figure came from, which decides how much it can be trusted.
+     *
+     * A merchant setting their own `fixed_rate` is declaring a value we cannot check,
+     * and a merchant who wants to stay under a volume threshold has an obvious reason
+     * to declare it low. Keeping the provenance means the billing rule can count
+     * verified volume and merely *flag* declared volume, rather than treating a
+     * self-reported number as fact.
+     */
+    valueSource: paymentValueSourceEnum('value_source'),
 
     creditedAt: timestamp('credited_at', { withTimezone: true }).notNull().defaultNow(),
     /** Set when a reorg removed the transaction and the credit was withdrawn. */
@@ -956,6 +986,14 @@ export const subscriptionChargeStatusEnum = pgEnum('subscription_charge_status',
   'paid',
   /** Written off by staff, with a reason. */
   'waived',
+  /**
+   * Not charged because the merchant's volume was below the free threshold.
+   *
+   * A separate status from `waived` on purpose: "we chose not to bill by policy" and
+   * "a staff member wrote this off" are different events, and an operator asking why a
+   * merchant was not billed in March deserves the actual answer.
+   */
+  'free_tier',
 ]);
 
 /**
