@@ -26,6 +26,20 @@ import {
 } from './principal.js';
 import type { Principal } from './principal.js';
 import { RateLimiter } from './rate-limit.js';
+import { AdminError } from '../domain/admin-service.js';
+import type { AdminService } from '../domain/admin-service.js';
+import { StaffAuthError } from '../domain/staff-auth.js';
+import type { StaffAuthService, StaffPrincipal } from '../domain/staff-auth.js';
+import {
+  StaffElevationRequiredError,
+  StaffPermissionDeniedError,
+} from '../domain/staff-rbac.js';
+import {
+  StaffTwoFactorRequiredError,
+  StaffUnauthenticatedError,
+  resolveStaffPrincipal,
+} from './staff-principal.js';
+import { adminErrorResponse, registerAdminRoutes, staffAuthErrorResponse } from './routes/admin.js';
 import { registerAssetRoutes } from './routes/assets.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
@@ -36,6 +50,14 @@ declare module 'fastify' {
   interface FastifyRequest {
     /** Set by the authentication hook. Null on anonymous requests. */
     principal: Principal | null;
+    /**
+     * Set by the staff authentication hook on `/admin` routes only.
+     *
+     * Separate from `principal` on purpose: a merchant credential must never be
+     * able to satisfy a staff check, and keeping them in different fields means a
+     * handler cannot confuse one for the other even by accident.
+     */
+    staff: StaffPrincipal | null;
   }
 }
 
@@ -48,6 +70,8 @@ export interface AppContext {
   readonly prices: PriceService;
   readonly assets: AssetService;
   readonly payouts: PayoutAddressService;
+  readonly staffAuth: StaffAuthService;
+  readonly admin: AdminService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */
   readonly minPriceSources: number;
 }
@@ -59,6 +83,18 @@ const PUBLIC_ROUTES = new Set([
   'POST /v1/auth/login',
   'POST /v1/auth/verify-email',
 ]);
+
+/**
+ * Admin routes reachable before a staff session exists.
+ *
+ * Only the two login steps. Note what is absent: there is no `/admin` route that
+ * creates the first account. Bootstrapping is a command-line operation, because an
+ * HTTP path that can mint a superadmin is a path an attacker can reach.
+ */
+const PUBLIC_ADMIN_ROUTES = new Set(['POST /admin/auth/login', 'POST /admin/auth/complete']);
+
+/** Everything below this prefix authenticates as staff, never as a merchant. */
+const ADMIN_PREFIX = '/admin';
 
 export function buildServer(context: AppContext): FastifyInstance {
   const app = Fastify({
@@ -82,6 +118,7 @@ export function buildServer(context: AppContext): FastifyInstance {
   pruner.unref();
 
   app.decorateRequest('principal', null);
+  app.decorateRequest('staff', null);
 
   app.addHook('onRequest', async (request, reply) => {
     const decision = globalLimiter.check(request.ip);
@@ -105,13 +142,30 @@ export function buildServer(context: AppContext): FastifyInstance {
    * developer has to add it to PUBLIC_ROUTES on purpose to open it up.
    */
   app.addHook('onRequest', async (request) => {
+    const url = request.routeOptions.url ?? request.url;
+    const route = `${request.method} ${url}`;
+
+    /**
+     * Admin routes take the staff path and nothing else.
+     *
+     * The merchant resolver is not even run for them. If both ran, a route that
+     * forgot its staff check would still see a populated `principal` and could act
+     * on a merchant credential — so the two credential types are kept from ever
+     * being present on the same request.
+     */
+    if (url.startsWith(ADMIN_PREFIX)) {
+      request.staff = await resolveStaffPrincipal(context.staffAuth, request.headers.authorization);
+      if (PUBLIC_ADMIN_ROUTES.has(route)) return;
+      if (request.staff === null) throw new StaffUnauthenticatedError();
+      return;
+    }
+
     request.principal = await resolvePrincipal(
       context.db,
       context.auth,
       request.headers.authorization,
     );
 
-    const route = `${request.method} ${request.routeOptions.url ?? request.url}`;
     if (PUBLIC_ROUTES.has(route)) return;
     if (request.principal === null) throw new UnauthenticatedError();
   });
@@ -132,6 +186,46 @@ export function buildServer(context: AppContext): FastifyInstance {
       return reply
         .status(401)
         .send({ error: 'unauthenticated', message: 'Sign in to continue.' });
+    }
+
+    if (error instanceof StaffUnauthenticatedError) {
+      return reply
+        .status(401)
+        .send({ error: 'staff_unauthenticated', message: 'Sign in to the admin panel.' });
+    }
+
+    if (error instanceof StaffElevationRequiredError) {
+      return reply.status(403).send({
+        error: 'elevation_required',
+        message: 'Confirm with your authenticator app to make this change.',
+        permission: error.permission,
+      });
+    }
+
+    if (error instanceof StaffTwoFactorRequiredError) {
+      return reply.status(403).send({
+        error: 'elevation_required',
+        message: 'Confirm with your authenticator app to make this change.',
+        permission: error.permission,
+      });
+    }
+
+    if (error instanceof StaffPermissionDeniedError) {
+      return reply.status(403).send({
+        error: 'permission_denied',
+        message: 'Your staff role does not allow this action.',
+        permission: error.permission,
+      });
+    }
+
+    if (error instanceof StaffAuthError) {
+      const { status, body } = staffAuthErrorResponse(error);
+      return reply.status(status).send(body);
+    }
+
+    if (error instanceof AdminError) {
+      const { status, body } = adminErrorResponse(error);
+      return reply.status(status).send(body);
     }
 
     if (error instanceof MfaIncompleteError) {
@@ -225,6 +319,7 @@ export function buildServer(context: AppContext): FastifyInstance {
   registerPriceRoutes(app, context);
   registerAssetRoutes(app, context);
   registerPayoutRoutes(app, context);
+  registerAdminRoutes(app, context);
 
   return app;
 }

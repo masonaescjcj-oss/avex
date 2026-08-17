@@ -25,7 +25,9 @@ import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
 import { DatabaseWatchStore } from '../domain/watch-store.js';
 import { WebhookService } from '../domain/webhook-service.js';
+import { AdminService } from '../domain/admin-service.js';
 import { AuthService } from '../domain/auth-service.js';
+import { StaffAuthService } from '../domain/staff-auth.js';
 import { totpCode } from '../auth/totp.js';
 import { hashToken } from '../auth/tokens.js';
 import { loadEnv } from '../env.js';
@@ -108,6 +110,8 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
         sessionTtlMs: 60 * 60 * 1000,
         emailTokenTtlMs: 60 * 60 * 1000,
       }),
+      staffAuth: new StaffAuthService(database.db, audit),
+      admin: new AdminService(database.db, audit),
     });
     await app.ready();
   });
@@ -547,6 +551,8 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
         sessionTtlMs: 60 * 60 * 1000,
         emailTokenTtlMs: 60 * 60 * 1000,
       }),
+      staffAuth: new StaffAuthService(database.db, audit),
+      admin: new AdminService(database.db, audit),
     });
     await app.ready();
 
@@ -719,6 +725,8 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
         sessionTtlMs: 60 * 60 * 1000,
         emailTokenTtlMs: 60 * 60 * 1000,
       }),
+      staffAuth: new StaffAuthService(database.db, audit),
+      admin: new AdminService(database.db, audit),
     });
     await app.ready();
 
@@ -1010,6 +1018,8 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
         sessionTtlMs: 60 * 60 * 1000,
         emailTokenTtlMs: 60 * 60 * 1000,
       }),
+      staffAuth: new StaffAuthService(database.db, audit),
+      admin: new AdminService(database.db, audit),
     });
     await app.ready();
 
@@ -1681,9 +1691,28 @@ describe('watcher and webhooks end to end', { skip: databaseUrl ? false : 'DATAB
 
   test('a 4xx fails without consuming retries', async () => {
     respondWith = () => 404;
-    await webhooks.enqueue(orgId, 'invoice.paid', { invoiceId }, `notfound-${unique}`);
+    const key = `notfound-${unique}`;
+    await webhooks.enqueue(orgId, 'invoice.paid', { invoiceId }, key);
 
-    const tally = await webhooks.drain();
-    assert.ok(tally.failed >= 1, 'a wrong URL should fail rather than retry for hours');
+    /**
+     * Assert on this delivery's own outcome, not on the tally.
+     *
+     * `drain` selects globally, oldest-first, capped at 50, so a backlog left by
+     * another suite or an earlier run can sit ahead of this row and leave the tally
+     * at zero while nothing is wrong. That made this test fail once under a parallel
+     * run and pass on its own — the worst kind of red.
+     */
+    let status: string | undefined;
+    for (let attempt = 0; attempt < 20 && status !== 'failed'; attempt++) {
+      await webhooks.drain();
+      const [row] = await db
+        .select({ status: schema.webhookDeliveries.status })
+        .from(schema.webhookDeliveries)
+        .where(eq(schema.webhookDeliveries.idempotencyKey, key))
+        .limit(1);
+      status = row?.status;
+    }
+
+    assert.equal(status, 'failed', 'a wrong URL should fail rather than retry for hours');
   });
 });

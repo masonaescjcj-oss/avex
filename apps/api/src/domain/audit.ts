@@ -13,6 +13,8 @@ export interface AuditActor {
   readonly organizationId?: string | null;
   readonly userId?: string | null;
   readonly apiKeyId?: string | null;
+  /** Set when the actor was AVEX staff acting from the admin panel. */
+  readonly staffId?: string | null;
   readonly ip?: string | null;
   readonly userAgent?: string | null;
 }
@@ -66,6 +68,7 @@ export class AuditService {
       organizationId: entry.organizationId ?? null,
       actorUserId: entry.userId ?? null,
       actorApiKeyId: entry.apiKeyId ?? null,
+      actorStaffId: entry.staffId ?? null,
       action: entry.action,
       targetType: entry.targetType ?? null,
       targetId: entry.targetId ?? null,

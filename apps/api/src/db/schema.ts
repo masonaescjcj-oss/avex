@@ -38,7 +38,11 @@ import {
  */
 export const ROLE_VALUES = ['owner', 'admin', 'developer', 'viewer'] as const;
 
+/** Mirrors `STAFF_ROLES` in domain/staff-rbac.ts; the same test guards the pair. */
+export const STAFF_ROLE_VALUES = ['support', 'operator', 'superadmin'] as const;
+
 export const roleEnum = pgEnum('role', ROLE_VALUES);
+export const staffRoleEnum = pgEnum('staff_role', STAFF_ROLE_VALUES);
 export const apiKeyModeEnum = pgEnum('api_key_mode', ['test', 'live']);
 export const emailTokenPurposeEnum = pgEnum('email_token_purpose', [
   'verify_email',
@@ -183,6 +187,66 @@ export const apiKeys = pgTable(
   ],
 );
 
+// ── Phase 6: AVEX staff, for the admin panel ─────────────────────────────────
+
+/**
+ * Platform staff. A separate table from `users`, on purpose.
+ *
+ * A staff member acts across every merchant, so their credential is a different
+ * kind of thing from a merchant login and is kept apart from it. The practical
+ * consequences: a phished merchant password grants nothing here, one person can
+ * hold both a merchant account and a staff account under the same email without
+ * colliding, and the two live behind different origins and different cookies.
+ *
+ * Two differences from `users` are deliberate rather than incidental.
+ * `totpEnabledAt` is what a login checks rather than an optional extra — staff
+ * without a second factor cannot sign in at all. And there is no self-service
+ * signup path anywhere in the API: a row here is created by an existing superadmin,
+ * or by the bootstrap command when there are none.
+ */
+export const staff = pgTable(
+  'staff',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    name: text('name').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    role: staffRoleEnum('role').notNull(),
+    /** Base32 shared secret, present from the moment enrolment starts. */
+    totpSecret: text('totp_secret'),
+    /** Mandatory: a staff account cannot complete a login until this is set. */
+    totpEnabledAt: timestamp('totp_enabled_at', { withTimezone: true }),
+    createdByStaffId: uuid('created_by_staff_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Revocation, never deletion — "who did this in March" must stay answerable. */
+    disabledAt: timestamp('disabled_at', { withTimezone: true }),
+    disabledReason: text('disabled_reason'),
+  },
+  (table) => [uniqueIndex('staff_email_key').on(table.email)],
+);
+
+export const staffSessions = pgTable(
+  'staff_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    mfaSatisfiedAt: timestamp('mfa_satisfied_at', { withTimezone: true }),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('staff_sessions_token_hash_key').on(table.tokenHash),
+    index('staff_sessions_staff_idx').on(table.staffId),
+  ],
+);
+
 /**
  * Append-only record of every action that changes configuration or moves money.
  *
@@ -200,6 +264,14 @@ export const auditLog = pgTable(
     actorApiKeyId: uuid('actor_api_key_id').references(() => apiKeys.id, {
       onDelete: 'set null',
     }),
+    /**
+     * Set when the actor was AVEX staff rather than someone inside the merchant.
+     *
+     * A merchant reading their own audit trail needs to be able to tell "we changed
+     * this" from "AVEX changed this", and the actor columns are the only place that
+     * distinction can live.
+     */
+    actorStaffId: uuid('actor_staff_id').references(() => staff.id, { onDelete: 'set null' }),
     action: text('action').notNull(),
     targetType: text('target_type'),
     targetId: text('target_id'),
@@ -212,6 +284,11 @@ export const auditLog = pgTable(
   (table) => [
     index('audit_log_org_created_idx').on(table.organizationId, table.createdAt),
     index('audit_log_actor_idx').on(table.actorUserId),
+    index('audit_log_staff_idx').on(table.actorStaffId),
+    // The admin panel's search is cross-merchant and newest-first, which the
+    // org-scoped index above cannot serve.
+    index('audit_log_created_idx').on(table.createdAt),
+    index('audit_log_action_idx').on(table.action),
   ],
 );
 

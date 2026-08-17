@@ -9,9 +9,11 @@ import {
 } from '@avex/core';
 
 import { createDatabase } from './db/client.js';
+import { AdminService } from './domain/admin-service.js';
 import { AuditService } from './domain/audit.js';
 import { AssetService } from './domain/asset-service.js';
 import { AuthService } from './domain/auth-service.js';
+import { StaffAuthService } from './domain/staff-auth.js';
 import { DatabasePaymentSink } from './domain/payment-sink.js';
 import { PayoutAddressService } from './domain/payout-service.js';
 import { DatabaseWatchStore } from './domain/watch-store.js';
@@ -108,6 +110,9 @@ async function main(): Promise<void> {
   }, 60_000);
   payoutWorker.unref();
 
+  const staffAuth = new StaffAuthService(db, audit);
+  const admin = new AdminService(db, audit);
+
   const app = buildServer({
     env,
     db,
@@ -116,8 +121,10 @@ async function main(): Promise<void> {
     prices,
     assets: assetService,
     payouts,
+    staffAuth,
+    admin,
     minPriceSources: env.PRICE_MIN_SOURCES,
-    // Phase 6 replaces this with a real transport; the seam is what matters now.
+    // A real transport still to come; the seam is what matters now.
     mailer,
   });
 

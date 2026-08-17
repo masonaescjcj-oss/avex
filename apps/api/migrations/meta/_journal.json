@@ -36,6 +36,13 @@
       "when": 1786971766361,
       "tag": "0004_spooky_prima",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786987525696,
+      "tag": "0005_mighty_colossus",
+      "breakpoints": true
     }
   ]
 }

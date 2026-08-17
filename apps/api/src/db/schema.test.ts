@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { ROLES } from '../domain/rbac.js';
-import { ROLE_VALUES } from './schema.js';
+import { STAFF_ROLES } from '../domain/staff-rbac.js';
+import { ROLE_VALUES, STAFF_ROLE_VALUES } from './schema.js';
 
 /**
  * The schema duplicates the role list because the migration tool cannot import
@@ -16,5 +17,14 @@ test('the database role enum matches the domain role list exactly', () => {
     [...ROLES],
     'apps/api/src/db/schema.ts ROLE_VALUES has drifted from domain/rbac.ts ROLES — ' +
       'update both and generate a migration',
+  );
+});
+
+test('the database staff role enum matches the domain staff role list exactly', () => {
+  assert.deepEqual(
+    [...STAFF_ROLE_VALUES],
+    [...STAFF_ROLES],
+    'apps/api/src/db/schema.ts STAFF_ROLE_VALUES has drifted from ' +
+      'domain/staff-rbac.ts STAFF_ROLES — update both and generate a migration',
   );
 });
