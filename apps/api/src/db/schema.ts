@@ -419,3 +419,44 @@ export const merchantAssets = pgTable(
     index('merchant_assets_org_idx').on(table.organizationId),
   ],
 );
+
+/**
+ * Phase 4: where settled funds go.
+ *
+ * Addresses are never updated in place and never deleted. A replacement inserts a
+ * new row and marks the old one superseded, because "which address was active when
+ * this invoice settled" is a question that gets asked during a dispute, and an
+ * overwritten column cannot answer it.
+ */
+export const payoutAddresses = pgTable(
+  'payout_addresses',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    chain: text('chain').notNull(),
+    address: text('address').notNull(),
+
+    activeFrom: timestamp('active_from', { withTimezone: true }).notNull().defaultNow(),
+    /** Set when a replacement takes effect. Null means currently active. */
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    /** The delayed change this address came from, if it was not the first. */
+    pendingChangeId: uuid('pending_change_id').references(() => pendingChanges.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // At most one active address per chain. A partial index, because superseded
+    // rows must be allowed to accumulate for the audit trail.
+    uniqueIndex('payout_addresses_active_key')
+      .on(table.organizationId, table.chain)
+      .where(sql`${table.supersededAt} is null`),
+    index('payout_addresses_org_idx').on(table.organizationId),
+  ],
+);

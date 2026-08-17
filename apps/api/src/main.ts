@@ -9,6 +9,7 @@ import { createDatabase } from './db/client.js';
 import { AuditService } from './domain/audit.js';
 import { AssetService } from './domain/asset-service.js';
 import { AuthService } from './domain/auth-service.js';
+import { PayoutAddressService } from './domain/payout-service.js';
 import { PriceTickWriter } from './domain/price-repository.js';
 import { loadEnv } from './env.js';
 import { buildServer } from './http/server.js';
@@ -59,6 +60,22 @@ async function main(): Promise<void> {
 
   const seeded = await assetService.seedCurated();
 
+  const mailer = new ConsoleMailer(env.APP_URL);
+  const payouts = new PayoutAddressService(db, audit, mailer);
+
+  // Scheduled payout changes take effect on a timer rather than on the next
+  // request, so a merchant who stops using the dashboard still gets the change
+  // they asked for.
+  const payoutWorker = setInterval(() => {
+    void payouts
+      .applyDueChanges()
+      .then((count) => {
+        if (count > 0) app.log.info({ count }, 'applied scheduled payout changes');
+      })
+      .catch((error: unknown) => app.log.error({ err: error }, 'payout worker failed'));
+  }, 60_000);
+  payoutWorker.unref();
+
   const app = buildServer({
     env,
     db,
@@ -66,9 +83,10 @@ async function main(): Promise<void> {
     audit,
     prices,
     assets: assetService,
+    payouts,
     minPriceSources: env.PRICE_MIN_SOURCES,
     // Phase 6 replaces this with a real transport; the seam is what matters now.
-    mailer: new ConsoleMailer(env.APP_URL),
+    mailer,
   });
 
   const shutdown = async (signal: string): Promise<void> => {

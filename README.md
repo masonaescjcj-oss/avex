@@ -129,8 +129,16 @@ Phase 1 decisions that are already enforced and tested:
   minutes**, and are refused outright for accounts with no authenticator
   enrolled — otherwise elevation would be decorative for exactly the accounts
   least protected.
-- **A payout address change is queued with a 24-hour delay**, and every member is
-  notified. The delay turns a silent theft into something the merchant can catch.
+- **A payout address change is queued with a 24-hour delay**, every member is
+  emailed, and *any* member can cancel it — including a viewer. The delay is the
+  real protection here: two-factor and role limits raise the cost of getting in,
+  but only the delay gives the merchant a chance to notice and undo it, and
+  requiring the owner to cancel would leave a compromised owner unstoppable.
+  The first address for a chain applies immediately — there is nothing to redirect
+  yet, so a delay would obstruct setup without protecting anything.
+- **Payout addresses are validated per chain and never overwritten.** A
+  replacement supersedes the old row rather than updating it, because "which
+  address was active when this invoice settled" gets asked during a dispute.
 - **API keys can never hold elevation-gated scopes.** A headless key cannot prove
   possession of an authenticator, so granting it one would create a credential
   that bypasses the requirement.

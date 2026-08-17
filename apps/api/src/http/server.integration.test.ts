@@ -13,8 +13,10 @@ import { createDatabase, schema } from '../db/client.js';
 import { PriceTickWriter } from '../domain/price-repository.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
+import { PayoutAddressService } from '../domain/payout-service.js';
 import { AuthService } from '../domain/auth-service.js';
 import { totpCode } from '../auth/totp.js';
+import { hashToken } from '../auth/tokens.js';
 import { loadEnv } from '../env.js';
 import { ConsoleMailer } from '../mailer.js';
 import { buildServer } from './server.js';
@@ -85,6 +87,7 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
       audit,
       mailer,
       minPriceSources: DEFAULT_AGGREGATION.minSources,
+      payouts: new PayoutAddressService(database.db, audit, mailer ?? new ConsoleMailer(env.APP_URL, () => {})),
       assets: new AssetService(database.db, audit, new ContractProbe(offlineCaller), ['USDT']),
       prices: new PriceService(
         [fakeSource('fake-a'), fakeSource('fake-b')],
@@ -493,13 +496,15 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
     close = database.close;
     db = database.db;
     const audit = new AuditService(database.db);
+    const suiteMailer = new ConsoleMailer(env.APP_URL, () => {});
 
     app = buildServer({
       env,
       db: database.db,
       audit,
-      mailer: new ConsoleMailer(env.APP_URL, () => {}),
+      mailer: suiteMailer,
       minPriceSources: 2,
+      payouts: new PayoutAddressService(database.db, audit, suiteMailer),
       assets: new AssetService(database.db, audit, new ContractProbe(offlineCaller), ['USDT']),
       prices: new PriceService(
         [
@@ -674,6 +679,7 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
     close = database.close;
     db = database.db;
     const audit = new AuditService(database.db);
+    const suiteMailer = new ConsoleMailer(env.APP_URL, () => {});
 
     assetService = new AssetService(
       database.db,
@@ -686,8 +692,9 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
       env,
       db: database.db,
       audit,
-      mailer: new ConsoleMailer(env.APP_URL, () => {}),
+      mailer: suiteMailer,
       minPriceSources: 2,
+      payouts: new PayoutAddressService(database.db, audit, suiteMailer),
       prices: new PriceService(
         [
           { name: 'a', supports: () => true, async fetchUsdPrice() { return { priceScaled: 10n ** 18n, observedAt: Date.now() }; } },
@@ -935,5 +942,370 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
     // Curated assets are shared; another merchant's submission is not.
     assert.ok(!ids.includes(submittedAssetId));
     assert.ok(response.json().data.some((row: { curated: boolean }) => row.curated));
+  });
+});
+
+describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
+  let app: FastifyInstance;
+  let close: () => Promise<void>;
+  let db: ReturnType<typeof createDatabase>['db'];
+  let payouts: PayoutAddressService;
+  let mail: ConsoleMailer;
+
+  let ownerToken: string;
+  let viewerToken: string;
+  let orgId: string;
+  let ownerSecret: string;
+
+  const unique = randomBytes(6).toString('hex');
+  const ownerEmail = `payout-owner-${unique}@example.com`;
+  const viewerEmail = `payout-viewer-${unique}@example.com`;
+  const password = 'a-sufficiently-long-password';
+
+  const FIRST = '0x1111111111111111111111111111111111111111';
+  const ATTACKER = '0x2222222222222222222222222222222222222222';
+
+  before(async () => {
+    const env = loadEnv({
+      ...process.env,
+      NODE_ENV: 'test',
+      DATABASE_URL: databaseUrl!,
+      RATE_LIMIT_PER_MINUTE: '10000',
+    });
+
+    const database = createDatabase(env.DATABASE_URL);
+    close = database.close;
+    db = database.db;
+    const audit = new AuditService(database.db);
+    mail = new ConsoleMailer(env.APP_URL, () => {});
+    payouts = new PayoutAddressService(database.db, audit, mail);
+
+    app = buildServer({
+      env,
+      db: database.db,
+      audit,
+      mailer: mail,
+      payouts,
+      minPriceSources: 2,
+      assets: new AssetService(database.db, audit, new ContractProbe(offlineCaller), ['USDT']),
+      prices: new PriceService(
+        [
+          { name: 'a', supports: () => true, async fetchUsdPrice() { return { priceScaled: 10n ** 18n, observedAt: Date.now() }; } },
+          { name: 'b', supports: () => true, async fetchUsdPrice() { return { priceScaled: 10n ** 18n, observedAt: Date.now() }; } },
+        ],
+        { aggregation: DEFAULT_AGGREGATION, breaker: DEFAULT_BREAKER, cacheTtlMs: 10_000 },
+      ),
+      auth: new AuthService(database.db, audit, {
+        sessionTtlMs: 60 * 60 * 1000,
+        emailTokenTtlMs: 60 * 60 * 1000,
+      }),
+    });
+    await app.ready();
+
+    // Owner, with two-factor enrolled and proven — the only way to reach
+    // payout_address:write at all.
+    const signup = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: { email: ownerEmail, password, organizationName: 'Payout Merchant' },
+    });
+    orgId = signup.json().organizationId;
+
+    const login = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { email: ownerEmail, password },
+    });
+    ownerToken = login.json().token;
+
+    const enroll = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/totp/enroll',
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    ownerSecret = enroll.json().secret;
+    await app.inject({
+      method: 'POST',
+      url: '/v1/auth/totp/confirm',
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: { code: totpCode(ownerSecret) },
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/v1/auth/mfa',
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: { code: totpCode(ownerSecret) },
+    });
+
+    // A viewer in the same organization, to prove who can cancel.
+    const viewerSignup = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: { email: viewerEmail, password, organizationName: 'Viewer Own Org' },
+    });
+    const viewerUserId = viewerSignup.json().userId;
+    await db.insert(schema.memberships).values({
+      organizationId: orgId,
+      userId: viewerUserId,
+      role: 'viewer',
+    });
+    const viewerLogin = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { email: viewerEmail, password },
+    });
+    viewerToken = viewerLogin.json().token;
+  });
+
+  after(async () => {
+    await app?.close();
+    await close?.();
+  });
+
+  const asOwner = () => ({ authorization: `Bearer ${ownerToken}` });
+  const asViewer = () => ({ authorization: `Bearer ${viewerToken}` });
+
+  const reElevate = async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/v1/auth/mfa',
+      headers: asOwner(),
+      payload: { code: totpCode(ownerSecret) },
+    });
+  };
+
+  test('a viewer cannot set a payout address', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/payout-addresses`,
+      headers: asViewer(),
+      payload: { chain: 'bsc', address: FIRST },
+    });
+    assert.equal(response.statusCode, 403);
+    assert.equal(response.json().error, 'permission_denied');
+  });
+
+  test('a malformed address is refused before any funds could move', async () => {
+    await reElevate();
+    for (const address of ['0x1234', 'not-an-address', `0x${'0'.repeat(40)}`]) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/v1/organizations/${orgId}/payout-addresses`,
+        headers: asOwner(),
+        payload: { chain: 'bsc', address },
+      });
+      assert.equal(response.statusCode, 400, address);
+      assert.equal(response.json().error, 'invalid_address', address);
+    }
+  });
+
+  test('the first address for a chain takes effect at once', async () => {
+    // Nothing to redirect yet, so a delay would obstruct setup without protecting
+    // anything.
+    await reElevate();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/payout-addresses`,
+      headers: asOwner(),
+      payload: { chain: 'bsc', address: FIRST.toLowerCase() },
+    });
+
+    assert.equal(response.statusCode, 201);
+    assert.equal(response.json().status, 'active');
+    // Stored checksummed, so comparisons never depend on how it was typed.
+    assert.equal(response.json().address, FIRST);
+    assert.equal(await payouts.activeAddress(orgId, 'bsc'), FIRST);
+  });
+
+  test('replacing an address is scheduled, not applied', async () => {
+    await reElevate();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/payout-addresses`,
+      headers: asOwner(),
+      payload: { chain: 'bsc', address: ATTACKER },
+    });
+
+    // 202, not 201. The attack this defends against succeeds quietly, so the
+    // response must not read as done.
+    assert.equal(response.statusCode, 202);
+    assert.equal(response.json().status, 'pending');
+    assert.match(response.json().message, /24 hours/);
+
+    // Crucially, the active address has not moved.
+    assert.equal(await payouts.activeAddress(orgId, 'bsc'), FIRST);
+  });
+
+  test('every member is emailed, not just the requester', async () => {
+    // A delay nobody is told about protects nothing, and the person who needs to
+    // see it is precisely the one who did not make the request.
+    const notices = mail.sent.filter((message) => /Payout address change/.test(message.subject));
+    const recipients = notices.map((message) => message.to);
+
+    assert.ok(recipients.includes(ownerEmail));
+    assert.ok(recipients.includes(viewerEmail), 'the viewer must be warned too');
+    assert.match(notices.at(-1)!.body, /If you did not request this/);
+  });
+
+  test('a second change for the same chain is refused while one is pending', async () => {
+    await reElevate();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/payout-addresses`,
+      headers: asOwner(),
+      payload: { chain: 'bsc', address: '0x3333333333333333333333333333333333333333' },
+    });
+
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().error, 'change_already_pending');
+  });
+
+  test('a viewer can cancel a scheduled change', async () => {
+    // The heart of the design: a compromised owner account must not be the only
+    // party able to intervene.
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/payout-addresses`,
+      headers: asViewer(),
+    });
+    const pending = listed.json().pending[0];
+    assert.equal(pending.address, ATTACKER);
+
+    const cancelled = await app.inject({
+      method: 'DELETE',
+      url: `/v1/organizations/${orgId}/payout-addresses/pending/${pending.id}`,
+      headers: asViewer(),
+    });
+    assert.equal(cancelled.statusCode, 204);
+
+    // And the change can never apply, even once its time arrives.
+    const applied = await payouts.applyDueChanges(new Date(Date.now() + 48 * 60 * 60 * 1000));
+    assert.equal(applied, 0);
+    assert.equal(await payouts.activeAddress(orgId, 'bsc'), FIRST);
+  });
+
+  test('cancelling twice is refused', async () => {
+    const cancelledChange = await db
+      .select()
+      .from(schema.pendingChanges)
+      .where(eq(schema.pendingChanges.organizationId, orgId));
+    const target = cancelledChange.find((row) => row.cancelledAt !== null);
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/v1/organizations/${orgId}/payout-addresses/pending/${target!.id}`,
+      headers: asOwner(),
+    });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, 'already_cancelled');
+  });
+
+  test('an uncancelled change applies once the delay elapses', async () => {
+    await reElevate();
+    const requested = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/payout-addresses`,
+      headers: asOwner(),
+      payload: { chain: 'bsc', address: ATTACKER },
+    });
+    assert.equal(requested.statusCode, 202);
+
+    // Not yet.
+    assert.equal(await payouts.applyDueChanges(new Date(Date.now() + 23 * 60 * 60 * 1000)), 0);
+    assert.equal(await payouts.activeAddress(orgId, 'bsc'), FIRST);
+
+    // Now.
+    assert.equal(await payouts.applyDueChanges(new Date(Date.now() + 25 * 60 * 60 * 1000)), 1);
+    assert.equal(await payouts.activeAddress(orgId, 'bsc'), ATTACKER);
+  });
+
+  test('the superseded address is kept, not overwritten', async () => {
+    // "Which address was active when this invoice settled" gets asked during a
+    // dispute, and an overwritten column cannot answer it.
+    const rows = await db
+      .select()
+      .from(schema.payoutAddresses)
+      .where(eq(schema.payoutAddresses.organizationId, orgId));
+
+    const superseded = rows.filter((row) => row.supersededAt !== null);
+    const active = rows.filter((row) => row.supersededAt === null);
+
+    assert.equal(superseded.length, 1);
+    assert.equal(superseded[0]!.address, FIRST);
+    assert.equal(active.length, 1, 'exactly one active address per chain');
+    assert.equal(active[0]!.address, ATTACKER);
+  });
+
+  test('setting the address already in use is refused', async () => {
+    await reElevate();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/payout-addresses`,
+      headers: asOwner(),
+      payload: { chain: 'bsc', address: ATTACKER },
+    });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, 'unchanged');
+  });
+
+  test('an elevated session that has gone stale must prove itself again', async () => {
+    // Five minutes after the last code, the session is signed in but no longer
+    // elevated — so a stolen cookie alone still cannot move the address.
+    await db
+      .update(schema.sessions)
+      .set({ mfaSatisfiedAt: new Date(Date.now() - 10 * 60 * 1000) })
+      .where(eq(schema.sessions.tokenHash, hashToken(ownerToken)));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/payout-addresses`,
+      headers: asOwner(),
+      payload: { chain: 'polygon', address: FIRST },
+    });
+
+    assert.equal(response.statusCode, 403);
+    assert.equal(response.json().error, 'elevation_required');
+  });
+
+  test('the audit trail records the whole sequence', async () => {
+    const rows = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.organizationId, orgId));
+    const actions = rows.map((row) => row.action);
+
+    for (const action of [
+      'payout_address.set',
+      'payout_address.change_requested',
+      'payout_address.change_cancelled',
+      'payout_address.change_applied',
+    ]) {
+      assert.ok(actions.includes(action), `missing ${action} in the audit trail`);
+    }
+  });
+
+  test('each chain has its own address, validated for that chain', async () => {
+    await reElevate();
+
+    // An EVM address on a TON payout would send funds nowhere recoverable.
+    const wrong = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/payout-addresses`,
+      headers: asOwner(),
+      payload: { chain: 'ton', address: FIRST },
+    });
+    assert.equal(wrong.statusCode, 400);
+    assert.equal(wrong.json().error, 'invalid_address');
+
+    await reElevate();
+    const right = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/payout-addresses`,
+      headers: asOwner(),
+      payload: { chain: 'ton', address: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs' },
+    });
+    // First address for TON, so immediate — and independent of the BSC one.
+    assert.equal(right.statusCode, 201);
+    assert.equal(await payouts.activeAddress(orgId, 'bsc'), ATTACKER);
   });
 });

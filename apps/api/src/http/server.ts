@@ -2,6 +2,8 @@ import { PriceUnavailableError, type PriceService } from '@avex/core';
 
 import { AssetConfigError } from '../domain/asset-service.js';
 import type { AssetService } from '../domain/asset-service.js';
+import { PayoutAddressError } from '../domain/payout-service.js';
+import type { PayoutAddressService } from '../domain/payout-service.js';
 import { assetErrorResponse } from './routes/assets.js';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
@@ -27,6 +29,7 @@ import { RateLimiter } from './rate-limit.js';
 import { registerAssetRoutes } from './routes/assets.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
+import { registerPayoutRoutes, payoutErrorResponse } from './routes/payouts.js';
 import { registerPriceRoutes } from './routes/prices.js';
 
 declare module 'fastify' {
@@ -44,6 +47,7 @@ export interface AppContext {
   readonly mailer: Mailer;
   readonly prices: PriceService;
   readonly assets: AssetService;
+  readonly payouts: PayoutAddressService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */
   readonly minPriceSources: number;
 }
@@ -188,6 +192,11 @@ export function buildServer(context: AppContext): FastifyInstance {
       });
     }
 
+    if (error instanceof PayoutAddressError) {
+      const { status, body } = payoutErrorResponse(error);
+      return reply.status(status).send(body);
+    }
+
     if (error instanceof AssetConfigError) {
       const { status, body } = assetErrorResponse(error);
       return reply.status(status).send(body);
@@ -215,6 +224,7 @@ export function buildServer(context: AppContext): FastifyInstance {
   registerOrganizationRoutes(app, context);
   registerPriceRoutes(app, context);
   registerAssetRoutes(app, context);
+  registerPayoutRoutes(app, context);
 
   return app;
 }

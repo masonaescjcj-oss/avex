@@ -6,7 +6,7 @@ import { hashToken } from '../auth/tokens.js';
 import type { ApiKeyMode } from '../auth/tokens.js';
 import type { AuthService, SessionPrincipal } from '../domain/auth-service.js';
 import type { Permission, Role } from '../domain/rbac.js';
-import { authorize, requiresElevation } from '../domain/rbac.js';
+import { PermissionDeniedError, authorize, can, requiresElevation } from '../domain/rbac.js';
 
 /**
  * Who is making a request.
@@ -159,6 +159,21 @@ export function requirePermission(access: OrganizationAccess, permission: Permis
   const { session } = access.principal;
   if (!session.mfaComplete) throw new MfaIncompleteError();
 
+  const role = access.role!;
+
+  /**
+   * Role first, then the second factor.
+   *
+   * Order matters for two reasons. A user whose role cannot perform an action
+   * should be told that, not sent to enrol an authenticator that would change
+   * nothing. And answering "set up two-factor" reveals that the action is
+   * elevation-gated — a small disclosure, but to someone with no business knowing
+   * the action exists.
+   */
+  if (!can(role, permission)) {
+    throw new PermissionDeniedError(permission, role);
+  }
+
   // An action that must be confirmed with an authenticator is impossible without
   // one. Say so plainly rather than reporting a generic elevation failure the
   // user has no way to resolve.
@@ -167,10 +182,7 @@ export function requirePermission(access: OrganizationAccess, permission: Permis
   }
 
   authorize(
-    {
-      role: access.role!,
-      mfaSatisfiedAt: session.mfaSatisfiedAt?.getTime() ?? null,
-    },
+    { role, mfaSatisfiedAt: session.mfaSatisfiedAt?.getTime() ?? null },
     permission,
   );
 }

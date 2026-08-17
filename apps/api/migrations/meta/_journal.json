@@ -22,6 +22,13 @@
       "when": 1786964177212,
       "tag": "0002_zippy_karen_page",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786970384360,
+      "tag": "0003_cynical_scourge",
+      "breakpoints": true
     }
   ]
 }
