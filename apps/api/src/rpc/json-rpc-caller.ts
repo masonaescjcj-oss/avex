@@ -1,4 +1,4 @@
-import type { ChainId, EvmCaller } from '@avex/core';
+import type { BlockRef, BlockSource, ChainId, EvmCaller } from '@avex/core';
 
 /**
  * JSON-RPC implementation of the vetting probe's chain access.
@@ -8,7 +8,7 @@ import type { ChainId, EvmCaller } from '@avex/core';
  * makes contract vetting — and every settlement after it — depend on one vendor
  * being reachable.
  */
-export class JsonRpcCaller implements EvmCaller {
+export class JsonRpcCaller implements EvmCaller, BlockSource {
   private id = 0;
 
   constructor(
@@ -19,6 +19,30 @@ export class JsonRpcCaller implements EvmCaller {
 
   forChain(chain: ChainId): JsonRpcCaller {
     return new JsonRpcCaller(this.endpoints, chain, this.timeoutMs);
+  }
+
+  /** Current head, for the watcher's reorg check. */
+  async head(): Promise<BlockRef> {
+    const block = await this.rpc<{ number: string; hash: string }>('eth_getBlockByNumber', [
+      'latest',
+      false,
+    ]);
+    return { number: Number(BigInt(block.number)), hash: block.hash };
+  }
+
+  /**
+   * Block at a height, or null when the chain is shorter than that.
+   *
+   * Null is meaningful rather than an error: a height that existed a moment ago and
+   * does not now is itself evidence of a rollback.
+   */
+  async blockAt(number: number): Promise<BlockRef | null> {
+    const block = await this.rpc<{ number: string; hash: string } | null>(
+      'eth_getBlockByNumber',
+      [`0x${number.toString(16)}`, false],
+    ).catch(() => null);
+    if (!block) return null;
+    return { number: Number(BigInt(block.number)), hash: block.hash };
   }
 
   async getCode(address: string): Promise<string> {

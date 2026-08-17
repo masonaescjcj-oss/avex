@@ -4,7 +4,15 @@ import { after, before, describe, test } from 'node:test';
 
 import type { FastifyInstance } from 'fastify';
 
-import { ContractProbe, DEFAULT_AGGREGATION, DEFAULT_BREAKER, PriceService } from '@avex/core';
+import {
+  ContractProbe,
+  DEFAULT_AGGREGATION,
+  DEFAULT_BREAKER,
+  PriceService,
+  WebhookDispatcher,
+  verifyWebhook,
+} from '@avex/core';
+import type { Asset, IncomingPayment } from '@avex/core';
 import type { PriceSource, PriceSymbol } from '@avex/core';
 
 import { eq } from 'drizzle-orm';
@@ -13,7 +21,10 @@ import { createDatabase, schema } from '../db/client.js';
 import { PriceTickWriter } from '../domain/price-repository.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
+import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
+import { DatabaseWatchStore } from '../domain/watch-store.js';
+import { WebhookService } from '../domain/webhook-service.js';
 import { AuthService } from '../domain/auth-service.js';
 import { totpCode } from '../auth/totp.js';
 import { hashToken } from '../auth/tokens.js';
@@ -1307,5 +1318,372 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
     // First address for TON, so immediate — and independent of the BSC one.
     assert.equal(right.statusCode, 201);
     assert.equal(await payouts.activeAddress(orgId, 'bsc'), ATTACKER);
+  });
+});
+
+describe('watcher and webhooks end to end', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
+  let db: ReturnType<typeof createDatabase>['db'];
+  let close: () => Promise<void>;
+  let sink: DatabasePaymentSink;
+  let store: DatabaseWatchStore;
+  let webhooks: WebhookService;
+  let posted: { url: string; body: string; headers: Record<string, string> }[];
+  let respondWith: (attempt: number) => number;
+
+  let orgId: string;
+  let assetId: string;
+  let invoiceId: string;
+  const unique = randomBytes(6).toString('hex');
+  const DEPOSIT = `0x${unique}${'cd'.repeat(14)}`;
+  /**
+   * Transaction hashes must be unique per run. The payments table's unique key is
+   * global by design — a transfer is identified by where it happened — so a
+   * hardcoded hash would already exist on a second run and the suite would pass
+   * once and then fail against its own leftovers.
+   */
+  const tx = (name: string) => `0x${unique}${name}`;
+  const MERCHANT_PAYOUT = '0x4444444444444444444444444444444444444444';
+
+  const USDT: Asset = {
+    symbol: 'USDT',
+    chain: 'bsc',
+    decimals: 18,
+    kind: 'erc20',
+    contract: '0x55d398326f99059fF775485246999027B3197955',
+  };
+
+  /** 20 whole tokens, the invoice amount throughout. */
+  const DUE = 20n * 10n ** 18n;
+
+  const transfer = (
+    txHash: string,
+    amount: bigint,
+    blockNumber: number,
+    confirmations = 30,
+  ): IncomingPayment => ({
+    chain: 'bsc',
+    txHash,
+    transferIndex: 0,
+    to: DEPOSIT,
+    asset: USDT,
+    amount,
+    blockNumber,
+    confirmations,
+  });
+
+  before(async () => {
+    const database = createDatabase(databaseUrl!);
+    db = database.db;
+    close = database.close;
+    const audit = new AuditService(db);
+
+    posted = [];
+    respondWith = () => 200;
+
+    webhooks = new WebhookService(
+      db,
+      new WebhookDispatcher({
+        async post(url, body, headers) {
+          posted.push({ url, body, headers: { ...headers } });
+          return { statusCode: respondWith(posted.length) };
+        },
+      }),
+    );
+
+    sink = new DatabasePaymentSink(db, audit, webhooks, () => 20);
+    store = new DatabaseWatchStore(db);
+
+    const [org] = await db
+      .insert(schema.organizations)
+      .values({ name: 'Watcher Merchant', slug: `watch-${unique}` })
+      .returning({ id: schema.organizations.id });
+    orgId = org!.id;
+
+    const [asset] = await db
+      .insert(schema.assets)
+      .values({
+        chain: 'bsc',
+        symbol: 'USDT',
+        contract: `0x${unique}${'ff'.repeat(14)}`,
+        decimals: 18,
+        kind: 'erc20',
+        verdict: 'approved',
+        curated: false,
+      })
+      .returning({ id: schema.assets.id });
+    assetId = asset!.id;
+
+    const [invoice] = await db
+      .insert(schema.invoices)
+      .values({
+        organizationId: orgId,
+        assetId,
+        chain: 'bsc',
+        depositAddress: DEPOSIT,
+        payoutAddress: MERCHANT_PAYOUT,
+        amountDue: DUE.toString(),
+        toleranceBps: 50,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      })
+      .returning({ id: schema.invoices.id });
+    invoiceId = invoice!.id;
+
+    await db.insert(schema.webhookEndpoints).values({
+      organizationId: orgId,
+      url: 'https://merchant.example.com/hooks',
+      secret: 'whsec_integration',
+      events: ['*'],
+    });
+  });
+
+  after(async () => {
+    await close?.();
+  });
+
+  const invoiceRow = async () => {
+    const [row] = await db
+      .select()
+      .from(schema.invoices)
+      .where(eq(schema.invoices.id, invoiceId));
+    return row!;
+  };
+
+  test('a shallow transfer moves the invoice to confirming without crediting', async () => {
+    await sink.credit(transfer(tx('shallow'), DUE, 100, 1));
+
+    const invoice = await invoiceRow();
+    assert.equal(invoice.status, 'confirming');
+    assert.equal(invoice.amountPaid, '0', 'nothing credited yet');
+  });
+
+  test('a final transfer credits the invoice and marks it paid', async () => {
+    await sink.credit(transfer(tx('paid'), DUE, 101));
+
+    const invoice = await invoiceRow();
+    assert.equal(invoice.status, 'paid');
+    assert.equal(BigInt(invoice.amountPaid), DUE);
+    assert.ok(invoice.paidAt !== null, 'paidAt should be stamped');
+  });
+
+  test('the same transfer credited twice changes nothing', async () => {
+    // The unique constraint on (chain, txHash, transferIndex) is where the
+    // exactly-once guarantee lives — enforced by the database, not by remembering.
+    await sink.credit(transfer(tx('paid'), DUE, 101));
+    await sink.credit(transfer(tx('paid'), DUE, 101));
+
+    const invoice = await invoiceRow();
+    assert.equal(BigInt(invoice.amountPaid), DUE, 'the total must not double');
+
+    const rows = await db
+      .select()
+      .from(schema.payments)
+      .where(eq(schema.payments.invoiceId, invoiceId));
+    assert.equal(rows.length, 1, 'exactly one payment row');
+  });
+
+  test('a webhook was queued for the paid transition', async () => {
+    const queued = await webhooks.history(orgId);
+    const paid = queued.find((row) => row.event === 'invoice.paid');
+    assert.ok(paid, 'a paid webhook should have been queued');
+    assert.equal(paid.status, 'pending', 'queued, not delivered inline');
+  });
+
+  test('draining delivers the webhook, signed and verifiable', async () => {
+    // Drains repeatedly, as the real worker does. Deliveries are taken oldest
+    // first with a limit, so a backlog left by earlier runs can sit ahead of this
+    // one — a state the worker handles rather than a failure.
+    let delivery: (typeof posted)[number] | undefined;
+    for (let pass = 0; pass < 20 && !delivery; pass++) {
+      const tally = await webhooks.drain();
+      delivery = posted.find(
+        (post) =>
+          post.headers['avex-event'] === 'invoice.paid' &&
+          JSON.parse(post.body).invoiceId === invoiceId,
+      );
+      if (tally.delivered + tally.retrying + tally.failed + tally.abandoned === 0) break;
+    }
+
+    assert.ok(delivery, 'the paid event for this invoice should have been posted');
+
+    // The merchant can verify it with their secret.
+    assert.equal(
+      verifyWebhook('whsec_integration', delivery.headers['avex-signature']!, delivery.body)
+        .valid,
+      true,
+    );
+
+    const body = JSON.parse(delivery.body);
+    assert.equal(body.invoiceId, invoiceId);
+    assert.equal(body.status, 'paid');
+    // Amounts stay strings; a JSON number cannot hold an 18-decimal value.
+    assert.equal(body.amountPaid, DUE.toString());
+  });
+
+  test('an unmatched transfer is refused rather than credited somewhere', async () => {
+    await assert.rejects(
+      () =>
+        sink.credit({
+          ...transfer(tx('stray'), DUE, 102),
+          to: '0x9999999999999999999999999999999999999999',
+        }),
+      /no invoice matches/,
+    );
+  });
+
+  test('a reorg reversal takes the invoice back out of paid', async () => {
+    // The whole point of recomputing rather than incrementing: after a reorg the
+    // total has to be able to go down.
+    await sink.reverse(`bsc:${tx('paid')}:0`, 'reorg: rewound to block 95');
+
+    const invoice = await invoiceRow();
+    assert.equal(BigInt(invoice.amountPaid), 0n);
+    assert.equal(invoice.status, 'pending', 'back to the start');
+
+    const [payment] = await db
+      .select()
+      .from(schema.payments)
+      .where(eq(schema.payments.txHash, tx('paid')));
+    // Marked, not deleted: during an incident "what did we credit then take back"
+    // is exactly the question.
+    assert.ok(payment!.reversedAt !== null);
+    assert.match(payment!.reversedReason!, /reorg/);
+  });
+
+  test('the merchant is told the payment was reversed', async () => {
+    const queued = await webhooks.history(orgId);
+    const reversed = queued.find((row) => row.event === 'payment.reversed');
+    assert.ok(reversed, 'a reversal webhook is the one the merchant most needs');
+  });
+
+  test('an underpayment is classified, not silently accepted', async () => {
+    // 10% short, well outside the 50bps tolerance.
+    await sink.credit(transfer(tx('short'), (DUE * 90n) / 100n, 110));
+
+    const invoice = await invoiceRow();
+    assert.equal(invoice.status, 'underpaid');
+  });
+
+  test('a top-up brings an underpaid invoice to paid', async () => {
+    await sink.credit(transfer(tx('topup'), (DUE * 10n) / 100n, 111));
+
+    const invoice = await invoiceRow();
+    assert.equal(BigInt(invoice.amountPaid), DUE);
+    assert.equal(invoice.status, 'paid');
+  });
+
+  test('a payment inside tolerance still counts as paid', async () => {
+    const [second] = await db
+      .insert(schema.invoices)
+      .values({
+        organizationId: orgId,
+        assetId,
+        chain: 'bsc',
+        depositAddress: `0x${unique}${'ab'.repeat(14)}`,
+        payoutAddress: MERCHANT_PAYOUT,
+        amountDue: DUE.toString(),
+        toleranceBps: 50,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      })
+      .returning({ id: schema.invoices.id, depositAddress: schema.invoices.depositAddress });
+
+    // 20 bps short — an exchange rounding a withdrawal, which must not read as
+    // underpaid.
+    await sink.credit({
+      ...transfer(tx('rounded'), (DUE * 9980n) / 10_000n, 120),
+      to: second!.depositAddress,
+    });
+
+    const [row] = await db
+      .select()
+      .from(schema.invoices)
+      .where(eq(schema.invoices.id, second!.id));
+    assert.equal(row!.status, 'paid');
+  });
+
+  test('watcher state survives a restart', async () => {
+    await store.saveCursor('bsc', '12345', 12345);
+    await store.rememberBlocks('bsc', [
+      { number: 12345, hash: '0xaaa' },
+      { number: 12344, hash: '0xbbb' },
+    ]);
+
+    // A fresh store instance, as a restarted process would have.
+    const reloaded = new DatabaseWatchStore(db);
+    const { cursor, scannedTo } = await reloaded.loadCursor('bsc');
+    assert.equal(cursor, '12345');
+    assert.equal(scannedTo, 12345);
+
+    const blocks = await reloaded.recentBlocks('bsc', 10);
+    assert.equal(blocks[0]?.number, 12345);
+    assert.equal(blocks[0]?.hash, '0xaaa');
+  });
+
+  test('a changed hash at a known height overwrites the old one', async () => {
+    // Reorg detection compares against this, so the newest observation must win.
+    await store.rememberBlocks('bsc', [{ number: 12345, hash: '0xnew' }]);
+    const blocks = await store.recentBlocks('bsc', 1);
+    assert.equal(blocks[0]?.hash, '0xnew');
+  });
+
+  test('a failed poll records the error without advancing the cursor', async () => {
+    await store.recordError('bsc', 'RPC timeout');
+
+    const { cursor } = await store.loadCursor('bsc');
+    // Advancing here would skip the range that failed.
+    assert.equal(cursor, '12345');
+
+    const status = await store.status();
+    const bsc = status.find((row) => row.chain === 'bsc');
+    assert.equal(bsc?.lastError, 'RPC timeout');
+  });
+
+  test('creditedAbove finds exactly the payments a rewind must revisit', async () => {
+    const affected = await store.creditedAbove('bsc', 109);
+    // Blocks 110, 111 and 120 are above; the reversed one at 101 is excluded.
+    assert.ok(affected.includes(`bsc:${tx('short')}:0`));
+    assert.ok(affected.includes(`bsc:${tx('topup')}:0`));
+    assert.ok(!affected.includes(`bsc:${tx('paid')}:0`), 'already reversed, so not revisited');
+  });
+
+  test('forgetBlocksAbove drops only what a rewind invalidates', async () => {
+    await store.rememberBlocks('bsc', [
+      { number: 200, hash: '0x200' },
+      { number: 201, hash: '0x201' },
+    ]);
+    await store.forgetBlocksAbove('bsc', 200);
+
+    const numbers = (await store.recentBlocks('bsc', 50)).map((block) => block.number);
+    assert.ok(numbers.includes(200));
+    assert.ok(!numbers.includes(201));
+  });
+
+  test('a failing endpoint is retried, then surfaced as unhealthy', async () => {
+    respondWith = () => 503;
+    await webhooks.enqueue(orgId, 'invoice.paid', { invoiceId, probe: true }, `probe-${unique}`);
+
+    const tally = await webhooks.drain();
+    assert.ok(tally.retrying >= 1, 'a 503 must be retried');
+
+    const unhealthy = await webhooks.unhealthyEndpoints(orgId);
+    assert.ok(unhealthy.length > 0, 'an operator should see the stuck endpoint');
+    assert.match(unhealthy[0]!.lastError!, /503/);
+  });
+
+  test('a duplicate enqueue with the same key does not double-notify', async () => {
+    const queued = await webhooks.enqueue(
+      orgId,
+      'invoice.paid',
+      { invoiceId, probe: true },
+      `probe-${unique}`,
+    );
+    assert.equal(queued, 0, 'the unique constraint should collapse the duplicate');
+  });
+
+  test('a 4xx fails without consuming retries', async () => {
+    respondWith = () => 404;
+    await webhooks.enqueue(orgId, 'invoice.paid', { invoiceId }, `notfound-${unique}`);
+
+    const tally = await webhooks.drain();
+    assert.ok(tally.failed >= 1, 'a wrong URL should fail rather than retry for hours');
   });
 });

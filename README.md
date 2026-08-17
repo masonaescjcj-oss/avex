@@ -295,15 +295,44 @@ they never ship the goods.
 - Redirects are not followed — a redirecting endpoint is misconfigured, and
   following one could replay a signed payload to a host that was never authorised.
 
+## Crediting a payment
+
+`DatabasePaymentSink` is where an observed transfer becomes money a merchant is
+owed. Two rules shape it.
+
+**A transfer is identified by where it happened** — chain, transaction, position —
+and a unique constraint on those three columns enforces it. Re-crediting is
+impossible rather than merely unlikely, which matters because watchers rescan
+overlapping ranges and providers replay logs.
+
+**`amountPaid` is recomputed from surviving payment rows, never incremented.** A
+running total that only rises cannot be corrected when a reorg removes one of its
+contributions — and correcting it is precisely what a reversal has to do. A
+reversed payment is marked, not deleted: during an incident, "what did we credit
+and then take back" is the question being asked.
+
+Webhooks are queued as a database write, never sent inline. A merchant's slow
+endpoint must not delay crediting a payment, and a payment must not fail to be
+credited because their server is down. Only status *transitions* notify, so a
+re-scan that changes nothing does not tell the merchant the same news twice.
+
 ## What is not built yet
 
-Phases 4 onward — the end-to-end payment slice on BNB Chain, hosted checkout,
-merchant dashboard, public API and SDKs, the Telegram surface, admin panel,
-remaining chains, hardening. See the roadmap.
+The settlement runner — nonce sequencing, gas ceilings, replacing a stuck
+transaction, and gas-wallet balance alerting — is the last piece of the payment
+slice. Signing itself is delegated to an injected `EvmSigner` so the key lives in
+a KMS rather than this repository.
+
+Then phases 5 onward: hosted checkout, merchant dashboard, public API and SDKs,
+the Telegram surface, admin panel, remaining chains, hardening. See the roadmap.
 
 The reviewer-facing side of vetting is Phase 9: the probe, verdicts and audit
 trail exist, but a reviewer currently changes a verdict in the database rather
 than through an admin UI.
+
+A testnet deployment of `ForwarderFactory` is still worth doing before real money
+moves, though the address-derivation guarantee no longer rests on it — see the
+EVM verification above.
 
 Also outstanding in what exists: native-asset arrival detection on EVM chains
 (`poll` covers token transfers only), and a real email transport behind the

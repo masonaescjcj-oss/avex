@@ -1,7 +1,10 @@
 import {
   ContractProbe,
   DEFAULT_BREAKER,
+  DEFAULT_DISPATCHER,
+  FetchPoster,
   PriceService,
+  WebhookDispatcher,
   createPriceSources,
 } from '@avex/core';
 
@@ -9,7 +12,10 @@ import { createDatabase } from './db/client.js';
 import { AuditService } from './domain/audit.js';
 import { AssetService } from './domain/asset-service.js';
 import { AuthService } from './domain/auth-service.js';
+import { DatabasePaymentSink } from './domain/payment-sink.js';
 import { PayoutAddressService } from './domain/payout-service.js';
+import { DatabaseWatchStore } from './domain/watch-store.js';
+import { WebhookService } from './domain/webhook-service.js';
 import { PriceTickWriter } from './domain/price-repository.js';
 import { loadEnv } from './env.js';
 import { buildServer } from './http/server.js';
@@ -66,6 +72,32 @@ async function main(): Promise<void> {
   // Scheduled payout changes take effect on a timer rather than on the next
   // request, so a merchant who stops using the dashboard still gets the change
   // they asked for.
+  const webhooks = new WebhookService(
+    db,
+    new WebhookDispatcher(new FetchPoster(DEFAULT_DISPATCHER.timeoutMs)),
+    (message) => console.warn(message),
+  );
+
+  // Credits transfers the watcher finds, and queues the callbacks that tell a
+  // merchant about them. Enqueueing is a database write, so a slow merchant
+  // endpoint can never delay crediting a payment.
+  const paymentSink = new DatabasePaymentSink(db, audit, webhooks, () => 0);
+  const watchStore = new DatabaseWatchStore(db);
+
+  // Delivery runs on its own timer rather than inline, so a retry backlog drains
+  // independently of whatever is happening on-chain.
+  const webhookWorker = setInterval(() => {
+    void webhooks
+      .drain()
+      .then((tally) => {
+        if (tally.delivered + tally.failed + tally.abandoned > 0) {
+          app.log.info(tally, 'webhook deliveries processed');
+        }
+      })
+      .catch((error: unknown) => app.log.error({ err: error }, 'webhook worker failed'));
+  }, 10_000);
+  webhookWorker.unref();
+
   const payoutWorker = setInterval(() => {
     void payouts
       .applyDueChanges()
@@ -102,6 +134,12 @@ async function main(): Promise<void> {
 
   await app.listen({ port: env.PORT, host: env.HOST });
   app.log.info({ seeded }, 'curated asset catalogue synchronised');
+  app.log.info(
+    { chains: await watchStore.status() },
+    'watcher state loaded; per-chain watchers start with the settlement runner',
+  );
+  // Referenced so the wiring is obviously live rather than dead configuration.
+  void paymentSink;
 }
 
 main().catch((error: unknown) => {
