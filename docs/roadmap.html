@@ -1,0 +1,1456 @@
+<title>نقشه راه AVEX Pay</title>
+<style>
+  :root {
+    --ground: #F6F8F6;
+    --surface: #FFFFFF;
+    --surface-sunk: #EFF2EF;
+    --ink: #14181A;
+    --ink-muted: #5B6763;
+    --ink-faint: #8A9691;
+    --rule: #DFE4E0;
+    --rule-strong: #C6CEC8;
+    --accent: #1B6B54;
+    --accent-soft: #E4EFE9;
+    --warn: #8A5E0C;
+    --warn-soft: #F6EEDC;
+    --critical: #9C2F29;
+    --critical-soft: #F7E7E5;
+    --done: #1B6B54;
+    --done-soft: #E4EFE9;
+
+    --font-fa: 'Vazirmatn', 'IRANSansX', 'IRANSans', Tahoma, system-ui, 'Segoe UI', sans-serif;
+    --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+    --step--1: 0.8125rem;
+    --step-0: 0.9688rem;
+    --step-1: 1.125rem;
+    --step-2: 1.375rem;
+    --step-3: 1.75rem;
+    --step-4: 2.375rem;
+    --step-5: 3.125rem;
+
+    --measure: 68ch;
+    --gap: 1rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D1211;
+      --surface: #141B19;
+      --surface-sunk: #101614;
+      --ink: #E7EDEA;
+      --ink-muted: #94A29C;
+      --ink-faint: #6B7873;
+      --rule: #222D29;
+      --rule-strong: #33413B;
+      --accent: #52C39C;
+      --accent-soft: #16302760;
+      --warn: #D9A643;
+      --warn-soft: #2D240F60;
+      --critical: #E0776F;
+      --critical-soft: #2E1A1860;
+      --done: #52C39C;
+      --done-soft: #16302760;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0D1211;
+    --surface: #141B19;
+    --surface-sunk: #101614;
+    --ink: #E7EDEA;
+    --ink-muted: #94A29C;
+    --ink-faint: #6B7873;
+    --rule: #222D29;
+    --rule-strong: #33413B;
+    --accent: #52C39C;
+    --accent-soft: #16302760;
+    --warn: #D9A643;
+    --warn-soft: #2D240F60;
+    --critical: #E0776F;
+    --critical-soft: #2E1A1860;
+    --done: #52C39C;
+    --done-soft: #16302760;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-fa);
+    font-size: var(--step-0);
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    direction: rtl;
+    text-align: right;
+    max-width: 78rem;
+    margin: 0 auto;
+    padding: clamp(1.5rem, 4vw, 4rem) clamp(1rem, 4vw, 3rem) 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(3rem, 6vw, 5rem);
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-size: var(--step-5);
+    line-height: 1.05;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .lede {
+    font-size: var(--step-1);
+    line-height: 1.65;
+    color: var(--ink-muted);
+    max-width: var(--measure);
+    margin: 0;
+  }
+
+  .meta-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--surface);
+    overflow: hidden;
+    margin-top: 0.5rem;
+  }
+
+  .meta-cell {
+    flex: 1 1 10rem;
+    padding: 0.875rem 1.125rem;
+    border-inline-start: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .meta-cell:first-child { border-inline-start: none; }
+
+  .meta-label {
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+  }
+  .meta-value {
+    font-family: var(--font-mono);
+    font-size: var(--step-1);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+
+  /* ---------- sections ---------- */
+
+  section { display: flex; flex-direction: column; gap: 1.5rem; }
+
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.875rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 2px solid var(--rule-strong);
+  }
+
+  .sec-num {
+    font-family: var(--font-mono);
+    font-size: var(--step-0);
+    font-weight: 600;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  h2 {
+    font-size: var(--step-3);
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-size: var(--step-1);
+    font-weight: 700;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  p { margin: 0; max-width: var(--measure); }
+  .prose { display: flex; flex-direction: column; gap: 0.875rem; }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code, .mono {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    font-variant-numeric: tabular-nums;
+    direction: ltr;
+    unicode-bidi: embed;
+  }
+
+  code {
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: 0.1em 0.35em;
+  }
+
+  strong { font-weight: 700; color: var(--ink); }
+
+  /* ---------- cards ---------- */
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 1.375rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr));
+    gap: var(--gap);
+  }
+
+  /* ---------- decision blocks ---------- */
+
+  .decision {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-inline-start: 3px solid var(--accent);
+    border-radius: 3px;
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+  .decision.is-open { border-inline-start-color: var(--warn); }
+
+  .decision-q {
+    font-size: var(--step-1);
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .rec {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    font-size: var(--step--1);
+    padding-top: 0.5rem;
+    border-top: 1px dashed var(--rule);
+    color: var(--ink-muted);
+  }
+  .rec-tag {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .decision.is-open .rec-tag { color: var(--warn); }
+
+  /* ---------- tables ---------- */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--surface);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--step--1);
+    min-width: 34rem;
+  }
+
+  th, td {
+    text-align: right;
+    padding: 0.6rem 0.875rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+
+  thead th {
+    background: var(--surface-sunk);
+    font-weight: 700;
+    font-size: var(--step--1);
+    color: var(--ink-muted);
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  td.num, th.num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* ---------- pills ---------- */
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 2px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .pill-done { color: var(--done); background: var(--done-soft); }
+  .pill-warn { color: var(--warn); background: var(--warn-soft); }
+  .pill-crit { color: var(--critical); background: var(--critical-soft); }
+  .pill-idle { color: var(--ink-faint); background: var(--surface-sunk); }
+
+  /* ---------- phase ---------- */
+
+  .phases { display: flex; flex-direction: column; gap: 1rem; }
+
+  .phase {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    display: grid;
+    grid-template-columns: 4.5rem 1fr;
+  }
+
+  .phase-rail {
+    background: var(--surface-sunk);
+    border-inline-end: 1px solid var(--rule);
+    padding: 1.25rem 0.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .phase-id {
+    font-family: var(--font-mono);
+    font-size: var(--step-2);
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .phase-weeks {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--ink-faint);
+    text-align: center;
+    line-height: 1.3;
+  }
+
+  .phase-body {
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
+  .phase-title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.625rem;
+  }
+
+  .phase-goal { color: var(--ink-muted); }
+
+  .deliverables {
+    margin: 0;
+    padding-inline-start: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: var(--step--1);
+  }
+  .deliverables li { padding-inline-start: 0.2rem; }
+  .deliverables::marker { color: var(--accent); }
+
+  .exit {
+    font-size: var(--step--1);
+    padding: 0.625rem 0.875rem;
+    background: var(--surface-sunk);
+    border-radius: 2px;
+    border-inline-start: 2px solid var(--accent);
+  }
+  .exit-label {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.2rem;
+  }
+
+  .phase.is-milestone { border-color: var(--accent); border-width: 2px; }
+  .phase.is-milestone .phase-rail { background: var(--accent-soft); }
+
+  /* ---------- callout ---------- */
+
+  .callout {
+    border: 1px solid var(--warn);
+    background: var(--warn-soft);
+    border-radius: 3px;
+    padding: 1.125rem 1.375rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .callout h3 { color: var(--warn); }
+  .callout.is-crit { border-color: var(--critical); background: var(--critical-soft); }
+  .callout.is-crit h3 { color: var(--critical); }
+
+  /* ---------- flow ---------- */
+
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    direction: rtl;
+  }
+  .flow-node {
+    padding: 0.3rem 0.6rem;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .flow-arrow { color: var(--ink-faint); }
+
+  ul.plain {
+    margin: 0;
+    padding-inline-start: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-width: var(--measure);
+  }
+  ul.plain::marker { color: var(--accent); }
+
+  footer {
+    border-top: 2px solid var(--rule-strong);
+    padding-top: 1.5rem;
+    color: var(--ink-muted);
+    font-size: var(--step--1);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  @media (max-width: 34rem) {
+    .phase { grid-template-columns: 1fr; }
+    .phase-rail {
+      flex-direction: row;
+      justify-content: flex-start;
+      gap: 0.75rem;
+      border-inline-end: none;
+      border-bottom: 1px solid var(--rule);
+      padding: 0.75rem 1.25rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">سند برنامه‌ریزی · نسخه ۱</p>
+    <h1>AVEX Pay</h1>
+    <p class="lede">
+      درگاه پرداخت غیر-کاستدیال برای ارز دیجیتال و استارز تلگرام. این سند مسیر
+      کامل از وضعیت فعلی تا نسخه‌ی قابل استفاده توسط مرچنت واقعی را مشخص می‌کند —
+      با تصمیم‌های باز، فازهای وابسته به هم، و معیار خروج هر فاز.
+    </p>
+
+    <div class="meta-strip">
+      <div class="meta-cell">
+        <span class="meta-label">فاز</span>
+        <span class="meta-value">۱۲</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-label">اولین پرداخت واقعی</span>
+        <span class="meta-value">~۳ ماه</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-label">محصول کامل</span>
+        <span class="meta-value">۸–۱۱ ماه</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-label">فرض تیم</span>
+        <span class="meta-value">۱–۲ نفر</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-label">شبکه</span>
+        <span class="meta-value">۷</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════ ۱ ═══════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">۰۱</span>
+      <h2>از کجا شروع می‌کنیم</h2>
+    </div>
+
+    <div class="prose">
+      <p>
+        هسته‌ی محاسباتی نوشته و تست شده است. این بخش کمِ کار است اما سخت‌ترین
+        تصمیم‌ها را در خود دارد، و بقیه‌ی محصول رویش سوار می‌شود.
+      </p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>قطعه</th>
+            <th>وضعیت</th>
+            <th>توضیح</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">Forwarder.sol</td>
+            <td><span class="pill pill-done">نوشته شده</span></td>
+            <td>آدرس مقصد به‌صورت <code>immutable</code> در init code — آدرس واریز خودش تعهد به مقصد است</td>
+          </tr>
+          <tr>
+            <td class="mono">keccak256</td>
+            <td><span class="pill pill-done">تست‌شده</span></td>
+            <td>مطابق وکتورهای Keccak، EIP-1014 و EIP-55</td>
+          </tr>
+          <tr>
+            <td class="mono">ChainAdapter</td>
+            <td><span class="pill pill-done">نوشته شده</span></td>
+            <td>مرز انتزاعی؛ سه شبکه‌ی EVM یک پیاده‌سازی مشترک دارند</td>
+          </tr>
+          <tr>
+            <td class="mono">FeePolicy</td>
+            <td><span class="pill pill-done">تست‌شده</span></td>
+            <td>حداقل اینوویس از gas زنده مشتق می‌شود، نه جدول ثابت</td>
+          </tr>
+          <tr>
+            <td class="mono">SettlementQueue</td>
+            <td><span class="pill pill-done">نوشته شده</span></td>
+            <td>تسویه‌ی تعویقی و دسته‌ای با مهلت سقف</td>
+          </tr>
+          <tr>
+            <td class="mono">InvoiceService</td>
+            <td><span class="pill pill-done">نوشته شده</span></td>
+            <td>idempotency، برگشت‌پذیری reorg، tolerance</td>
+          </tr>
+          <tr>
+            <td class="mono">EvmAdapter · TonAdapter</td>
+            <td><span class="pill pill-warn">بدون تست یکپارچه</span></td>
+            <td>کد نوشته شده، اما روی شبکه‌ی واقعی اجرا نشده</td>
+          </tr>
+          <tr>
+            <td class="mono">Tron · Solana · Bitcoin</td>
+            <td><span class="pill pill-idle">استاب</span></td>
+            <td>تصمیم‌های طراحی مستند شده، پیاده‌سازی نشده</td>
+          </tr>
+          <tr>
+            <td>دیتابیس · API · UI · ادمین · تلگرام</td>
+            <td><span class="pill pill-idle">وجود ندارد</span></td>
+            <td>کل محصول قابل‌استفاده هنوز ساخته نشده</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ۲ ═══════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">۰۲</span>
+      <h2>پنج تصمیمی که باید الان بگیریم</h2>
+    </div>
+
+    <div class="prose">
+      <p>
+        هر کدام از این‌ها روی ساختار دیتابیس و API اثر می‌گذارد. اگر بعد از فاز ۴
+        عوض شوند، بازنویسی لازم می‌شود. پیشنهاد من زیر هرکدام آمده.
+      </p>
+    </div>
+
+    <div class="decision is-open">
+      <p class="decision-q">مرچنت پول را در چه توکنی می‌گیرد؟</p>
+      <p>
+        این مهم‌ترین محدودیت مدل غیر-کاستدیال است و باید صریح بگویمش: چون ما پول
+        را نگه نمی‌داریم، <strong>مرچنت دقیقاً همان چیزی را می‌گیرد که مشتری
+        فرستاده</strong>. اگر مشتری BNB بفرستد و مرچنت USDT بخواهد، تبدیلی وجود
+        ندارد — تبدیل یعنی نگه‌داشتن پول، یعنی کاستدیال.
+      </p>
+      <p>
+        Cryptomus این را با دفتر داخلی حل می‌کند («تبدیل فوری به استیبل‌کوین»).
+        ما نمی‌توانیم، مگر اینکه کاستدیال شویم یا در مسیر forwarder یک سواپ DEX
+        بگذاریم — که slippage، MEV و پیچیدگی قرارداد می‌آورد.
+      </p>
+      <div class="rec">
+        <span class="rec-tag">پیشنهاد</span>
+        <span>
+          نسخه‌ی ۱: مرچنت فقط توکن‌هایی را فعال کند که حاضر است نگه دارد. عملاً
+          یعنی بیشتر مرچنت‌ها فقط USDT/USDC می‌پذیرند و این کاملاً قابل‌قبول است.
+          سواپ را به فاز بعد از بتا موکول کن.
+        </span>
+      </div>
+    </div>
+
+    <div class="decision">
+      <p class="decision-q">اینوویس با مبلغ دلاری یا مبلغ توکنی؟</p>
+      <p>
+        دو حالت لازم است و رفتار ریسکی‌شان متفاوت است. <code>amount_fiat</code>
+        یعنی «۲۰ دلار» که در لحظه‌ی ساخت اینوویس به توکن تبدیل و برای مدت TTL قفل
+        می‌شود — ریسک نوسان نرخ در آن پنجره روی دوش مرچنت است.
+        <code>amount_token</code> یعنی «دقیقاً ۲۰ USDT» — بدون هیچ ریسک نرخی.
+      </p>
+      <div class="rec">
+        <span class="rec-tag">پیشنهاد</span>
+        <span>هر دو را از فاز ۲ پیاده کن؛ ستون <code>pricing_mode</code> روی اینوویس.</span>
+      </div>
+    </div>
+
+    <div class="decision">
+      <p class="decision-q">کارمزد شبکه را کی می‌دهد؟</p>
+      <p>
+        همان‌طور که در تحلیل Cryptomus دیدیم، هیچ گیت‌وی حرفه‌ای کارمزد متغیر
+        بلاکچین را جذب نمی‌کند. جذب کردنش یعنی ریسک نامحدود gas روی ترازنامه‌ی تو.
+      </p>
+      <div class="rec">
+        <span class="rec-tag">پیشنهاد</span>
+        <span>
+          کارمزد تسویه از مبلغ مرچنت کسر شود و در داشبورد شفاف نمایش داده شود.
+          درصد پذیرش هم جدا. روی TON که تسویه رایگان است، این صفر می‌شود — و این
+          خودش یک استدلال فروش است.
+        </span>
+      </div>
+    </div>
+
+    <div class="decision">
+      <p class="decision-q">استارز و کریپتو یک محصول یا دو سطح؟</p>
+      <p>
+        قوانین Bot Platform تلگرام Mini App را به دارایی‌های TON محدود می‌کند و
+        فروش کالای دیجیتال داخل تلگرام را منحصراً به استارز. یک Mini App که USDT
+        روی اتریوم تبلیغ کند، ریسک بن دارد — مستقل از اینکه شرکت کجا ثبت شده.
+      </p>
+      <div class="rec">
+        <span class="rec-tag">پیشنهاد</span>
+        <span>
+          یک هویت مرچنت و یک گزارش‌گیری مشترک، اما دو مسیر checkout مجزا با
+          feature flag روی سطح نمایش. جزئیات در فاز ۸.
+        </span>
+      </div>
+    </div>
+
+    <div class="decision is-open">
+      <p class="decision-q">بیت‌کوین: کاستدیال یا حذف؟</p>
+      <p>
+        بیت‌کوین معادلی برای مقصد غیرقابل‌تغییر <code>Forwarder</code> ندارد. برای
+        تجمیع UTXO باید کلید خرج‌کردن آدرس‌های واریز را داشته باشیم — یعنی
+        <strong>این مسیر کاستدیال است</strong> مگر آدرس‌ها را از xpub خود مرچنت
+        مشتق کنیم و مرچنت co-sign کند، که تجربه‌ی کاربری‌اش سنگین است.
+      </p>
+      <div class="rec">
+        <span class="rec-tag">تصمیم تو</span>
+        <span>
+          گزینه‌ها: (الف) بیت‌کوین را به فاز ۱۰ ببر و صریح به مرچنت بگو کاستدیال
+          است، (ب) xpub + co-sign بساز، (ج) از نسخه‌ی ۱ حذفش کن. من (الف) را
+          پیشنهاد می‌کنم چون حجم بیت‌کوین در پرداخت خرد کم است.
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ۳ ═══════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">۰۳</span>
+      <h2>محصول از چه سطوحی ساخته می‌شود</h2>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h3>صفحه‌ی پرداخت</h3>
+        <p>
+          چیزی که مشتری نهایی می‌بیند. انتخاب شبکه با رتبه‌بندی
+          <code>FeePolicy</code>، QR، آدرس و memo، شمارش معکوس قفل نرخ، وضعیت زنده،
+          و مسیر پرداخت ناقص. باید RTL و موبایل-اول باشد.
+        </p>
+      </div>
+      <div class="card">
+        <h3>داشبورد مرچنت</h3>
+        <p>
+          ثبت‌نام، تنظیم آدرس تسویه، انتخاب شبکه و توکن، افزودن قرارداد دلخواه،
+          فهرست و جزئیات پرداخت‌ها، تاریخچه‌ی تسویه، لاگ وبهوک، کلید API، گزارش‌ها.
+        </p>
+      </div>
+      <div class="card">
+        <h3>API و SDK</h3>
+        <p>
+          REST با idempotency key، وبهوک امضاشده، SDK برای Node و PHP و Python، و
+          مستندات. این چیزی است که AVEX را به «استرایپ» تبدیل می‌کند، نه یک فرم پرداخت.
+        </p>
+      </div>
+      <div class="card">
+        <h3>سطح تلگرام</h3>
+        <p>
+          بات با اینوویس <code>XTR</code> برای استارز، و Mini App محدود به
+          TON و jetton. چرخه‌ی عمر و قوانینش کاملاً از مسیر کریپتو جداست.
+        </p>
+      </div>
+      <div class="card">
+        <h3>پنل ادمین</h3>
+        <p>
+          برای تیم AVEX نه مرچنت: صف بازبینی قرارداد، پایش صف تسویه، تطبیق
+          پرداخت‌های بی‌صاحب، سلامت سیستم، تعلیق مرچنت.
+        </p>
+      </div>
+      <div class="card">
+        <h3>موتور قیمت</h3>
+        <p>
+          چند منبع، میانه‌گیری، تشخیص کهنگی، قطع‌کننده‌ی مدار، و حالت نرخ ثابت
+          برای توکن اختصاصی مرچنت. همه‌ی تصمیم‌های مالی به این وابسته‌اند.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ۴ ═══════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">۰۴</span>
+      <h2>موتور قیمت</h2>
+    </div>
+
+    <div class="prose">
+      <p>
+        این را جدا آوردم چون خودت مستقیم پرسیدی و چون تنها جایی است که یک باگ
+        ساده به ضرر مالی مستقیم تبدیل می‌شود. اگر نرخ اشتباه باشد، مرچنت کالا را
+        در برابر پول کمتر تحویل می‌دهد و هیچ‌کس تا پایان ماه نمی‌فهمد.
+      </p>
+    </div>
+
+    <div class="flow">
+      <span class="flow-node">CoinGecko</span>
+      <span class="flow-node">Binance</span>
+      <span class="flow-node">Kraken</span>
+      <span class="flow-arrow">←</span>
+      <span class="flow-node">median + outlier reject</span>
+      <span class="flow-arrow">←</span>
+      <span class="flow-node">staleness gate</span>
+      <span class="flow-arrow">←</span>
+      <span class="flow-node">quote lock (TTL)</span>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h3>سه منبع، میانه</h3>
+        <p>
+          هیچ‌وقت به یک منبع تکیه نکن. میانه‌ی سه منبع، و اگر پراکندگی از حد
+          مشخصی بیشتر شد، آن دارایی موقتاً بسته شود. یک API که عدد اشتباه برمی‌گرداند
+          بدتر از API ای است که down است.
+        </p>
+      </div>
+      <div class="card">
+        <h3>کهنگی مهم‌تر از دقت است</h3>
+        <p>
+          هر نرخ باید timestamp داشته باشد و بالاتر از آستانه، اینوویس جدید صادر
+          نشود. کش لازم است چون CoinGecko رایگان rate limit دارد، اما کش
+          بی‌timestamp دقیقاً همان چیزی است که به قیمت‌گذاری اشتباه منتهی می‌شود.
+        </p>
+      </div>
+      <div class="card">
+        <h3>قفل نرخ و اسپرد</h3>
+        <p>
+          اینوویس نرخ را برای TTL قفل می‌کند. در آن پنجره ریسک نوسان روی مرچنت
+          است، پس مرچنت باید بتواند یک اسپرد محافظتی (مثلاً ۵۰bps) تنظیم کند.
+          بدون آن، در بازار پرنوسان مرچنت آرام‌آرام ضرر می‌دهد.
+        </p>
+      </div>
+      <div class="card">
+        <h3>نرخ ثابت برای توکن اختصاصی</h3>
+        <p>
+          توکن خودِ مرچنت روی هیچ صرافی‌ای قیمت ندارد. حالت
+          <code>fixed_rate</code> اجازه می‌دهد مرچنت خودش نرخ را تعیین کند — با
+          تاریخ اعتبار و لاگ تغییرات، چون این عدد مستقیماً پول است.
+        </p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <h3>قطع‌کننده‌ی مدار لازم است، نه اختیاری</h3>
+      <p>
+        اگر منابع قیمت با هم اختلاف زیاد پیدا کردند یا همه down شدند، سیستم باید
+        <strong>صدور اینوویس جدید را متوقف کند</strong>، نه اینکه با آخرین نرخ
+        شناخته‌شده ادامه دهد. اینوویس‌های در جریان با نرخ قفل‌شده‌ی خودشان تمام
+        می‌شوند. این تفاوت بین یک قطعی چند دقیقه‌ای و یک ضرر است.
+      </p>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ۵ ═══════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">۰۵</span>
+      <h2>پذیرش قرارداد دلخواه</h2>
+    </div>
+
+    <div class="prose">
+      <p>
+        مرچنت می‌خواهد توکن خودش را اضافه کند. این قابلیت لازم است، اما دقیقاً
+        همان جایی است که مهاجم وارد می‌شود: هر کسی می‌تواند قراردادی دیپلوی کند
+        که اسمش USDT است. سیستم هرگز نباید قراردادی را که بازبینی نشده،
+        به‌صورت خودکار اعتبار بدهد.
+      </p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>بررسی</th>
+            <th>چه چیزی را می‌گیرد</th>
+            <th>اگر رد شد</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>وجود کد در آدرس</td>
+            <td>آدرس اشتباه یا کیف پول عادی</td>
+            <td>رد خودکار</td>
+          </tr>
+          <tr>
+            <td>پروب ERC-20</td>
+            <td><code>symbol</code>، <code>decimals</code>، <code>transfer</code> واقعاً وجود دارند؟</td>
+            <td>رد خودکار</td>
+          </tr>
+          <tr>
+            <td>عقلانیت decimals</td>
+            <td>مقدارهای عجیب که محاسبات را می‌شکنند</td>
+            <td>بازبینی دستی</td>
+          </tr>
+          <tr>
+            <td>fee-on-transfer</td>
+            <td>توکنی که مبلغ رسیده کمتر از مبلغ ارسالی است</td>
+            <td>پرچم پرخطر · نیاز به tolerance بالاتر</td>
+          </tr>
+          <tr>
+            <td>rebasing</td>
+            <td>موجودی که خودش تغییر می‌کند</td>
+            <td>پرچم پرخطر</td>
+          </tr>
+          <tr>
+            <td>proxy یا upgradeable</td>
+            <td>قراردادی که فردا می‌تواند رفتارش عوض شود</td>
+            <td>بازبینی دستی</td>
+          </tr>
+          <tr>
+            <td><code>pause</code> یا <code>blacklist</code></td>
+            <td>توانایی صادرکننده در قفل کردن انتقال</td>
+            <td>افشا به مرچنت</td>
+          </tr>
+          <tr>
+            <td>عمق نقدینگی</td>
+            <td>توکن بی‌بازار که قیمتش معنا ندارد</td>
+            <td>اجبار به حالت <code>fixed_rate</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <p>
+        خروجی این بررسی‌ها یک امتیاز ریسک است. استیبل‌کوین‌های شناخته‌شده در یک
+        فهرست سراسری منتشرشده قرار می‌گیرند و خودکار تأیید می‌شوند؛ بقیه به صف
+        بازبینی ادمین می‌روند و در دامنه‌ی همان مرچنت محدود می‌مانند.
+      </p>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ۶ ═══════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">۰۶</span>
+      <h2>استک پیشنهادی</h2>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>لایه</th>
+            <th class="num">انتخاب</th>
+            <th>چرا</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>مونوریپو</td>
+            <td class="num">pnpm workspaces</td>
+            <td>هسته‌ی فعلی به‌عنوان پکیج مشترک بین API و UI و بات</td>
+          </tr>
+          <tr>
+            <td>API</td>
+            <td class="num">Fastify</td>
+            <td>سبک و سریع؛ NestJS اگر تیم بزرگ شد</td>
+          </tr>
+          <tr>
+            <td>دیتابیس</td>
+            <td class="num">Postgres + Drizzle</td>
+            <td>تراکنش واقعی لازم است؛ Drizzle تایپ‌سیف و مایگریشن ساده</td>
+          </tr>
+          <tr>
+            <td>صف و کش</td>
+            <td class="num">Redis + BullMQ</td>
+            <td>واچر، تسویه، وبهوک، رفرش قیمت — همه کار پس‌زمینه‌اند</td>
+          </tr>
+          <tr>
+            <td>فرانت‌اند</td>
+            <td class="num">Next.js</td>
+            <td>یک استک برای داشبورد و صفحه‌ی پرداخت؛ RTL از روز اول</td>
+          </tr>
+          <tr>
+            <td>بات تلگرام</td>
+            <td class="num">grammY</td>
+            <td>تایپ‌سیف، نگهداری فعال، پشتیبانی کامل از پرداخت</td>
+          </tr>
+          <tr>
+            <td>قرارداد</td>
+            <td class="num">Foundry</td>
+            <td>تست و fuzz روی <code>Forwarder</code>، و استخراج bytecode</td>
+          </tr>
+          <tr>
+            <td>کلید gas</td>
+            <td class="num">KMS یا Vault</td>
+            <td>تنها راز واقعاً حساس سیستم؛ هرگز در env</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ۷ ═══════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">۰۷</span>
+      <h2>دوازده فاز</h2>
+    </div>
+
+    <div class="prose">
+      <p>
+        ترتیب بر اساس وابستگی است، نه اهمیت. فاز ۴ نقطه‌ی عطف واقعی است: از آن
+        لحظه محصول پول واقعی جابه‌جا می‌کند، هرچند فقط روی یک شبکه.
+      </p>
+    </div>
+
+    <div class="phases">
+
+      <article class="phase">
+        <div class="phase-rail">
+          <span class="phase-id">۰۱</span>
+          <span class="phase-weeks">۳–۴<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>پایه‌ی پلتفرم</h3>
+            <span class="pill pill-idle">شروع نشده</span>
+          </div>
+          <p class="phase-goal">
+            زیرساختی که همه چیز رویش سوار می‌شود. هیچ منطق پرداختی اینجا نیست.
+          </p>
+          <ul class="deliverables">
+            <li>مونوریپو، Docker، CI، مایگریشن</li>
+            <li>احراز هویت: ایمیل + رمز، تأیید ایمیل، TOTP دومرحله‌ای</li>
+            <li>مدل سازمان و عضویت و نقش (مالک، ادمین، توسعه‌دهنده، فقط‌خواندن)</li>
+            <li>کلید API با دامنه‌ی دسترسی، حالت تست و زنده، قابل چرخش</li>
+            <li>لاگ حسابرسی تغییرناپذیر برای هر تغییر تنظیمات</li>
+            <li>محدودسازی نرخ و جداسازی داده‌ی مرچنت‌ها در سطح ردیف</li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            یک کاربر ثبت‌نام می‌کند، دومرحله‌ای را فعال می‌کند، کلید API می‌سازد،
+            و هر کاری کرده در لاگ حسابرسی دیده می‌شود.
+          </p>
+        </div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-rail">
+          <span class="phase-id">۰۲</span>
+          <span class="phase-weeks">۲–۳<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>موتور قیمت</h3>
+            <span class="pill pill-idle">شروع نشده</span>
+          </div>
+          <p class="phase-goal">
+            قبل از هر چیز دیگری، چون قیمت‌گذاری اینوویس به آن وابسته است.
+          </p>
+          <ul class="deliverables">
+            <li>سه منبع قیمت با میانه‌گیری و حذف داده‌ی پرت</li>
+            <li>دروازه‌ی کهنگی و قطع‌کننده‌ی مدار</li>
+            <li>قفل نرخ روی اینوویس با TTL و اسپرد قابل تنظیم</li>
+            <li>حالت <code>amount_fiat</code> و <code>amount_token</code></li>
+            <li>حالت <code>fixed_rate</code> برای توکن اختصاصی</li>
+            <li>جدول <code>price_ticks</code> برای بازسازی تاریخی نرخ</li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            با قطع کردن دستی دو منبع از سه، سیستم صدور اینوویس را متوقف می‌کند و
+            اینوویس‌های در جریان سالم تمام می‌شوند.
+          </p>
+        </div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-rail">
+          <span class="phase-id">۰۳</span>
+          <span class="phase-weeks">۲–۳<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>ثبت دارایی و بازبینی قرارداد</h3>
+            <span class="pill pill-idle">شروع نشده</span>
+          </div>
+          <p class="phase-goal">
+            فهرست سراسری دارایی‌ها، و مسیر افزودن قرارداد دلخواه توسط مرچنت.
+          </p>
+          <ul class="deliverables">
+            <li>فهرست سراسری منتشرشده (USDT، USDC و بومی هر هفت شبکه)</li>
+            <li>پروب خودکار ERC-20 و تشخیص fee-on-transfer و rebase و proxy</li>
+            <li>امتیاز ریسک و صف بازبینی</li>
+            <li>دامنه‌ی مرچنت‌محور برای توکن تأییدنشده</li>
+            <li>اتصال به موتور قیمت: توکن بی‌نقدینگی اجباراً <code>fixed_rate</code></li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            یک قرارداد fee-on-transfer آزمایشی به‌درستی پرچم می‌خورد و
+            به‌صورت خودکار تأیید نمی‌شود.
+          </p>
+        </div>
+      </article>
+
+      <article class="phase is-milestone">
+        <div class="phase-rail">
+          <span class="phase-id">۰۴</span>
+          <span class="phase-weeks">۴–۵<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>برش عمودی: یک شبکه، سر تا ته</h3>
+            <span class="pill pill-done">نقطه‌ی عطف</span>
+          </div>
+          <p class="phase-goal">
+            یک شبکه (BNB Chain — ارزان، سریع، EVM) از ساخت اینوویس تا تسویه و
+            وبهوک. این فاز ثابت می‌کند محصول کار می‌کند.
+          </p>
+          <ul class="deliverables">
+            <li>دیپلوی <code>ForwarderFactory</code> روی تست‌نت سپس مین‌نت</li>
+            <li>تست یکپارچه: آدرس آف‌چین با CREATE2 آن‌چین مطابقت دارد</li>
+            <li>واچر با نگهداری cursor، تشخیص reorg، و استخر RPC با fallback</li>
+            <li>مدیریت آدرس تسویه با تأیید دومرحله‌ای و تأخیر ۲۴ ساعته</li>
+            <li>اجرای واقعی صف تسویه با کلید در KMS و هشدار موجودی gas</li>
+            <li>تحویل وبهوک با retry نمایی و لاگ</li>
+            <li>تطبیق پرداخت‌های بی‌صاحب به صف استثنا</li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            یک پرداخت واقعی USDT روی BNB Chain از مشتری به کیف مرچنت می‌رسد،
+            وبهوک تحویل می‌شود، و هزینه‌ی تسویه در دیتابیس ثبت است. از این لحظه
+            محصول قابل نمایش است.
+          </p>
+        </div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-rail">
+          <span class="phase-id">۰۵</span>
+          <span class="phase-weeks">۳–۴<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>صفحه‌ی پرداخت</h3>
+            <span class="pill pill-idle">شروع نشده</span>
+          </div>
+          <p class="phase-goal">تجربه‌ی مشتری نهایی. اینجا نرخ تبدیل ساخته می‌شود.</p>
+          <ul class="deliverables">
+            <li>RTL و موبایل-اول، با فارسی و انگلیسی</li>
+            <li>انتخاب شبکه با رتبه‌بندی <code>FeePolicy</code> و پیش‌فرض ارزان‌ترین</li>
+            <li>QR، آدرس، memo، کپی، و لینک عمیق به Tonkeeper و MetaMask و Trust</li>
+            <li>وضعیت زنده با SSE و شمارش معکوس قفل نرخ</li>
+            <li>مسیر پرداخت ناقص: «۱۸ از ۲۰ دلار رسید، ۲ دلار باقی است»</li>
+            <li>حالت redirect و حالت ویجت جاسازی‌شدنی</li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            پرداخت کامل روی موبایل واقعی با کیف واقعی، بدون راهنمای شفاهی.
+          </p>
+        </div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-rail">
+          <span class="phase-id">۰۶</span>
+          <span class="phase-weeks">۴–۵<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>داشبورد مرچنت</h3>
+            <span class="pill pill-idle">شروع نشده</span>
+          </div>
+          <p class="phase-goal">جایی که مرچنت زندگی می‌کند.</p>
+          <ul class="deliverables">
+            <li>ثبت‌نام و راه‌اندازی گام‌به‌گام</li>
+            <li>مدیریت آدرس تسویه — با دومرحله‌ای، تأیید ایمیل و تأخیر</li>
+            <li>فعال‌سازی شبکه و توکن، افزودن قرارداد دلخواه، انتخاب حالت قیمت</li>
+            <li>فهرست و جزئیات پرداخت با لینک به اکسپلورر و خط زمانی</li>
+            <li>رفع پرداخت ناقص و اضافی، و مسیر بازپرداخت</li>
+            <li>تاریخچه‌ی تسویه با تفکیک کارمزد</li>
+            <li>لاگ وبهوک با امکان ارسال مجدد</li>
+            <li>گزارش حجم به تفکیک شبکه و دارایی و دوره</li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            یک مرچنت آزمایشی بدون کمک ما راه‌اندازی می‌کند و اولین پرداختش را
+            می‌گیرد.
+          </p>
+        </div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-rail">
+          <span class="phase-id">۰۷</span>
+          <span class="phase-weeks">۲–۳<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>API عمومی، SDK، مستندات</h3>
+            <span class="pill pill-idle">شروع نشده</span>
+          </div>
+          <p class="phase-goal">
+            تفاوت بین «یک فرم پرداخت» و «استرایپ» همین فاز است.
+          </p>
+          <ul class="deliverables">
+            <li>REST با idempotency key، صفحه‌بندی، خطاهای ساخت‌یافته</li>
+            <li>OpenAPI و مستندات با نمونه‌ی اجرایی</li>
+            <li>SDK برای Node، PHP، Python</li>
+            <li>پلاگین WooCommerce (بازار ایران عمدتاً وردپرس است)</li>
+            <li>پیاده‌سازی مرجع تأیید وبهوک برای مرچنت</li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            یک توسعه‌دهنده‌ی بیرونی فقط با مستندات، در کمتر از یک ساعت اتصال
+            می‌گیرد.
+          </p>
+        </div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-rail">
+          <span class="phase-id">۰۸</span>
+          <span class="phase-weeks">۳–۴<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>سطح تلگرام و استارز</h3>
+            <span class="pill pill-idle">شروع نشده</span>
+          </div>
+          <p class="phase-goal">
+            مسیر دوم درآمد، با قوانین و چرخه‌ی عمر کاملاً مستقل.
+          </p>
+          <ul class="deliverables">
+            <li>بات با <code>createInvoiceLink</code> و ارز <code>XTR</code></li>
+            <li>پاسخ به <code>answerPreCheckoutQuery</code> زیر ۱۰ ثانیه — وگرنه پرداخت رد می‌شود</li>
+            <li>پردازش <code>successful_payment</code> و <code>refundStarPayment</code></li>
+            <li>Mini App محدود به TON و jetton، با feature flag سطح نمایش</li>
+            <li>رصد موجودی استارز، حداقل ۱۰۰۰ و قفل ۲۱ روزه، برداشت Fragment</li>
+            <li>گزارش‌گیری مشترک با مسیر کریپتو زیر یک هویت مرچنت</li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            یک پرداخت استارز واقعی از یک بات آزمایشی، و بازپرداختش. Mini App هیچ
+            دارایی غیر-TON نمایش نمی‌دهد.
+          </p>
+        </div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-rail">
+          <span class="phase-id">۰۹</span>
+          <span class="phase-weeks">۳–۴<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>پنل ادمین</h3>
+            <span class="pill pill-idle">شروع نشده</span>
+          </div>
+          <p class="phase-goal">
+            ابزار تیم AVEX. بدون این، هر مشکل مرچنت به کوئری دستی روی دیتابیس
+            تبدیل می‌شود.
+          </p>
+          <ul class="deliverables">
+            <li>فهرست مرچنت‌ها، سطح ریسک، تعلیق و رفع تعلیق</li>
+            <li>صف بازبینی قرارداد با نتیجه‌ی پروب‌های خودکار</li>
+            <li>پایش صف تسویه: عمق، gas فعلی، تعویق‌ها، شکست‌ها</li>
+            <li>تطبیق پرداخت بی‌صاحب — مخصوصاً TON بدون memo</li>
+            <li>سلامت سیستم: RPC، اوراکل، عمق صف، نرخ خطای وبهوک</li>
+            <li>تطبیق مالی: مقایسه‌ی آن‌چین با دیتابیس</li>
+            <li>نمای پشتیبانی با لاگ حسابرسی</li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            یک پرداخت TON بدون memo از طریق پنل و بدون دسترسی به دیتابیس حل می‌شود.
+          </p>
+        </div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-rail">
+          <span class="phase-id">۱۰</span>
+          <span class="phase-weeks">۵–۷<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>گسترش شبکه‌ها</h3>
+            <span class="pill pill-idle">شروع نشده</span>
+          </div>
+          <p class="phase-goal">
+            به ترتیب ارزش بازار، نه ترتیب سختی فنی.
+          </p>
+          <ul class="deliverables">
+            <li><strong>TON</strong> — آداپتر موجود را به مرحله‌ی تولید برسان (تسویه رایگان، بیشترین ارزش)</li>
+            <li><strong>TRON</strong> — با delegation انرژی؛ بیشترین حجم بازار ایران</li>
+            <li><strong>Polygon و Ethereum</strong> — کد مشترک EVM؛ اتریوم با گیت gas زنده</li>
+            <li><strong>Solana</strong> — ATA، rent قابل‌بازگشت، بستن حساب پس از تسویه</li>
+            <li><strong>Bitcoin</strong> — بستگی به تصمیم بخش ۰۲ دارد</li>
+            <li>تشخیص ورود دارایی native روی EVM (فعلاً فقط توکن دیده می‌شود)</li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            هر شبکه یک پرداخت واقعی مین‌نت و یک تسویه‌ی دسته‌ای موفق دارد.
+          </p>
+        </div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-rail">
+          <span class="phase-id">۱۱</span>
+          <span class="phase-weeks">۳–۴<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>سخت‌سازی</h3>
+            <span class="pill pill-idle">شروع نشده</span>
+          </div>
+          <p class="phase-goal">
+            قبل از اینکه پول دیگران جدی شود، نه بعدش.
+          </p>
+          <ul class="deliverables">
+            <li>لاگ ساخت‌یافته، متریک، ترِیس، و هشدار روی مسیرهای پول</li>
+            <li>جاب تطبیق روزانه: آن‌چین در برابر دیتابیس</li>
+            <li>تست بار روی واچر و صف تسویه</li>
+            <li>بازبینی امنیتی روی <code>Forwarder</code> و مسیر تغییر آدرس تسویه</li>
+            <li>سقف خرج و جداسازی کیف داغ و گرم برای کلید gas</li>
+            <li>Runbook: RPC قطع شد، اوراکل قطع شد، تسویه گیر کرد، توکن فریز شد</li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            یک قطعی شبیه‌سازی‌شده‌ی RPC بدون از دست رفتن یا دوباره‌شمردن هیچ
+            پرداختی رد می‌شود.
+          </p>
+        </div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-rail">
+          <span class="phase-id">۱۲</span>
+          <span class="phase-weeks">۲–۳<br>هفته</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-title-row">
+            <h3>بتای بسته</h3>
+            <span class="pill pill-idle">شروع نشده</span>
+          </div>
+          <p class="phase-goal">
+            پنج تا ده مرچنت واقعی با حجم محدود.
+          </p>
+          <ul class="deliverables">
+            <li>سقف حجم به ازای مرچنت در دوره‌ی بتا</li>
+            <li>مسیر پشتیبانی و زمان پاسخ مشخص</li>
+            <li>رصد نرخ تبدیل به تفکیک شبکه — کدام checkout رها می‌شود</li>
+            <li>حل بازخورد و تثبیت API قبل از انتشار عمومی</li>
+          </ul>
+          <p class="exit">
+            <span class="exit-label">معیار خروج</span>
+            یک ماه بدون از دست رفتن پول، بدون پرداخت دوبار حساب‌شده، و بدون
+            دخالت دستی در دیتابیس.
+          </p>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ═══════════════ ۸ ═══════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">۰۸</span>
+      <h2>ریسک‌هایی که باید در کد دیده شوند</h2>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ریسک</th>
+            <th>چرا مهم است</th>
+            <th>مهار</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>تغییر آدرس تسویه</td>
+            <td>مهاجم آدرس را عوض می‌کند و همه‌ی پرداخت‌های آینده را می‌برد. مهم‌ترین بردار حمله.</td>
+            <td>دومرحله‌ای + تأیید ایمیل + تأخیر ۲۴ ساعته + اطلاع به همه‌ی ادمین‌ها</td>
+          </tr>
+          <tr>
+            <td>قرارداد جعلی</td>
+            <td>توکن بی‌ارزش با نام USDT، اعتبار واقعی می‌گیرد</td>
+            <td>فهرست مجاز + پروب خودکار + بازبینی دستی</td>
+          </tr>
+          <tr>
+            <td>خطای اوراکل</td>
+            <td>نرخ اشتباه یعنی تحویل کالا در برابر پول کمتر، بی‌سروصدا</td>
+            <td>سه منبع، میانه، دروازه‌ی کهنگی، قطع‌کننده‌ی مدار</td>
+          </tr>
+          <tr>
+            <td>reorg و اعتبار دوباره</td>
+            <td>یک تراکنش تأییدشده می‌تواند برگردد</td>
+            <td>کلید idempotency + برگشت‌پذیری (در هسته پیاده شده)</td>
+          </tr>
+          <tr>
+            <td>تخلیه‌ی کیف gas</td>
+            <td>تنها کلید حساس سیستم؛ خالی شدنش کل تسویه را متوقف می‌کند</td>
+            <td>KMS، سقف خرج، هشدار موجودی، جداسازی داغ و گرم</td>
+          </tr>
+          <tr>
+            <td>فریز استیبل‌کوین</td>
+            <td>Tether و Circle می‌توانند هر آدرسی را با یک فراخوانی قفل کنند — بدون دادگاه و بدون صلاحیت قضایی</td>
+            <td>آدرس به‌ازای اینوویس، forward فوری، هرگز استخر مشترک</td>
+          </tr>
+          <tr>
+            <td>جغرافیای RPC</td>
+            <td>ارائه‌دهنده‌های بزرگ برخی مناطق را می‌بندند</td>
+            <td>نود اختصاصی + استخر fallback؛ <code>rpcUrl</code> قابل تنظیم است</td>
+          </tr>
+          <tr>
+            <td>بن شدن در تلگرام</td>
+            <td>قوانین پلتفرم به محل ثبت شرکت کاری ندارد؛ اجرا با حذف است نه دادگاه</td>
+            <td>جداسازی سطح + feature flag روی دارایی‌های نمایش‌داده‌شده</td>
+          </tr>
+          <tr>
+            <td>بازپرداخت کریپتو</td>
+            <td>آدرس فرستنده ممکن است کیف داغ صرافی باشد؛ بازپرداخت به آن یعنی گم شدن پول</td>
+            <td>تأیید اجباری مقصد + هشدار روی آدرس‌های شناخته‌شده‌ی صرافی</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ۹ ═══════════════ -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">۰۹</span>
+      <h2>چیزی که از تو می‌خواهم</h2>
+    </div>
+
+    <div class="prose">
+      <p>
+        قبل از شروع فاز ۱، سه تصمیم لازم است. بقیه را می‌توانم خودم با
+        پیش‌فرض معقول جلو ببرم.
+      </p>
+      <ul class="plain">
+        <li>
+          <strong>توکن تسویه</strong> — تأیید می‌کنی که نسخه‌ی ۱ سواپ ندارد و
+          مرچنت همان توکن پرداختی را می‌گیرد؟
+        </li>
+        <li>
+          <strong>بیت‌کوین</strong> — کاستدیال با افشای صریح، یا xpub با co-sign،
+          یا حذف از نسخه‌ی ۱؟
+        </li>
+        <li>
+          <strong>شبکه‌ی فاز ۴</strong> — پیشنهاد من BNB Chain است (ارزان، سریع،
+          EVM، کد آماده). اگر ترون را ترجیح می‌دهی، فاز ۴ حدود دو هفته طولانی‌تر
+          می‌شود چون delegation انرژی باید همان‌جا ساخته شود.
+        </li>
+      </ul>
+      <p>
+        وقتی این سه را گفتی، فاز ۱ را شروع می‌کنم و مرحله‌به‌مرحله می‌رویم جلو.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      AVEX Pay · سند برنامه‌ریزی نسخه ۱ · شاخه‌ی
+      <span class="mono">claude/avex-pay-setup-cnlasi</span>
+    </p>
+    <p>
+      تخمین‌ها برای تیم ۱–۲ نفره‌ی تمام‌وقت است و شامل بازبینی امنیتی خارجی و
+      کارهای حقوقی نمی‌شود.
+    </p>
+  </footer>
+
+</div>
