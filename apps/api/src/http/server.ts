@@ -38,6 +38,8 @@ import type { MerchantService } from '../domain/merchant-service.js';
 import { WebhookConfigError } from '../domain/webhook-service.js';
 import type { WebhookService } from '../domain/webhook-service.js';
 import { StaffAuthError } from '../domain/staff-auth.js';
+import { CheckoutError } from '../domain/checkout-service.js';
+import type { CheckoutService } from '../domain/checkout-service.js';
 import { InvoiceCreationError } from '../domain/invoice-creation.js';
 import type { InvoiceCreationService } from '../domain/invoice-creation.js';
 import type { StaffAuthService, StaffPrincipal } from '../domain/staff-auth.js';
@@ -57,6 +59,7 @@ import {
   staffAuthErrorResponse,
 } from './routes/admin.js';
 import { registerAssetRoutes } from './routes/assets.js';
+import { checkoutErrorResponse, registerCheckoutRoutes } from './routes/checkout.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerPayoutRoutes, payoutErrorResponse } from './routes/payouts.js';
@@ -101,6 +104,7 @@ export interface AppContext {
   readonly webhooks: WebhookService;
   readonly subscriptions: SubscriptionService;
   readonly invoiceCreation: InvoiceCreationService;
+  readonly checkouts: CheckoutService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */
   readonly minPriceSources: number;
 }
@@ -111,6 +115,17 @@ const PUBLIC_ROUTES = new Set([
   'POST /v1/auth/signup',
   'POST /v1/auth/login',
   'POST /v1/auth/verify-email',
+  /**
+   * The payer-facing checkout. A payer has no account and never will — the link is
+   * the capability, which is why the session id is a random uuid.
+   *
+   * Note what is public and what is not: reading the amount and the currencies, and
+   * choosing one. There is no public route that reads a merchant's other orders, and
+   * `publicView` is written to return only fields a stranger holding the link may see.
+   */
+  'GET /pay/:sessionId/state',
+  'GET /pay/:sessionId/options',
+  'POST /pay/:sessionId/select',
 ]);
 
 /**
@@ -262,6 +277,11 @@ export function buildServer(context: AppContext): FastifyInstance {
       return reply.status(status).send(body);
     }
 
+    if (error instanceof CheckoutError) {
+      const { status, body } = checkoutErrorResponse(error);
+      return reply.status(status).send(body);
+    }
+
     if (error instanceof InvoiceCreationError) {
       const { status, body } = invoiceCreationErrorResponse(error);
       return reply.status(status).send(body);
@@ -374,6 +394,7 @@ export function buildServer(context: AppContext): FastifyInstance {
   registerAssetRoutes(app, context);
   registerPayoutRoutes(app, context);
   registerMerchantRoutes(app, context);
+  registerCheckoutRoutes(app, context);
   registerAdminRoutes(app, context);
 
   return app;

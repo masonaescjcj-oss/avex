@@ -30,6 +30,7 @@ import { AuthService } from '../domain/auth-service.js';
 import { ReconciliationService } from '../domain/reconciliation-service.js';
 import { MerchantService } from '../domain/merchant-service.js';
 import { DepositAddressDeriver } from '../domain/deposit-address.js';
+import { CheckoutService } from '../domain/checkout-service.js';
 import { InvoiceCreationService } from '../domain/invoice-creation.js';
 import { SubscriptionService } from '../domain/subscription-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
@@ -96,9 +97,24 @@ function invoiceServices(
     },
     'test-memo-secret-not-a-real-one',
   );
+  const invoiceCreation = new InvoiceCreationService(
+    db,
+    deriver,
+    subscriptions,
+    prices as never,
+    audit,
+  );
   return {
     subscriptions,
-    invoiceCreation: new InvoiceCreationService(db, deriver, subscriptions, prices as never, audit),
+    invoiceCreation,
+    checkouts: new CheckoutService(
+      db,
+      invoiceCreation,
+      subscriptions,
+      deriver,
+      prices as never,
+      audit,
+    ),
   };
 }
 

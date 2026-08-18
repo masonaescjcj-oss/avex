@@ -19,6 +19,7 @@ import {
 
 import { AdminService } from './domain/admin-service.js';
 import { MerchantService } from './domain/merchant-service.js';
+import { CheckoutService } from './domain/checkout-service.js';
 import { DepositAddressDeriver } from './domain/deposit-address.js';
 import { InvoiceCreationService } from './domain/invoice-creation.js';
 import { SubscriptionService } from './domain/subscription-service.js';
@@ -197,6 +198,14 @@ async function main(): Promise<void> {
     reconciliation,
     merchant: new MerchantService(db),
     invoiceCreation,
+    checkouts: new CheckoutService(
+      db,
+      invoiceCreation,
+      subscriptions,
+      deriver,
+      { requireRate: (symbol) => prices.requireRate(symbol) },
+      audit,
+    ),
     webhooks,
     subscriptions,
     minPriceSources: env.PRICE_MIN_SOURCES,

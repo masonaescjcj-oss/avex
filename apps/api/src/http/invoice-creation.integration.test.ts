@@ -4,7 +4,7 @@ import { after, before, describe, test } from 'node:test';
 
 import { DEFAULT_AGGREGATION, DEFAULT_BREAKER, PriceService, WebhookDispatcher } from '@avex/core';
 import type { PriceSource } from '@avex/core';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 
 import { issueApiKey } from '../auth/tokens.js';
@@ -13,6 +13,7 @@ import { AdminService } from '../domain/admin-service.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
 import { AuthService } from '../domain/auth-service.js';
+import { CheckoutService } from '../domain/checkout-service.js';
 import { DepositAddressDeriver } from '../domain/deposit-address.js';
 import { InvoiceCreationService } from '../domain/invoice-creation.js';
 import { MerchantService } from '../domain/merchant-service.js';
@@ -131,6 +132,14 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       },
     });
 
+    const invoiceCreation = new InvoiceCreationService(
+      db,
+      deriver,
+      subscriptions,
+      { requireRate: (symbol) => prices.requireRate(symbol) },
+      audit,
+    );
+
     app = buildServer({
       env,
       db,
@@ -150,10 +159,12 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       admin: new AdminService(db, audit, settlements, reconciliation),
       merchant: new MerchantService(db),
       subscriptions,
-      invoiceCreation: new InvoiceCreationService(
+      invoiceCreation,
+      checkouts: new CheckoutService(
         db,
-        deriver,
+        invoiceCreation,
         subscriptions,
+        deriver,
         { requireRate: (symbol) => prices.requireRate(symbol) },
         audit,
       ),
@@ -190,9 +201,25 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
   });
 
   after(async () => {
+    /**
+     * Remove the review-verdict assets this suite created.
+     *
+     * The staff review queue is global and ordered oldest-first, so leftovers from
+     * repeated runs push genuinely new submissions past the page limit — which is
+     * exactly how this suite broke two admin tests that had nothing to do with it.
+     * Only review-verdict assets need clearing: an approved one can have invoices
+     * against it, and the foreign key rightly refuses to delete those.
+     */
+    if (reviewAssets.length > 0) {
+      await db.delete(schema.merchantAssets).where(inArray(schema.merchantAssets.assetId, reviewAssets));
+      await db.delete(schema.assets).where(inArray(schema.assets.id, reviewAssets));
+    }
     await app?.close();
     await close?.();
   });
+
+  /** Asset ids to clear in `after`. See the note there. */
+  const reviewAssets: string[] = [];
 
   const auth = () => ({ authorization: `Bearer ${token}` });
 
@@ -223,6 +250,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
         submittedByOrganizationId: options.submittedBy ?? null,
       })
       .returning({ id: schema.assets.id });
+    if ((options.verdict ?? 'approved') === 'review') reviewAssets.push(asset!.id);
 
     await db.insert(schema.merchantAssets).values({
       organizationId: options.organizationId ?? orgId,

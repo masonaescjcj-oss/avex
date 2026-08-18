@@ -1076,6 +1076,83 @@ export const subscriptions = pgTable(
   ],
 );
 
+export const checkoutSessionStatusEnum = pgEnum('checkout_session_status', [
+  /** Created, and the payer has not chosen a currency yet. */
+  'open',
+  /** A currency was chosen and an invoice exists. */
+  'selected',
+  /** The chosen invoice was paid. */
+  'paid',
+  /** Nobody chose in time. */
+  'expired',
+  /** Withdrawn by the merchant before payment. */
+  'cancelled',
+]);
+
+/**
+ * A payment the merchant has asked for, before the payer has chosen how to pay it.
+ *
+ * The piece that makes a hosted checkout possible. A merchant knows the fiat amount
+ * they want; only the payer knows which coin they hold. An invoice cannot be created
+ * until that is decided, because the amount, the chain and the deposit address all
+ * follow from the asset — so something has to exist in between, and this is it.
+ *
+ * The session is what a payer's link points at. It is deliberately thin: the money,
+ * the reference and a deadline. Everything about how the payment is actually made
+ * lives on the invoice created once a currency is picked.
+ */
+export const checkoutSessions = pgTable(
+  'checkout_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+
+    /** The merchant's own order id. Doubles as the idempotency key, as on invoices. */
+    reference: text('reference'),
+    /** What the merchant is charging, in micro-dollars. */
+    amountFiatMicros: numeric('amount_fiat_micros', { precision: 78, scale: 0 }).notNull(),
+    /** Shown to the payer above the amount, so they know what they are paying for. */
+    description: text('description'),
+
+    status: checkoutSessionStatusEnum('status').notNull().default('open'),
+
+    /**
+     * The invoice for the currency the payer chose. Null while still open.
+     *
+     * Repointed rather than replaced if the payer changes their mind before paying.
+     * The previous invoice is left alone: payment matching is by address, so a payer
+     * who had already copied the old address and sends anyway is still credited.
+     * Deleting or expiring it would turn a slow payer into a lost payment.
+     */
+    invoiceId: uuid('invoice_id').references(() => invoices.id, { onDelete: 'set null' }),
+
+    /** Where to send the payer once the payment is final. Merchant-supplied. */
+    successUrl: text('success_url'),
+    cancelUrl: text('cancel_url'),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    selectedAt: timestamp('selected_at', { withTimezone: true }),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('checkout_sessions_org_created_idx').on(table.organizationId, table.createdAt),
+    index('checkout_sessions_status_idx').on(table.status),
+    /**
+     * One session per merchant reference, for the same reason invoices have one.
+     *
+     * A merchant retrying "checkout for order #1234" after a timeout must get the same
+     * session back — two payment links for one order means a customer can be shown
+     * either, and only one of them will ever be marked paid.
+     */
+    uniqueIndex('checkout_sessions_org_reference_key')
+      .on(table.organizationId, table.reference)
+      .where(sql`${table.reference} is not null`),
+  ],
+);
+
 export const subscriptionChargeStatusEnum = pgEnum('subscription_charge_status', [
   'due',
   'paid',

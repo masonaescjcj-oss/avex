@@ -10,7 +10,7 @@ import {
   WebhookDispatcher,
 } from '@avex/core';
 import type { PriceSource } from '@avex/core';
-import { eq } from 'drizzle-orm';
+import { eq, inArray, like } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 
 import { hashToken } from '../auth/tokens.js';
@@ -24,6 +24,7 @@ import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
 import { ReconciliationService } from '../domain/reconciliation-service.js';
 import { MerchantService } from '../domain/merchant-service.js';
+import { CheckoutService } from '../domain/checkout-service.js';
 import { DepositAddressDeriver } from '../domain/deposit-address.js';
 import { InvoiceCreationService } from '../domain/invoice-creation.js';
 import { SubscriptionService } from '../domain/subscription-service.js';
@@ -151,6 +152,31 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       },
     });
 
+    const adminDeriver = new DepositAddressDeriver(
+      {
+        evm: {
+          bsc: {
+            factory: '0x00000000000000000000000000000000000f4c70',
+            forwarderCreationCode: '0x60806040523480156100115760006000fd5b50',
+          },
+        },
+        shared: {},
+      },
+      'admin-suite-memo-secret',
+    );
+    const adminRates = {
+      async requireRate() {
+        return { priceScaled: 10n ** 18n, observedAt: Date.now() };
+      },
+    };
+    const adminInvoiceCreation = new InvoiceCreationService(
+      db,
+      adminDeriver,
+      subscriptionsService,
+      adminRates as never,
+      audit,
+    );
+
     app = buildServer({
       env,
       db,
@@ -172,22 +198,13 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       settlements,
       reconciliation,
       merchant: new MerchantService(db),
-      invoiceCreation: new InvoiceCreationService(
+      invoiceCreation: adminInvoiceCreation,
+      checkouts: new CheckoutService(
         db,
-        new DepositAddressDeriver(
-          {
-            evm: {
-              bsc: {
-                factory: '0x00000000000000000000000000000000000f4c70',
-                forwarderCreationCode: '0x60806040523480156100115760006000fd5b50',
-              },
-            },
-            shared: {},
-          },
-          'admin-suite-memo-secret',
-        ),
+        adminInvoiceCreation,
         subscriptionsService,
-        { async requireRate() { return { priceScaled: 10n ** 18n, observedAt: Date.now() }; } } as never,
+        adminDeriver,
+        adminRates as never,
         audit,
       ),
       subscriptions: subscriptionsService,
@@ -254,6 +271,33 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   });
 
   after(async () => {
+    /**
+     * Clear the review queue rows this suite created.
+     *
+     * Without this the shared queue grows by several rows a run, and once it passes the
+     * page limit these very tests start failing — a newly submitted asset is no longer
+     * on the first page of a queue ordered oldest-first. It took three runs of an
+     * unrelated suite to surface, which is the argument for cleaning up rather than
+     * raising the limit.
+     */
+    if (reviewAssets.length > 0) {
+      await db
+        .delete(schema.merchantAssets)
+        .where(inArray(schema.merchantAssets.assetId, reviewAssets));
+      await db.delete(schema.assets).where(inArray(schema.assets.id, reviewAssets));
+    }
+
+    /**
+     * And the unmatched payments, for the same reason.
+     *
+     * That queue is also ordered oldest-first with a capped page, so a run's leftovers
+     * eventually hide the row the next run is looking for. Matched by this run's unique
+     * suffix rather than by a tracked list, because several are recorded through the
+     * reconciliation service rather than inserted directly.
+     */
+    await db
+      .delete(schema.unmatchedPayments)
+      .where(like(schema.unmatchedPayments.txHash, `%${unique}%`));
     await app?.close();
     await close?.();
   });
@@ -311,8 +355,15 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
         probedAt: new Date(),
       })
       .returning({ id: schema.assets.id });
+    // The staff review queue is global and ordered oldest-first, so review-verdict
+    // leftovers from repeated runs push genuinely new submissions past the page limit.
+    // Cleared in `after`; see the note there.
+    if (verdict === 'review') reviewAssets.push(row!.id);
     return row!.id;
   }
+
+  /** Review-verdict assets to clear in `after`. */
+  const reviewAssets: string[] = [];
 
   /**
    * An invoice on BSC belonging to the suite's merchant.
