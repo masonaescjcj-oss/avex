@@ -39,25 +39,23 @@ const playwright = await loadPlaywright();
 
 /** A merchant part-way through setup: assets on two chains, a payout address on one. */
 const FIXTURE = {
-  subscription: {
-    subscription: {
-      status: 'active',
-      priceUsdMicros: '49000000',
-      currentPeriodEnd: '2026-09-18T00:00:00.000Z',
-      graceEndsAt: null,
-    },
-    verdict: { mayIssueInvoices: true, amountDueUsdMicros: '0' },
+  commission: {
+    plan: { feeBps: 50, negotiatedFee: false },
     commission: { feeBps: 50, perThousandUsd: 5, negotiated: false, nextTier: { bps: 45, fromUsdMicros: '50000000000' } },
-    freeTier: {
-      thresholdUsdMicros: '1500000000',
-      processedUsdMicros: '250000000',
-      remainingUsdMicros: '1250000000',
-      willBeFree: true,
-    },
-    charges: [
-      { periodStart: '2026-07-18T00:00:00.000Z', amountUsdMicros: '0', status: 'free_tier', note: 'free tier: $250.00 processed' },
-      { periodStart: '2026-06-18T00:00:00.000Z', amountUsdMicros: '49000000', status: 'paid', note: null },
+    ladder: [
+      { bps: 50, fromUsdMicros: '0' },
+      { bps: 45, fromUsdMicros: '50000000000' },
+      { bps: 40, fromUsdMicros: '250000000000' },
     ],
+    period: {
+      start: '2026-08-18T00:00:00.000Z',
+      end: '2026-09-18T00:00:00.000Z',
+      processedUsdMicros: '10000000000',
+      verifiedUsdMicros: '10000000000',
+      declaredUsdMicros: '0',
+      unpricedPayments: 0,
+      wouldEarnBps: 50,
+    },
   },
   report: {
     volume: [{ chain: 'bsc', assetSymbol: 'USDT', assetDecimals: 18, paymentCount: 3, total: '60000000000000000000' }],
@@ -153,7 +151,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         return route.fulfill(json({ status: 'ok' }));
       }
 
-      if (path.endsWith('/subscription')) return route.fulfill(json(data.subscription));
+      if (path.endsWith('/commission')) return route.fulfill(json(data.commission));
       if (path.endsWith('/reports/volume')) return route.fulfill(json(data.report));
       if (path.endsWith('/assets')) return route.fulfill(json(data.assets));
       if (path.endsWith('/payout-addresses')) return route.fulfill(json(data.payouts));
@@ -229,34 +227,43 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   // ── overview ──────────────────────────────────────────────────────────────
 
-  test('the free allowance is shown as money and as a bar', async () => {
+  test('the period volume is shown as money and as progress towards a cheaper rate', async () => {
     const { page, context } = await open();
     const stats = await all(page, '#overview-stats .stat-value');
-    assert.ok(stats.includes('$250.00'), stats.join(' | '));
+    assert.ok(stats.includes('$10,000.00'), stats.join(' | '));
 
-    const width = await page.$eval('#free-bar', (node) => node.style.width);
-    // $250 of $1,500.
-    assert.equal(width, '16%');
-    assert.match(await text(page, '#free-note'), /\$1,250\.00 of free volume left/);
+    const width = await page.$eval('#tier-bar', (node) => node.style.width);
+    // $10,000 of the $50,000 that reaches 0.45%.
+    assert.equal(width, '20%');
+    assert.match(await text(page, '#tier-note'), /\$40,000\.00 more this period reaches 0\.45%/);
     await context.close();
   });
 
-  test('the bar turns amber and says the price when over the allowance', async () => {
+  test('nothing on the overview says a merchant owes us money', async () => {
+    /**
+     * The regression this guards. This panel used to read "$250.00 of $1,500.00 free" with
+     * a bar that turned amber and announced a $49 charge. There is no monthly fee any more,
+     * so any surviving copy of that would be inventing a bill.
+     */
+    const { page, context } = await open();
+    const body = await text(page, '#view-overview');
+    assert.ok(!/\$49/.test(body), body);
+    assert.ok(!/free volume|allowance|overdue|owed/i.test(body), body);
+    await context.close();
+  });
+
+  test('a period that has already earned a rung fills the bar and says when it starts', async () => {
     const { page, context } = await open({
-      subscription: {
-        ...FIXTURE.subscription,
-        freeTier: {
-          thresholdUsdMicros: '1500000000',
-          processedUsdMicros: '5000000000',
-          remainingUsdMicros: '0',
-          willBeFree: false,
-        },
+      commission: {
+        ...FIXTURE.commission,
+        period: { ...FIXTURE.commission.period, processedUsdMicros: '61000000000', wouldEarnBps: 45 },
       },
     });
-    assert.equal(await page.$eval('#free-bar', (node) => node.dataset.over), 'true');
+    assert.equal(await page.$eval('#tier-bar', (node) => node.dataset.earned), 'true');
     // Clamped: a bar wider than its track is a visual bug, and the figure is read aloud.
-    assert.equal(await page.$eval('#free-bar', (node) => node.style.width), '100%');
-    assert.match(await text(page, '#free-note'), /costs \$49\.00/);
+    assert.equal(await page.$eval('#tier-bar', (node) => node.style.width), '100%');
+    // Future-tense, because the rate changes when the period closes and not before.
+    assert.match(await text(page, '#tier-note'), /enough for 0\.45%.*when the period closes/);
     await context.close();
   });
 
@@ -439,27 +446,45 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
-  // ── billing ───────────────────────────────────────────────────────────────
+  // ── commission ────────────────────────────────────────────────────────────
 
-  test('billing shows the commission in money and names the next rung', async () => {
+  test('the commission tab shows the rate in money and names the next rung', async () => {
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Billing")');
+    await page.click('nav.tabs button:has-text("Commission")');
     await page.waitForTimeout(150);
-    const body = await text(page, '#view-billing');
+    const body = await text(page, '#view-commission');
     assert.match(body, /\$5 per \$1,000/);
-    assert.match(body, /next rung/);
+    assert.match(body, /over \$50,000\.00 a month/);
     await context.close();
   });
 
-  test('a free month reads as words, not as a column value', async () => {
-    // `free_tier` is our column name. A merchant should not have to decode it to find
-    // out why a month cost nothing.
+  test('the commission tab says plainly that there is no monthly fee', async () => {
+    /**
+     * The one thing a merchant comparing us against Cryptomus wants to read, and the
+     * change this whole view exists to state. An absent fee stated nowhere is
+     * indistinguishable from a fee we have not mentioned yet.
+     */
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Billing")');
+    await page.click('nav.tabs button:has-text("Commission")');
     await page.waitForTimeout(150);
-    const body = await text(page, '#charge-table');
-    assert.match(body, /free tier/);
-    assert.ok(!body.includes('free_tier'));
+    const body = await text(page, '#view-commission');
+    assert.match(body, /No monthly fee|no subscription/i);
+    assert.ok(!/\$49/.test(body), body);
+    await context.close();
+  });
+
+  test('the published ladder is shown with the merchant own rung marked', async () => {
+    // A volume discount a merchant has to ask about is not a published ladder.
+    const { page, context } = await open();
+    await page.click('nav.tabs button:has-text("Commission")');
+    await page.waitForTimeout(150);
+    const rows = await all(page, '#ladder-table tbody tr');
+    assert.equal(rows.length, 3);
+    assert.match(rows[0], /0\.5%/);
+    assert.match(rows[0], /from your first payment/);
+    assert.match(rows[0], /yours/);
+    // Exactly one rung is theirs, or the table is telling them two different prices.
+    assert.equal(rows.filter((row) => /yours/.test(row)).length, 1);
     await context.close();
   });
 
@@ -472,7 +497,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * visited here because it only shows up where the data is sparse.
      */
     const { page, context } = await open();
-    for (const label of ['Overview', 'Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Billing']) {
+    for (const label of ['Overview', 'Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Commission']) {
       await page.click(`nav.tabs button:has-text("${label}")`);
       await page.waitForTimeout(120);
       const body = await page.$eval('#app', (node) => node.textContent);
@@ -494,7 +519,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   test('the dashboard ran without throwing', async () => {
     const { page, context, errors } = await open();
-    for (const label of ['Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Billing', 'Overview']) {
+    for (const label of ['Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Commission', 'Overview']) {
       await page.click(`nav.tabs button:has-text("${label}")`);
       await page.waitForTimeout(120);
     }

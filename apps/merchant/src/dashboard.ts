@@ -3,7 +3,7 @@
  *
  * Everything here answers a question the page has to get right and that a reader cannot
  * check by looking: whether a merchant is ready to take a live payment, what an invoice
- * status means for them, how far through the free allowance they are. Rendering can be
+ * status means for them, how close they are to a cheaper commission. Rendering can be
  * eyeballed; these cannot, so they live in a module with tests.
  */
 
@@ -164,48 +164,118 @@ export function setupSteps(input: SetupInput): readonly SetupStep[] {
   ];
 }
 
-/** Where a merchant stands against the free allowance. */
-export interface FreeTierView {
+/** How close a merchant is to the next rung of the commission ladder. */
+export interface TierProgressView {
   readonly processedUsd: string;
-  readonly thresholdUsd: string;
-  readonly remainingUsd: string;
   /** 0–100, clamped. Drives a bar, so it must never exceed its track. */
   readonly percent: number;
-  readonly willBeFree: boolean;
+  /** True once this period's volume already earns a cheaper rate than they pay now. */
+  readonly earned: boolean;
   readonly message: string;
 }
 
-export function freeTierView(input: {
+/**
+ * The period's volume, as progress towards a cheaper rate.
+ *
+ * This replaced a bar showing how much of a $1,500 free allowance was left, and the
+ * change is not cosmetic. That bar counted *down* towards a bill: filling it was bad
+ * news, and a merchant doing well watched it turn red. With no monthly fee there is no
+ * bill to count down to, and the same volume figure now means the opposite — filling
+ * this bar is how a merchant reaches 0.45%.
+ */
+export function tierProgressView(input: {
   readonly processedUsdMicros: string;
-  readonly thresholdUsdMicros: string;
-  readonly remainingUsdMicros: string;
-  readonly willBeFree: boolean;
-  readonly monthlyPriceUsdMicros: string;
-}): FreeTierView {
+  /** What they pay today. */
+  readonly feeBps: number;
+  /** What this period's volume so far would earn, from the API. */
+  readonly wouldEarnBps: number;
+  readonly negotiated: boolean;
+  readonly nextTier: { readonly bps: number; readonly fromUsdMicros: string } | null;
+}): TierProgressView {
   const processed = toBigInt(input.processedUsdMicros);
-  const threshold = toBigInt(input.thresholdUsdMicros);
-  const remaining = toBigInt(input.remainingUsdMicros);
+  const processedUsd = usd(processed);
+  const earned = input.wouldEarnBps < input.feeBps;
 
   /**
-   * Clamped at 100, and zero when the threshold is zero.
+   * A negotiated rate first, because for those merchants the bar is meaningless.
+   *
+   * Showing them 4% of the way to a rung the ladder will never grant them would be a
+   * promise we have already decided not to keep.
+   */
+  if (input.negotiated) {
+    return {
+      processedUsd,
+      percent: 100,
+      earned: false,
+      message: `${processedUsd} processed this period, at your agreed rate.`,
+    };
+  }
+
+  if (!input.nextTier) {
+    return {
+      processedUsd,
+      percent: 100,
+      earned: false,
+      message: `${processedUsd} processed this period. ${percentOf(
+        input.feeBps,
+      )} is the lowest rate we publish.`,
+    };
+  }
+
+  const target = toBigInt(input.nextTier.fromUsdMicros);
+  /**
+   * Clamped at 100, and zero when the target is zero.
    *
    * A bar wider than its track is a visual bug, but the reason to clamp here rather than
    * in CSS is that the number is also read aloud by a screen reader — "142 per cent of
-   * your free allowance" is not a sentence that helps anyone.
+   * the way to your next rate" is not a sentence that helps anyone.
    */
-  const percent =
-    threshold === 0n ? 0 : Math.min(100, Number((processed * 100n) / threshold));
+  const percent = target === 0n ? 100 : Math.min(100, Number((processed * 100n) / target));
 
+  if (earned) {
+    // Deliberately future-tense. The rate changes when the period closes, and a merchant
+    // told "you are on 0.45%" who then reads 0.5% on their next invoice was misled.
+    return {
+      processedUsd,
+      percent: 100,
+      earned: true,
+      message:
+        `${processedUsd} processed this period — enough for ${percentOf(input.wouldEarnBps)}, ` +
+        `which starts when the period closes.`,
+    };
+  }
+
+  const remaining = target > processed ? target - processed : 0n;
   return {
-    processedUsd: usd(processed),
-    thresholdUsd: usd(threshold),
-    remainingUsd: usd(remaining),
+    processedUsd,
     percent,
-    willBeFree: input.willBeFree,
-    message: input.willBeFree
-      ? `${usd(remaining)} of free volume left this period.`
-      : `Over the free allowance, so this period costs ${usd(toBigInt(input.monthlyPriceUsdMicros))}.`,
+    earned: false,
+    message: `${usd(remaining)} more this period reaches ${percentOf(input.nextTier.bps)}.`,
   };
+}
+
+/**
+ * The published ladder, with the merchant's own rung marked.
+ *
+ * Built from the ladder the API returns rather than from a copy written here. Two lists
+ * of prices eventually disagree, and the merchant is the one who finds out.
+ */
+export function ladderRows(
+  ladder: readonly { readonly bps: number; readonly fromUsdMicros: string }[],
+  feeBps: number,
+  negotiated: boolean,
+): readonly {
+  readonly rate: string;
+  readonly from: string;
+  readonly current: boolean;
+}[] {
+  return ladder.map((rung) => ({
+    rate: percentOf(rung.bps),
+    from: toBigInt(rung.fromUsdMicros) === 0n ? 'from your first payment' : `over ${usd(toBigInt(rung.fromUsdMicros))} a month`,
+    // A negotiated rate is not on the ladder, so marking a rung would be wrong even when
+    // the numbers happen to coincide.
+    current: !negotiated && rung.bps === feeBps,
+  }));
 }
 
 /**
@@ -216,12 +286,16 @@ export function freeTierView(input: {
  * they are paying.
  */
 export function commissionParts(feeBps: number): { readonly percent: string; readonly perThousand: string } {
-  const percent = feeBps / 100;
   const perThousand = (1000 * feeBps) / 10_000;
   return {
-    percent: `${trimZeros(percent.toFixed(2))}%`,
+    percent: percentOf(feeBps),
     perThousand: `$${trimZeros(perThousand.toFixed(2))} per $1,000`,
   };
+}
+
+/** Basis points as a percentage, without trailing zeros: 45 → "0.45%". */
+function percentOf(bps: number): string {
+  return `${trimZeros((bps / 100).toFixed(2))}%`;
 }
 
 /**

@@ -113,6 +113,13 @@
       "when": 1787045311120,
       "tag": "0015_curved_black_crow",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1787046745121,
+      "tag": "0016_strong_wendell_rand",
+      "breakpoints": true
     }
   ]
 }

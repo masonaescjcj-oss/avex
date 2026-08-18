@@ -48,7 +48,7 @@ function encodeUint16(value: number): Uint8Array {
  */
 export const MAX_FEE_BPS = 500;
 
-/** The fee split a forwarder is built with. Zero-fee is the subscription-only case. */
+/** The fee split a forwarder is built with. Zero-fee is a negotiated 0% merchant. */
 export interface ForwarderFee {
   readonly feeDestination: string;
   readonly feeBps: number;

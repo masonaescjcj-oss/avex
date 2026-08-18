@@ -4,10 +4,11 @@ import { describe, test } from 'node:test';
 import {
   commissionLabel,
   commissionParts,
-  freeTierView,
+  ladderRows,
   keyMode,
   setupSteps,
   statusView,
+  tierProgressView,
 } from './dashboard.js';
 
 /**
@@ -15,7 +16,7 @@ import {
  *
  * Each of these answers something a merchant acts on and a reader cannot verify by
  * looking at the page: is this account ready to take real money, does this status need
- * me, how much free volume is left. Rendering can be eyeballed; these cannot.
+ * me, how far off a cheaper rate am I. Rendering can be eyeballed; these cannot.
  */
 
 describe('invoice status', () => {
@@ -164,72 +165,130 @@ describe('setup checklist', () => {
   });
 });
 
-describe('free tier', () => {
-  const view = (processed: string, remaining: string, willBeFree: boolean) =>
-    freeTierView({
+describe('tier progress', () => {
+  const view = (
+    processed: string,
+    options: {
+      readonly feeBps?: number;
+      readonly wouldEarnBps?: number;
+      readonly negotiated?: boolean;
+      readonly nextTier?: { readonly bps: number; readonly fromUsdMicros: string } | null;
+    } = {},
+  ) =>
+    tierProgressView({
       processedUsdMicros: processed,
-      thresholdUsdMicros: '1500000000',
-      remainingUsdMicros: remaining,
-      willBeFree,
-      monthlyPriceUsdMicros: '49000000',
+      feeBps: options.feeBps ?? 50,
+      wouldEarnBps: options.wouldEarnBps ?? 50,
+      negotiated: options.negotiated ?? false,
+      nextTier:
+        options.nextTier === undefined
+          ? { bps: 45, fromUsdMicros: '50000000000' }
+          : options.nextTier,
     });
 
-  test('a quiet period reports what is left', () => {
-    const result = view('250000000', '1250000000', true);
-    assert.equal(result.processedUsd, '$250.00');
-    assert.equal(result.thresholdUsd, '$1,500.00');
-    assert.equal(result.percent, 16);
-    assert.match(result.message, /\$1,250\.00 of free volume left/);
+  test('a quiet period reports what would reach the next rung', () => {
+    /**
+     * The bar this replaced counted down towards a $49 bill: filling it was bad news, and
+     * a merchant doing well watched it turn red. The same volume figure now means the
+     * opposite, so the message has to point at the reward rather than at a threshold.
+     */
+    const result = view('10000000000');
+    assert.equal(result.processedUsd, '$10,000.00');
+    assert.equal(result.percent, 20);
+    assert.equal(result.earned, false);
+    assert.match(result.message, /\$40,000\.00 more this period reaches 0\.45%/);
   });
 
-  test('over the allowance names the price instead', () => {
-    const result = view('5000000000', '0', false);
-    assert.equal(result.willBeFree, false);
-    assert.match(result.message, /costs \$49\.00/);
+  test('a period that has already earned a rung says when it starts', () => {
+    /**
+     * Deliberately future-tense. The rate changes when the period closes, and a merchant
+     * told "you are on 0.45%" who then reads 0.5% on their next invoice was misled.
+     */
+    const result = view('61000000000', { wouldEarnBps: 45 });
+    assert.equal(result.earned, true);
+    assert.equal(result.percent, 100);
+    assert.match(result.message, /enough for 0\.45%/);
+    assert.match(result.message, /when the period closes/);
+  });
+
+  test('the bottom rung promises nothing further', () => {
+    // Naming a threshold below the floor would promise a reduction that cannot arrive.
+    const result = view('400000000000', { feeBps: 40, wouldEarnBps: 40, nextTier: null });
+    assert.equal(result.earned, false);
+    assert.match(result.message, /lowest rate we publish/);
+    assert.match(result.message, /0\.4%/);
+  });
+
+  test('a negotiated rate is not shown as progress towards a rung', () => {
+    // The ladder does not apply to them, so a part-filled bar would be a promise we have
+    // already decided not to keep.
+    const result = view('1000000000', { feeBps: 25, negotiated: true, nextTier: null });
+    assert.equal(result.percent, 100);
+    assert.match(result.message, /your agreed rate/);
   });
 
   test('the bar never exceeds its track', () => {
     /**
      * Clamped in the model rather than in CSS, because the number is also read aloud —
-     * "333 per cent of your free allowance" is not a sentence that helps anyone.
+     * "333 per cent of the way to your next rate" is not a sentence that helps anyone.
      */
-    assert.equal(view('5000000000', '0', false).percent, 100);
+    assert.equal(view('900000000000').percent, 100);
   });
 
-  test('a zero threshold does not divide by zero', () => {
-    const result = freeTierView({
-      processedUsdMicros: '100',
-      thresholdUsdMicros: '0',
-      remainingUsdMicros: '0',
-      willBeFree: false,
-      monthlyPriceUsdMicros: '49000000',
-    });
-    assert.equal(result.percent, 0);
+  test('a zero target does not divide by zero', () => {
+    assert.equal(view('100', { nextTier: { bps: 45, fromUsdMicros: '0' } }).percent, 100);
   });
 
   test('thousands are grouped and cents kept', () => {
     // A merchant checking a figure against their own books reads it digit by digit.
-    assert.equal(view('1234567890', '265432110', true).processedUsd, '$1,234.56');
+    assert.equal(view('1234567890').processedUsd, '$1,234.56');
   });
 
   test('a malformed figure reads as zero rather than NaN', () => {
     // The API sends strings; a bug upstream must not put "NaN" in front of a merchant.
-    const result = view('not-a-number', '', true);
+    const result = view('not-a-number');
     assert.equal(result.processedUsd, '$0.00');
     assert.equal(result.percent, 0);
   });
 
   test('an enormous figure does not overflow', () => {
     // Micro-dollars beyond a double, which is why the arithmetic is in BigInt.
-    const result = freeTierView({
-      processedUsdMicros: '9007199254740993000000',
-      thresholdUsdMicros: '1500000000',
-      remainingUsdMicros: '0',
-      willBeFree: false,
-      monthlyPriceUsdMicros: '49000000',
-    });
+    const result = view('9007199254740993000000');
     assert.equal(result.percent, 100);
     assert.equal(result.processedUsd, '$9,007,199,254,740,993.00');
+  });
+});
+
+describe('the published ladder', () => {
+  const LADDER = [
+    { bps: 50, fromUsdMicros: '0' },
+    { bps: 45, fromUsdMicros: '50000000000' },
+    { bps: 40, fromUsdMicros: '250000000000' },
+  ];
+
+  test('the entry rung reads as applying from the first payment', () => {
+    // "over $0.00 a month" is technically true and tells a merchant nothing.
+    const rows = ladderRows(LADDER, 50, false);
+    assert.equal(rows[0]?.rate, '0.5%');
+    assert.equal(rows[0]?.from, 'from your first payment');
+    assert.equal(rows[1]?.from, 'over $50,000.00 a month');
+  });
+
+  test('the merchant\'s own rung is the only one marked', () => {
+    const rows = ladderRows(LADDER, 45, false);
+    assert.deepEqual(
+      rows.map((row) => row.current),
+      [false, true, false],
+    );
+  });
+
+  test('a negotiated rate marks no rung, even when the number coincides', () => {
+    /**
+     * A merchant on an agreed 0.45% is not on the ladder's 0.45%: their rate will not move
+     * when their volume does. Marking the rung would tell them the ladder applies.
+     */
+    const rows = ladderRows(LADDER, 45, true);
+    assert.ok(rows.every((row) => !row.current));
   });
 });
 

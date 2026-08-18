@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { InvoiceCreationError, resolveMode } from '../../domain/invoice-creation.js';
 import { MerchantError } from '../../domain/merchant-service.js';
-import { SubscriptionError } from '../../domain/subscription-service.js';
+import { FeePlanError } from '../../domain/fee-plan-service.js';
 import { WebhookConfigError } from '../../domain/webhook-service.js';
 import {
   UnauthenticatedError,
@@ -312,42 +312,16 @@ export function registerMerchantRoutes(app: FastifyInstance, context: AppContext
     );
   });
 
-  // ── billing ───────────────────────────────────────────────────────────────
+  // ── commission ────────────────────────────────────────────────────────────
 
-  app.get('/v1/organizations/:orgId/subscription', async (request, reply) => {
+  app.get('/v1/organizations/:orgId/commission', async (request, reply) => {
     const granted = await access(request);
     // `settings:read` rather than a billing-specific permission: everyone who can see
     // the organisation's settings can see what it costs, including a viewer. Hiding the
-    // bill from the people who might chase it serves nobody.
+    // rate from the people who negotiate it serves nobody.
     requirePermission(granted, 'settings:read');
 
-    return reply.send(await context.subscriptions.forOrganization(granted.organizationId));
-  });
-
-  app.post('/v1/organizations/:orgId/subscription/cancel', async (request, reply) => {
-    const granted = await access(request);
-    requirePermission(granted, 'settings:write');
-
-    await context.subscriptions.cancelAtPeriodEnd(
-      granted.organizationId,
-      granted.principal.kind === 'session' ? granted.principal.session.userId : null,
-    );
-    return reply.send({
-      status: 'cancelling',
-      message:
-        'Scheduled. The gateway keeps working until the end of the period you have paid for.',
-    });
-  });
-
-  app.post('/v1/organizations/:orgId/subscription/resume', async (request, reply) => {
-    const granted = await access(request);
-    requirePermission(granted, 'settings:write');
-
-    await context.subscriptions.resume(
-      granted.organizationId,
-      granted.principal.kind === 'session' ? granted.principal.session.userId : null,
-    );
-    return reply.send({ status: 'active', message: 'Cancellation withdrawn.' });
+    return reply.send(await context.feePlans.forOrganization(granted.organizationId));
   });
 
   // ── webhooks ──────────────────────────────────────────────────────────────
@@ -452,18 +426,17 @@ export function registerMerchantRoutes(app: FastifyInstance, context: AppContext
 /**
  * Every creation failure, mapped to a status a client can branch on.
  *
- * The split between 402, 409 and 422 is the useful part. 402 means pay us and the
- * request will work unchanged. 409 means fix your configuration first. 422 means the
- * request itself was wrong. Collapsing them into 400 would make all three look like
- * a bug in the merchant's integration.
+ * The split between 404, 409 and 422 is the useful part. 404 means the thing named does
+ * not exist. 409 means fix your configuration first — the request is well formed and
+ * would work once the account is set up. 422 means the request itself was wrong.
+ * Collapsing them into 400 would make all three look like a bug in the merchant's
+ * integration.
  */
 export function invoiceCreationErrorResponse(error: InvoiceCreationError): {
   status: number;
   body: Record<string, unknown>;
 } {
   switch (error.code) {
-    case 'billing_blocked':
-      return { status: 402, body: { error: error.code, message: error.message } };
     case 'asset_unknown':
       return { status: 404, body: { error: error.code, message: error.message } };
     case 'asset_disabled':
@@ -519,16 +492,16 @@ export function webhookConfigErrorResponse(error: WebhookConfigError): {
   return { status: 400, body: { error: 'invalid_webhook_url', message: error.message } };
 }
 
-export function subscriptionErrorResponse(error: SubscriptionError): {
+export function feePlanErrorResponse(error: FeePlanError): {
   status: number;
   body: Record<string, unknown>;
 } {
   switch (error.code) {
     case 'not_found':
       return { status: 404, body: { error: 'not_found', message: error.message } };
-    case 'already_paid':
-    case 'already_exists':
-    case 'no_charge_due':
-      return { status: 409, body: { error: error.code, message: error.message } };
+    // A rate outside 0-500bps. 422 rather than 400: the request parsed, and what is
+    // wrong with it is the value, not the shape.
+    case 'fee_out_of_range':
+      return { status: 422, body: { error: error.code, message: error.message } };
   }
 }

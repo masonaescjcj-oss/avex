@@ -26,7 +26,7 @@ import { PayoutAddressService } from '../domain/payout-service.js';
 import { ReconciliationService } from '../domain/reconciliation-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
-import { SubscriptionService } from '../domain/subscription-service.js';
+import { FeePlanService } from '../domain/fee-plan-service.js';
 import { WebhookService } from '../domain/webhook-service.js';
 import { loadEnv } from '../env.js';
 import { ConsoleMailer } from '../mailer.js';
@@ -68,7 +68,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
   let app: FastifyInstance;
   let close: () => Promise<void>;
   let db: ReturnType<typeof createDatabase>['db'];
-  let subscriptions: SubscriptionService;
+  let feePlans: FeePlanService;
   let prices: PriceService;
   let token: string;
   let orgId: string;
@@ -109,7 +109,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
       cacheTtlMs: 0,
     });
 
-    subscriptions = new SubscriptionService(db, audit, {
+    feePlans = new FeePlanService(db, audit, {
       feeCollectors: { bsc: FEE_COLLECTOR },
     });
     const deriver = new DepositAddressDeriver(
@@ -129,7 +129,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
       'checkout-suite-memo-secret',
     );
     const rates = { requireRate: (symbol: never) => prices.requireRate(symbol) };
-    const invoiceCreation = new InvoiceCreationService(db, deriver, subscriptions, rates, audit);
+    const invoiceCreation = new InvoiceCreationService(db, deriver, feePlans, rates, audit);
 
     const settlements = new SettlementStore(db);
     const reconciliation = new ReconciliationService(db, audit, {
@@ -156,12 +156,11 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
       reconciliation,
       admin: new AdminService(db, audit, settlements, reconciliation),
       merchant: new MerchantService(db),
-      subscriptions,
+      feePlans,
       invoiceCreation,
       checkouts: new CheckoutService(
         db,
         invoiceCreation,
-        subscriptions,
         deriver,
         rates,
         audit,
@@ -195,7 +194,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
       payload: { email: `chk-${unique}@example.com`, password },
     });
     token = login.json().token as string;
-    await subscriptions.ensureForOrganization(orgId);
+    await feePlans.ensureForOrganization(orgId);
   });
 
   after(async () => {

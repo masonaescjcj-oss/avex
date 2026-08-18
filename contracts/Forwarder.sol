@@ -31,7 +31,7 @@ contract Forwarder {
     address public immutable destination;
     /// Where the fee goes. Meaningless, and unread, when `feeBps` is zero.
     address public immutable feeDestination;
-    /// Fee in basis points of the swept amount. Zero for subscription-only merchants.
+    /// Fee in basis points of the swept amount. Zero for a merchant on a negotiated 0%.
     uint16 public immutable feeBps;
 
     /**

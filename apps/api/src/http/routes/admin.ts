@@ -483,50 +483,23 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
     );
   });
 
-  // ── billing ───────────────────────────────────────────────────────────────
+  // ── commission ────────────────────────────────────────────────────────────
 
-  app.get('/admin/billing/outstanding', async (request, reply) => {
-    await requireStaffPermission(context.audit, request.staff, 'merchant:read');
-    return reply.send({ merchants: await context.subscriptions.outstanding() });
-  });
-
-  app.post('/admin/billing/charges/:chargeId/waive', async (request, reply) => {
-    const params = z.object({ chargeId: z.string().uuid() }).parse(request.params);
-    const body = z.object({ note: z.string().trim().min(10).max(500) }).parse(request.body);
-    // Writing off revenue is elevation-gated for the same reason approving an asset is:
-    // quiet, durable, and attractive to anyone holding a stolen session.
+  app.post('/admin/commission/close-periods', async (request, reply) => {
+    // A read-shaped name would be a lie: this writes rates. `merchant:read` is not
+    // enough, so it takes the same permission as setting one by hand.
     const staff = await requireStaffPermission(context.audit, request.staff, 'staff:write', {
-      targetType: 'subscription_charge',
-      targetId: params.chargeId,
       context: requestContext(request),
     });
+    void staff;
 
-    await context.subscriptions.waiveCharge(staff, params.chargeId, body.note);
-    return reply.send({ status: 'waived' });
+    // Idempotent, and a no-op for any merchant whose period has not ended — so running
+    // it by hand cannot move anyone onto a tier a partial month appeared to earn.
+    const report = await context.feePlans.closePeriods();
+    return reply.send(report);
   });
 
-  app.post('/admin/billing/:orgId/price', async (request, reply) => {
-    const params = orgParams.parse(request.params);
-    const body = z
-      .object({
-        priceUsdMicros: z.coerce.bigint().nonnegative(),
-        note: z.string().trim().min(10).max(500),
-      })
-      .parse(request.body);
-    const staff = await requireStaffPermission(context.audit, request.staff, 'staff:write', {
-      targetType: 'organization',
-      targetId: params.orgId,
-      context: requestContext(request),
-    });
-
-    await context.subscriptions.setPrice(staff, params.orgId, body.priceUsdMicros, body.note);
-    return reply.send({
-      status: 'updated',
-      message: 'Applies from the next period; charges already raised keep their price.',
-    });
-  });
-
-  app.post('/admin/billing/:orgId/fee', async (request, reply) => {
+  app.post('/admin/commission/:orgId', async (request, reply) => {
     const params = orgParams.parse(request.params);
     const body = z
       .object({
@@ -537,34 +510,23 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
         note: z.string().trim().min(10).max(500),
       })
       .parse(request.body);
-    // Elevation-gated like the monthly price: a commission change is quiet, durable,
-    // and worth something to anyone holding a stolen session.
+    // Elevation-gated: a commission change is quiet, durable, and worth something to
+    // anyone holding a stolen session. It is also the only lever on our revenue.
     const staff = await requireStaffPermission(context.audit, request.staff, 'staff:write', {
       targetType: 'organization',
       targetId: params.orgId,
       context: requestContext(request),
     });
 
-    await context.subscriptions.setFeeBps(staff, params.orgId, body.feeBps, body.note);
+    await context.feePlans.setFeeBps(staff, params.orgId, body.feeBps, body.note);
     return reply.send({
       status: 'updated',
       feeBps: body.feeBps,
       message:
         'Applies to invoices created from now on. Invoices already issued keep the ' +
-        'rate they were quoted with — their deposit addresses commit to it.',
+        'rate they were quoted with — their deposit addresses commit to it. This rate ' +
+        'is now negotiated, so the volume ladder will leave it alone.',
     });
-  });
-
-  app.post('/admin/billing/apply-volume-tiers', async (request, reply) => {
-    // A read-shaped name would be a lie: this writes rates. `merchant:read` is not
-    // enough, so it takes the same permission as any other billing change.
-    const staff = await requireStaffPermission(context.audit, request.staff, 'staff:write', {
-      context: requestContext(request),
-    });
-    void staff;
-
-    const report = await context.subscriptions.applyVolumeTiers();
-    return reply.send(report);
   });
 
   // ── staff administration ──────────────────────────────────────────────────

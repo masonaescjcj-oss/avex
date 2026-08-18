@@ -27,6 +27,7 @@
     --lime-ink: #0A0A0A;
     --lime-wash: rgba(198, 247, 63, 0.10);
     --lime-edge: rgba(198, 247, 63, 0.28);
+    --lime-dim: #7C9C26;
 
     --teal: #2ED3A0;
     --teal-wash: rgba(46, 211, 160, 0.12);
@@ -131,7 +132,8 @@
 
   .bar-track { height: 0.4rem; border-radius: var(--pill); background: var(--card-3); overflow: hidden; }
   .bar-fill { height: 100%; background: var(--lime); border-radius: var(--pill); transition: width 240ms ease; }
-  .bar-fill[data-over="true"] { background: var(--amber); }
+  /* Part-filled is dimmer than earned: reaching the rung is the good state. */
+  .bar-fill[data-earned="false"] { background: var(--lime-dim); }
 
   /* ── checklist ────────────────────────────────────────────────────────── */
 
@@ -275,8 +277,8 @@
         <div class="panel-body">
           <div class="grid" id="overview-stats"></div>
           <div>
-            <div class="bar-track"><div class="bar-fill" id="free-bar" style="width:0%"></div></div>
-            <p class="note" id="free-note"></p>
+            <div class="bar-track"><div class="bar-fill" id="tier-bar" style="width:0%"></div></div>
+            <p class="note" id="tier-note"></p>
           </div>
         </div>
       </div>
@@ -431,13 +433,18 @@
       </div>
     </section>
 
-    <!-- billing -->
-    <section class="view" id="view-billing" hidden>
+    <!-- commission -->
+    <section class="view" id="view-commission" hidden>
       <div class="panel">
-        <div class="panel-head"><h2>💳 Billing</h2></div>
+        <div class="panel-head"><h2>💳 What you pay</h2></div>
         <div class="panel-body">
-          <div class="grid" id="billing-stats"></div>
-          <div class="scroll"><table id="charge-table"></table></div>
+          <p class="note">
+            A percentage of what you process, and nothing else. No monthly fee, no minimum,
+            and nothing to pay in a month you took no payments. It comes out of each payment
+            on chain as it is settled to you, so there is never an invoice from us.
+          </p>
+          <div class="grid" id="commission-stats"></div>
+          <div class="scroll"><table id="ladder-table"></table></div>
         </div>
       </div>
     </section>
@@ -611,7 +618,7 @@
     ['payouts', 'Payouts'],
     ['webhooks', 'Webhooks'],
     ['keys', 'API keys'],
-    ['billing', 'Billing'],
+    ['commission', 'Commission'],
   ];
 
   let current = 'overview';
@@ -642,40 +649,48 @@
   let cache = {};
 
   function renderOverview() {
-    const subscription = cache.subscription;
+    const commission = cache.commission;
     const report = cache.report;
-    if (!subscription || !report) return;
+    if (!commission || !report) return;
 
-    const free = freeTierView({
-      processedUsdMicros: subscription.freeTier.processedUsdMicros,
-      thresholdUsdMicros: subscription.freeTier.thresholdUsdMicros,
-      remainingUsdMicros: subscription.freeTier.remainingUsdMicros,
-      willBeFree: subscription.freeTier.willBeFree,
-      monthlyPriceUsdMicros: subscription.subscription.priceUsdMicros,
+    const progress = tierProgressView({
+      processedUsdMicros: commission.period.processedUsdMicros,
+      feeBps: commission.commission.feeBps,
+      wouldEarnBps: commission.period.wouldEarnBps,
+      negotiated: commission.commission.negotiated,
+      nextTier: commission.commission.nextTier,
     });
 
     const byStatus = report.invoicesByStatus || {};
     const attention = (byStatus.underpaid || 0) + (byStatus.overpaid || 0);
 
     fill(el('overview-stats'), [
-      stat('Processed this period', free.processedUsd, 'of ' + free.thresholdUsd + ' free', true),
+      // Says what the figure is, not what it is not. An earlier draft read "nothing owed
+      // on it", which put the word "owed" in front of a merchant who owes nothing.
+      stat('Processed this period', progress.processedUsd, 'credited, unreversed', true),
       // The percentage as the headline and the money underneath: joined at headline size
       // it wraps and shouts louder than the merchant's own volume beside it.
       stat(
         'Commission',
-        commissionParts(subscription.commission.feeBps).percent,
-        commissionParts(subscription.commission.feeBps).perThousand,
+        commissionParts(commission.commission.feeBps).percent,
+        commissionParts(commission.commission.feeBps).perThousand,
       ),
       stat('Paid invoices', String(byStatus.paid || 0), 'lifetime'),
       stat('Needs a look', String(attention), attention > 0 ? 'under- or overpaid' : 'nothing outstanding'),
     ]);
 
-    const bar = el('free-bar');
-    bar.style.width = free.percent + '%';
-    bar.dataset.over = String(!free.willBeFree);
-    el('free-note').textContent = free.message;
-    el('period-note').textContent = subscription.subscription.currentPeriodEnd
-      ? 'Period ends ' + new Date(subscription.subscription.currentPeriodEnd).toLocaleDateString()
+    const bar = el('tier-bar');
+    bar.style.width = progress.percent + '%';
+    /**
+     * The lime accent marks a rung already earned, not a threshold crossed.
+     *
+     * The bar this replaced set `data-over` when a merchant went past the free allowance,
+     * which turned the bar red for the merchants doing best. Filling this one is good news.
+     */
+    bar.dataset.earned = String(progress.earned);
+    el('tier-note').textContent = progress.message;
+    el('period-note').textContent = commission.period.end
+      ? 'Rate next reviewed ' + new Date(commission.period.end).toLocaleDateString()
       : '';
 
     renderChecklist();
@@ -1052,43 +1067,34 @@
     ]);
   }
 
-  // ── billing ───────────────────────────────────────────────────────────────
+  // ── commission ────────────────────────────────────────────────────────────
 
-  function renderBilling() {
-    const subscription = cache.subscription;
-    if (!subscription) return;
+  function renderCommission() {
+    const data = cache.commission;
+    if (!data) return;
 
-    const commission = subscription.commission;
-    fill(el('billing-stats'), [
-      stat('Status', subscription.subscription.status, subscription.verdict.mayIssueInvoices ? 'invoices open' : 'invoices paused'),
-      stat('Monthly', formatUsdMicros(subscription.subscription.priceUsdMicros), 'free below ' + formatUsdMicros(subscription.freeTier.thresholdUsdMicros)),
-      stat('Commission', commissionLabel(commission.feeBps), commission.nextTier
-        ? 'next rung ' + commissionLabel(commission.nextTier.bps) + ' at ' + formatUsdMicros(commission.nextTier.fromUsdMicros) + '/month'
-        : 'lowest rung'),
-      stat('Owed now', formatUsdMicros(subscription.verdict.amountDueUsdMicros), subscription.subscription.graceEndsAt ? 'grace ends ' + new Date(subscription.subscription.graceEndsAt).toLocaleDateString() : 'nothing overdue'),
+    const commission = data.commission;
+    fill(el('commission-stats'), [
+      stat('Your rate', commissionParts(commission.feeBps).percent, commissionParts(commission.feeBps).perThousand, true),
+      stat('Monthly fee', 'None', 'there is no subscription'),
+      stat('Processed this period', formatUsdMicros(data.period.processedUsdMicros), data.period.end
+        ? 'reviewed ' + new Date(data.period.end).toLocaleDateString()
+        : ''),
+      commission.negotiated
+        ? stat('Next rung', 'Agreed rate', 'the volume ladder does not apply to you')
+        : stat('Next rung', commission.nextTier ? commissionParts(commission.nextTier.bps).percent : 'Lowest', commission.nextTier
+          ? 'over ' + formatUsdMicros(commission.nextTier.fromUsdMicros) + ' a month'
+          : 'nothing cheaper is published'),
     ]);
 
-    const charges = subscription.charges || [];
-    if (charges.length === 0) {
-      fill(el('charge-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No charges yet.' })])])]);
-      return;
-    }
-    fill(el('charge-table'), [
-      h('thead', {}, [h('tr', {}, ['Period', 'Amount', 'State', 'Note'].map((label) => h('th', { text: label })))]),
-      h('tbody', {}, charges.map((charge) =>
+    const rows = ladderRows(data.ladder || [], commission.feeBps, commission.negotiated);
+    fill(el('ladder-table'), [
+      h('thead', {}, [h('tr', {}, ['Rate', 'Applies', ''].map((label) => h('th', { text: label })))]),
+      h('tbody', {}, rows.map((row) =>
         h('tr', {}, [
-          h('td', { text: new Date(charge.periodStart).toLocaleDateString() }),
-          h('td', { class: 'mono right', text: formatUsdMicros(charge.amountUsdMicros) }),
-          h('td', {}, [
-            h('span', {
-              class: 'pill',
-              'data-tone': charge.status === 'paid' || charge.status === 'free_tier' ? 'good' : charge.status === 'due' ? 'warn' : 'bad',
-              // `free_tier` renders as words: a merchant should not have to decode our
-              // column values to find out why a month cost nothing.
-              text: charge.status === 'free_tier' ? 'free tier' : charge.status,
-            }),
-          ]),
-          h('td', { text: charge.note || '—' }),
+          h('td', { class: 'mono', text: row.rate }),
+          h('td', { text: row.from }),
+          h('td', {}, [row.current ? h('span', { class: 'pill', 'data-tone': 'good', text: 'yours' }) : null]),
         ]),
       )),
     ]);
@@ -1129,8 +1135,8 @@
     const base = '/v1/organizations/' + orgId;
     try {
       if (view === 'overview') {
-        const [subscription, report, assets, payouts, endpoints, keys, invoices] = await Promise.all([
-          api(base + '/subscription'),
+        const [commission, report, assets, payouts, endpoints, keys, invoices] = await Promise.all([
+          api(base + '/commission'),
           api(base + '/reports/volume'),
           api(base + '/assets'),
           api(base + '/payout-addresses'),
@@ -1140,7 +1146,7 @@
         ]);
         cache = {
           ...cache,
-          subscription,
+          commission,
           report,
           assets: assets.assets || assets,
           payouts: payouts.addresses || payouts.payoutAddresses || payouts,
@@ -1173,18 +1179,19 @@
         const keys = await api(base + '/api-keys');
         cache.keys = keys.keys || keys.apiKeys || [];
         renderKeys();
-      } else if (view === 'billing') {
-        cache.subscription = await api(base + '/subscription');
-        renderBilling();
+      } else if (view === 'commission') {
+        cache.commission = await api(base + '/commission');
+        renderCommission();
       }
     } catch (problem) {
       /**
-       * A 402 is the one refusal worth surfacing as its own message.
+       * No special case for a 402 any more, because the API no longer has one.
        *
-       * "Your subscription is overdue" is something a merchant can act on immediately,
-       * and it explains every other thing on the page that has stopped working.
+       * It used to say "your subscription is overdue", which explained every other thing
+       * on the page that had stopped working. Nothing about billing can stop the gateway
+       * now, so a refusal here is an ordinary failure and reads as one.
        */
-      flash(problem.status === 402 ? problem.message : 'Could not load: ' + problem.message, 'error');
+      flash('Could not load: ' + problem.message, 'error');
     }
   }
 

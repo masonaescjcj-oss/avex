@@ -507,9 +507,9 @@ describe('Forwarder on a real EVM', () => {
   });
 
   test('a zero fee moves the whole balance and touches no collector', async () => {
-    // The common case — a subscription-only merchant. Worth its own test because a
-    // fee of zero must not cost an extra transfer, and must not send a zero-value
-    // transfer to the zero address.
+    // A merchant on a negotiated 0%, or a chain we hold no collector address for.
+    // Worth its own test because a fee of zero must not cost an extra transfer, and
+    // must not send a zero-value transfer to the zero address.
     const token = await plainToken('ZERO');
     const depositAddress = offChainAddress(factoryAddress, 'inv_nofee', MERCHANT);
 
@@ -662,10 +662,10 @@ describe('Forwarder on a real EVM', () => {
 
   test('a batch can mix fee-bearing and free invoices', async () => {
     /**
-     * The realistic shape once both pricing models exist side by side: some
-     * merchants on a subscription, some on a percentage, settled in one
-     * transaction. The fee travels per invoice rather than per batch, so a mixed
-     * batch must not apply one invoice's fee to another's funds.
+     * The realistic shape of a settlement batch: most merchants pay a percentage,
+     * a few pay nothing — a negotiated 0%, or a chain we hold no collector for — and
+     * they settle together. The fee travels per invoice rather than per batch, so a
+     * mixed batch must not apply one invoice's fee to another's funds.
      */
     const token = await plainToken('MIXED');
     const fee = { feeDestination: FEE_COLLECTOR, feeBps: 100 };
@@ -696,7 +696,7 @@ describe('Forwarder on a real EVM', () => {
     assert.equal(
       (await tokenBalance(token, OTHER_MERCHANT)) - otherBefore,
       amount,
-      'the subscription merchant should be untouched by the other invoice\'s fee',
+      'the zero-fee merchant should be untouched by the other invoice\'s fee',
     );
   });
 

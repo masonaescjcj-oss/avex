@@ -162,8 +162,8 @@ final class Avex_Gateway extends WC_Payment_Gateway {
 			 * The reason is shown to the customer as well as noted on the order.
 			 *
 			 * AVEX's refusals are written for a merchant to act on — "add a payout address
-			 * for bsc", "your subscription is overdue" — so passing the message through is
-			 * more useful than a generic failure, and it reaches whoever is testing.
+			 * for bsc", "that currency is still in review" — so passing the message through
+			 * is more useful than a generic failure, and it reaches whoever is testing.
 			 */
 			$order->add_order_note(
 				sprintf(

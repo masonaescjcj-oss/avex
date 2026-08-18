@@ -17,16 +17,16 @@ import type { Database } from '../db/client.js';
 import { assets, invoices, merchantAssets, payoutAddresses, quotes } from '../db/schema.js';
 import type { AuditService } from './audit.js';
 import { DepositAddressError, type DepositAddressDeriver } from './deposit-address.js';
-import type { SubscriptionService } from './subscription-service.js';
+import type { FeePlanService } from './fee-plan-service.js';
 
 /**
  * Opening an invoice: the one thing this product exists to do.
  *
- * The ordering of the checks below is the design. Every one of them can refuse, and
- * they run cheapest-and-most-certain first, so a merchant who is behind on payment
- * hears about that rather than about a price source being down. Nothing is written
- * until every check has passed — a half-created invoice with a deposit address and no
- * amount is an address a payer could fund with nothing to match it against.
+ * The ordering of the steps below is the design. Several of them can refuse, and they
+ * run cheapest-and-most-certain first, so a merchant who has not chosen a payout address
+ * hears about that rather than about a price source being down. Nothing is written until
+ * every check has passed — a half-created invoice with a deposit address and no amount is
+ * an address a payer could fund with nothing to match it against.
  *
  * The single most important property is that the deposit address is derived from the
  * fee, so the fee has to be decided before the address exists and stored beside it
@@ -38,7 +38,6 @@ import type { SubscriptionService } from './subscription-service.js';
 export class InvoiceCreationError extends Error {
   constructor(
     readonly code:
-      | 'billing_blocked'
       | 'asset_unknown'
       | 'asset_disabled'
       | 'asset_unapproved'
@@ -126,7 +125,7 @@ export class InvoiceCreationService {
   constructor(
     private readonly db: Database,
     private readonly deriver: DepositAddressDeriver,
-    private readonly subscriptions: SubscriptionService,
+    private readonly feePlans: FeePlanService,
     private readonly rates: RateProvider,
     private readonly audit: AuditService,
   ) {}
@@ -153,18 +152,19 @@ export class InvoiceCreationService {
       if (existing) return { invoice: existing, created: false };
     }
 
-    // 1. May this merchant trade at all? Cheapest check, and the one whose answer a
-    //    merchant can act on without reading anything else.
-    const verdict = await this.subscriptions.billingVerdict(organizationId);
-    if (!verdict.mayIssueInvoices) {
-      throw new InvoiceCreationError('billing_blocked', verdict.reason ?? 'Billing is not current.');
-    }
-
-    // 2. The asset, and this merchant's configuration for it.
+    /**
+     * 1. The asset, and this merchant's configuration for it.
+     *
+     * Nothing about what the merchant owes us is checked here, and there is nothing to
+     * check: the commission is taken out of the payment as it is swept, so a merchant
+     * can never be behind on it. This path used to open with a billing verdict that
+     * could refuse an invoice, and removing the monthly fee removed the only way that
+     * verdict could ever have said no.
+     */
     const config = await this.resolveAsset(organizationId, request.assetId);
 
     /**
-     * 3. Where the money ends up.
+     * 2. Where the money ends up.
      *
      * Captured now, so a later payout-address change cannot retarget an invoice a payer is
      * already looking at. Stars are the exception and it is structural: the customer pays
@@ -175,12 +175,12 @@ export class InvoiceCreationService {
       ? 'telegram:bot'
       : await this.resolvePayoutAddress(organizationId, config.asset.chain);
 
-    // 4. The rate, and from it the amount. `createQuote` is pure, so every rounding
+    // 3. The rate, and from it the amount. `createQuote` is pure, so every rounding
     //    decision it makes is testable without a network.
     const quote = await this.buildQuote(config, request);
 
     /**
-     * 5. The commission, decided before the address exists because it feeds the
+     * 4. The commission, decided before the address exists because it feeds the
      *    address. Zero and undefined both mean the merchant keeps everything.
      */
     /**
@@ -192,9 +192,9 @@ export class InvoiceCreationService {
      */
     const fee = config.stars
       ? undefined
-      : await this.subscriptions.feeFor(organizationId, config.asset.chain);
+      : await this.feePlans.feeFor(organizationId, config.asset.chain);
 
-    // 6. Write the quote, then derive the address from the id it was given, then the
+    // 5. Write the quote, then derive the address from the id it was given, then the
     //    invoice. The id has to exist before the address can be derived from it.
     const [quoteRow] = await this.db
       .insert(quotes)

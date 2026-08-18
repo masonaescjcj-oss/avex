@@ -32,8 +32,8 @@ import { ReconciliationError } from '../domain/reconciliation-service.js';
 import type { ReconciliationService } from '../domain/reconciliation-service.js';
 import type { SettlementStore } from '../domain/settlement-store.js';
 import { MerchantError } from '../domain/merchant-service.js';
-import { SubscriptionError } from '../domain/subscription-service.js';
-import type { SubscriptionService } from '../domain/subscription-service.js';
+import { FeePlanError } from '../domain/fee-plan-service.js';
+import type { FeePlanService } from '../domain/fee-plan-service.js';
 import type { MerchantService } from '../domain/merchant-service.js';
 import { WebhookConfigError } from '../domain/webhook-service.js';
 import type { WebhookService } from '../domain/webhook-service.js';
@@ -68,7 +68,7 @@ import {
   invoiceCreationErrorResponse,
   merchantErrorResponse,
   registerMerchantRoutes,
-  subscriptionErrorResponse,
+  feePlanErrorResponse,
   webhookConfigErrorResponse,
 } from './routes/merchant.js';
 
@@ -102,7 +102,7 @@ export interface AppContext {
   readonly reconciliation: ReconciliationService;
   readonly merchant: MerchantService;
   readonly webhooks: WebhookService;
-  readonly subscriptions: SubscriptionService;
+  readonly feePlans: FeePlanService;
   readonly invoiceCreation: InvoiceCreationService;
   readonly checkouts: CheckoutService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */
@@ -321,8 +321,8 @@ export function buildServer(context: AppContext): FastifyInstance {
       return reply.status(status).send(body);
     }
 
-    if (error instanceof SubscriptionError) {
-      const { status, body } = subscriptionErrorResponse(error);
+    if (error instanceof FeePlanError) {
+      const { status, body } = feePlanErrorResponse(error);
       return reply.status(status).send(body);
     }
 

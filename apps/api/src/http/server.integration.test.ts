@@ -32,7 +32,7 @@ import { MerchantService } from '../domain/merchant-service.js';
 import { DepositAddressDeriver } from '../domain/deposit-address.js';
 import { CheckoutService } from '../domain/checkout-service.js';
 import { InvoiceCreationService } from '../domain/invoice-creation.js';
-import { SubscriptionService } from '../domain/subscription-service.js';
+import { FeePlanService } from '../domain/fee-plan-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
 import { totpCode } from '../auth/totp.js';
@@ -82,7 +82,7 @@ function invoiceServices(
   audit: AuditService,
   prices: { requireRate(symbol: never): Promise<{ priceScaled: bigint; observedAt: number }> },
 ) {
-  const subscriptions = new SubscriptionService(db, audit, {
+  const feePlans = new FeePlanService(db, audit, {
     feeCollectors: { bsc: TEST_FEE_COLLECTOR, ethereum: TEST_FEE_COLLECTOR },
   });
   const deriver = new DepositAddressDeriver(
@@ -100,17 +100,16 @@ function invoiceServices(
   const invoiceCreation = new InvoiceCreationService(
     db,
     deriver,
-    subscriptions,
+    feePlans,
     prices as never,
     audit,
   );
   return {
-    subscriptions,
+    feePlans,
     invoiceCreation,
     checkouts: new CheckoutService(
       db,
       invoiceCreation,
-      subscriptions,
       deriver,
       prices as never,
       audit,

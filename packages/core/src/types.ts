@@ -110,7 +110,8 @@ export interface Invoice {
    * already in flight, so the fee is snapshotted here and the snapshot is what
    * settlement uses.
    *
-   * Absent means no fee, which is every subscription-only merchant.
+   * Absent means no fee: a merchant on a negotiated 0%, a chain we hold no collector
+   * address for, or a Stars record, which never touches a chain to take a cut from.
    */
   readonly fee?: FeeSplit;
 

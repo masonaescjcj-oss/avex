@@ -520,6 +520,13 @@
         in and want to render the payment page inside your own app.
       </p>
       <p class="note">
+        <strong>0.5% of what you process, and nothing else.</strong> No monthly fee, no
+        minimum, no setup cost, and no charge for a month you took no payments in. The
+        commission comes out of the payment on chain as it is swept to you — 0.45% above
+        $50,000 a month, 0.4% above $250,000 — so there is never an invoice from us to pay,
+        and nothing about your account with us can stop your checkout working.
+      </p>
+      <p class="note">
         Everything below is the same API in test and live mode. Start with a test key,
         drive your own webhook handler end to end with
         <code>simulate-payment</code>, then swap the key. Nothing else changes.
@@ -991,11 +998,13 @@ curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices/
         </p>
       </div>
 
-      <div class="endpoint" data-route="GET /v1/organizations/:orgId/subscription">
-        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/subscription</span></div>
+      <div class="endpoint" data-route="GET /v1/organizations/:orgId/commission">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/commission</span></div>
         <p>
-          What you pay, what you have processed this period, and how much of the free
-          allowance is left. Below $1,500 in a month the period costs nothing.
+          Your rate, the next rung on the ladder, and what you have processed this period.
+          There is no monthly fee and no minimum: 0.5% of what you process, 0.45% above
+          $50,000 a month, 0.4% above $250,000. The rate is reviewed when a month closes
+          and moves in both directions.
         </p>
       </div>
 
@@ -1035,7 +1044,6 @@ curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices/
       <div class="codes">
         <div class="code-row"><b>400</b><code>invalid_request</code><span>The body did not parse. <code>fields</code> says which.</span></div>
         <div class="code-row"><b>401</b><code>unauthenticated</code><span>No credential, or not a valid one.</span></div>
-        <div class="code-row"><b>402</b><code>billing_blocked</code><span>Your subscription is overdue past grace. Pay, and this same request works. Invoices already issued still complete.</span></div>
         <div class="code-row"><b>403</b><code>forbidden</code><span>The credential is real but lacks the permission.</span></div>
         <div class="code-row"><b>404</b><code>not_found</code><span>Also what you get for something belonging to another merchant — confirming it exists would leak the id space.</span></div>
         <div class="code-row"><b>409</b><code>asset_disabled</code><span>Enable it first.</span></div>

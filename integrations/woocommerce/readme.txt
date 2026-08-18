@@ -19,7 +19,7 @@ can only ever pay the address you configured.
 
 * USDT and USDC on TON, TRON, BNB Chain, Ethereum, Polygon and Solana
 * Native TON, ETH, BNB, SOL, TRX and POL
-* Free below $1,500 of monthly volume
+* 0.5% commission and no monthly fee, taken out of the payment on chain
 * A test mode that needs no faucet and no testnet
 
 == Installation ==

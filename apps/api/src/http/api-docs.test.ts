@@ -55,9 +55,6 @@ const INTERNAL = new Set([
   'POST /v1/organizations/:orgId/assets',
   'PUT /v1/organizations/:orgId/assets/:assetId',
   'DELETE /v1/organizations/:orgId/payout-addresses/pending/:changeId',
-  // Billing actions a human takes, not an integration.
-  'POST /v1/organizations/:orgId/subscription/cancel',
-  'POST /v1/organizations/:orgId/subscription/resume',
   // Price coverage is an operational read.
   'GET /v1/prices/coverage',
 ]);
@@ -110,7 +107,7 @@ async function serverRoutes(): Promise<Set<string>> {
     reconciliation: stub,
     merchant: stub,
     webhooks: stub,
-    subscriptions: stub,
+    feePlans: stub,
     invoiceCreation: stub,
     checkouts: stub,
     minPriceSources: 2,

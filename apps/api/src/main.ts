@@ -22,7 +22,7 @@ import { MerchantService } from './domain/merchant-service.js';
 import { CheckoutService } from './domain/checkout-service.js';
 import { DepositAddressDeriver } from './domain/deposit-address.js';
 import { InvoiceCreationService } from './domain/invoice-creation.js';
-import { SubscriptionService } from './domain/subscription-service.js';
+import { FeePlanService } from './domain/fee-plan-service.js';
 import { AuditService } from './domain/audit.js';
 import { AssetService } from './domain/asset-service.js';
 import { AuthService } from './domain/auth-service.js';
@@ -116,24 +116,23 @@ async function main(): Promise<void> {
   webhookWorker.unref();
 
   /**
-   * Billing runs hourly rather than daily.
+   * Commission periods close hourly rather than daily.
    *
-   * Hourly means a period that ended is charged within the hour, so grace windows and
-   * status changes are close to the truth whenever anyone looks. It is safe to run this
-   * often because the unique index on (subscription, period start) makes a repeated run
-   * a no-op rather than a double charge.
+   * Hourly means a merchant whose month just ended is on the rate their volume earned
+   * within the hour, rather than up to a day later. It is safe to run this often because
+   * a plan whose period ends in the future is not selected, so a second run in the same
+   * hour does nothing — and because it only ever assesses a period that has closed, so
+   * frequency cannot make it read a partial month.
    */
-  const billingWorker = setInterval(() => {
-    void subscriptions
-      .runBilling()
+  const commissionWorker = setInterval(() => {
+    void feePlans
+      .closePeriods()
       .then((report) => {
-        if (report.charged > 0 || report.markedUnpaid > 0) {
-          app.log.info(report, 'billing run complete');
-        }
+        if (report.moved > 0) app.log.info(report, 'commission tiers reviewed');
       })
-      .catch((error: unknown) => app.log.error({ err: error }, 'billing worker failed'));
+      .catch((error: unknown) => app.log.error({ err: error }, 'commission worker failed'));
   }, 60 * 60_000);
-  billingWorker.unref();
+  commissionWorker.unref();
 
   const payoutWorker = setInterval(() => {
     void payouts
@@ -145,7 +144,7 @@ async function main(): Promise<void> {
   }, 60_000);
   payoutWorker.unref();
 
-  const subscriptions = new SubscriptionService(db, audit, {
+  const feePlans = new FeePlanService(db, audit, {
     feeCollectors: env.FEE_COLLECTORS,
   });
 
@@ -173,7 +172,7 @@ async function main(): Promise<void> {
   const invoiceCreation = new InvoiceCreationService(
     db,
     deriver,
-    subscriptions,
+    feePlans,
     // The pricing engine, narrowed to the one method invoice creation needs.
     { requireRate: (symbol) => prices.requireRate(symbol) },
     audit,
@@ -201,13 +200,12 @@ async function main(): Promise<void> {
     checkouts: new CheckoutService(
       db,
       invoiceCreation,
-      subscriptions,
       deriver,
       { requireRate: (symbol) => prices.requireRate(symbol) },
       audit,
     ),
     webhooks,
-    subscriptions,
+    feePlans,
     minPriceSources: env.PRICE_MIN_SOURCES,
     // A real transport still to come; the seam is what matters now.
     mailer,

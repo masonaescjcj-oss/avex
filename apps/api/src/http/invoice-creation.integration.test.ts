@@ -22,7 +22,7 @@ import { PayoutAddressService } from '../domain/payout-service.js';
 import { ReconciliationService } from '../domain/reconciliation-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
-import { SubscriptionService } from '../domain/subscription-service.js';
+import { FeePlanService } from '../domain/fee-plan-service.js';
 import { WebhookService } from '../domain/webhook-service.js';
 import { loadEnv } from '../env.js';
 import { ConsoleMailer } from '../mailer.js';
@@ -67,7 +67,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
   let app: FastifyInstance;
   let close: () => Promise<void>;
   let db: ReturnType<typeof createDatabase>['db'];
-  let subscriptions: SubscriptionService;
+  let feePlans: FeePlanService;
   let webhooks: WebhookService;
   let sink: DatabasePaymentSink;
   let token: string;
@@ -113,7 +113,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       cacheTtlMs: 0,
     });
 
-    subscriptions = new SubscriptionService(db, audit, {
+    feePlans = new FeePlanService(db, audit, {
       /**
        * A `telegram` collector is configured on purpose, even though Stars can never be
        * split.
@@ -146,7 +146,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     const invoiceCreation = new InvoiceCreationService(
       db,
       deriver,
-      subscriptions,
+      feePlans,
       { requireRate: (symbol) => prices.requireRate(symbol) },
       audit,
     );
@@ -169,12 +169,11 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       reconciliation,
       admin: new AdminService(db, audit, settlements, reconciliation),
       merchant: new MerchantService(db),
-      subscriptions,
+      feePlans,
       invoiceCreation,
       checkouts: new CheckoutService(
         db,
         invoiceCreation,
-        subscriptions,
         deriver,
         { requireRate: (symbol) => prices.requireRate(symbol) },
         audit,
@@ -221,7 +220,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       payload: { email: `inv-${unique}@example.com`, password },
     });
     token = login.json().token as string;
-    await subscriptions.ensureForOrganization(orgId);
+    await feePlans.ensureForOrganization(orgId);
   });
 
   after(async () => {
@@ -433,7 +432,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     const atFifty = await open({ assetId, amountFiatMicros: '1000000', reference: `fee-50-${unique}` });
 
     const staffId = (await db.select({ id: schema.staff.id }).from(schema.staff).limit(1))[0]?.id;
-    await subscriptions.setFeeBps(
+    await feePlans.setFeeBps(
       { staffId: staffId ?? '', role: 'superadmin' },
       orgId,
       100,
@@ -454,16 +453,16 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     assert.equal(reread.json().feeBps, 50);
 
     // Put it back, so later tests see the published rate.
-    await subscriptions.setFeeBps(
+    await feePlans.setFeeBps(
       { staffId: staffId ?? '', role: 'superadmin' },
       orgId,
       50,
       'restoring the published rate after the binding test',
     );
     await db
-      .update(schema.subscriptions)
+      .update(schema.feePlans)
       .set({ negotiatedFee: false })
-      .where(eq(schema.subscriptions.organizationId, orgId));
+      .where(eq(schema.feePlans.organizationId, orgId));
   });
 
   test('a chain with no fee collector charges nothing', async () => {
@@ -762,34 +761,40 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     assert.equal((await open({ assetId, amountFiatMicros: '-5' })).statusCode, 400);
   });
 
-  // ── billing gates invoicing ────────────────────────────────────────────────
+  // ── nothing about billing gates invoicing ──────────────────────────────────
 
-  test('a merchant past grace cannot open new invoices, and is told why', async () => {
+  test('a merchant who has never paid us anything can still open invoices', async () => {
     /**
-     * The lever that makes the subscription enforceable. Note what it does not touch:
-     * invoices already issued still complete and money already received still settles,
-     * because a payer mid-transfer is not party to our billing dispute.
+     * The behavioural statement of the pricing model, and the reason this suite no
+     * longer has a "past grace" test.
+     *
+     * Our commission is taken out of the payment by the forwarder as it is swept, so
+     * there is no moment at which a merchant owes us money and therefore no state in
+     * which we could refuse them for not having paid. This used to return 402
+     * `billing_blocked` once a $49 subscription went a week past due. Removing the
+     * subscription removed the only condition that gate could ever have fired on, and
+     * the gate with it — so this asserts the thing a merchant would notice: an account
+     * that has never sent us a dollar directly still works.
+     *
+     * The plan's period is aged past its end first, which under the old model was
+     * exactly the state that raised the charge that started the grace clock.
      */
     const assetId = await enableAsset({ symbol: 'USDT' });
     await addPayoutAddress('bsc');
 
     await db
-      .update(schema.subscriptions)
-      .set({ status: 'unpaid', graceEndsAt: new Date(Date.now() - 86_400_000) })
-      .where(eq(schema.subscriptions.organizationId, orgId));
+      .update(schema.feePlans)
+      .set({
+        currentPeriodStart: new Date(Date.now() - 90 * 86_400_000),
+        currentPeriodEnd: new Date(Date.now() - 60 * 86_400_000),
+      })
+      .where(eq(schema.feePlans.organizationId, orgId));
 
-    try {
-      const response = await open({ assetId, amountFiatMicros: '1000000' });
-      // 402: pay us and this exact request works. Not a 403, which reads as "never".
-      assert.equal(response.statusCode, 402, response.body);
-      assert.equal(response.json().error, 'billing_blocked');
-      assert.match(response.json().message, /already issued will still complete/);
-    } finally {
-      await db
-        .update(schema.subscriptions)
-        .set({ status: 'active', graceEndsAt: null })
-        .where(eq(schema.subscriptions.organizationId, orgId));
-    }
+    const response = await open({ assetId, amountFiatMicros: '1000000' });
+    assert.equal(response.statusCode, 201, response.body);
+    // And the commission is still on the invoice: free to *use* is not free to run
+    // money through.
+    assert.equal(response.json().feeBps, 50);
   });
 
   test('creating an invoice is written to the audit trail with its fee', async () => {
@@ -1075,12 +1080,11 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     assert.equal(volt, undefined, 'a test payment must not appear in the volume report');
   });
 
-  test('test volume never reaches the billing assessment', async () => {
+  test('test volume never reaches the commission assessment', async () => {
     /**
-     * Both the free tier and the commission ladder read this figure. A merchant able to
-     * add test volume could climb into a cheaper commission tier for nothing; one able
-     * to keep real volume in test mode could stay under the $1,500 threshold
-     * indefinitely. Either way they would be choosing their own bill.
+     * The commission ladder reads this figure, so a merchant able to add test volume
+     * could climb into a cheaper tier for nothing — choosing their own rate. $90,000 of
+     * it, which is past the $50,000 rung on its own.
      */
     const assetId = await enableAsset({ symbol: 'BILL' });
     await addPayoutAddress('bsc');
@@ -1091,7 +1095,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       headers: auth(),
     });
 
-    const volume = await subscriptions.assessedVolume(orgId, {
+    const volume = await feePlans.assessedVolume(orgId, {
       from: new Date(Date.now() - 86_400_000),
       to: new Date(Date.now() + 60_000),
     });
@@ -1127,7 +1131,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       valueSource: 'quote',
     });
 
-    const volume = await subscriptions.assessedVolume(orgId, {
+    const volume = await feePlans.assessedVolume(orgId, {
       from: new Date(Date.now() - 86_400_000),
       to: new Date(Date.now() + 60_000),
     });
@@ -1518,7 +1522,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     };
     // A delta, not an absolute: earlier tests in this suite gave this merchant genuine
     // verified volume, and asserting zero would be asserting the order tests run in.
-    const before = await subscriptions.assessedVolume(orgId, window);
+    const before = await feePlans.assessedVolume(orgId, window);
 
     const assetId = await enableStars();
     const invoice = (await open({ assetId, amountFiatMicros: '3000000' })).json();
@@ -1536,7 +1540,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     assert.equal(row!.source, 'self_reported');
     assert.equal(row!.value, null);
 
-    const after = await subscriptions.assessedVolume(orgId, window);
+    const after = await feePlans.assessedVolume(orgId, window);
     assert.equal(
       after.verifiedUsdMicros,
       before.verifiedUsdMicros,

@@ -14,7 +14,6 @@ import type { AuditService } from './audit.js';
 import type { DepositAddressDeriver } from './deposit-address.js';
 import { InvoiceCreationError, type InvoiceCreationService } from './invoice-creation.js';
 import type { RateProvider } from './invoice-creation.js';
-import type { SubscriptionService } from './subscription-service.js';
 
 /**
  * The hosted checkout: a payment the merchant asked for, before the payer has chosen
@@ -70,7 +69,6 @@ export class CheckoutService {
   constructor(
     private readonly db: Database,
     private readonly invoiceCreation: InvoiceCreationService,
-    private readonly subscriptions: SubscriptionService,
     private readonly deriver: DepositAddressDeriver,
     private readonly rates: RateProvider,
     private readonly audit: AuditService,
