@@ -233,6 +233,66 @@
     line-height: 1.6;
   }
 
+  /* ── the currency step ────────────────────────────────────────────────
+     A grid rather than a list: currencies have no natural order to rank them by,
+     unlike networks, which are ordered by what settling on them costs. */
+  .coin-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+    gap: 0.375rem;
+  }
+
+  .coin {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--card-2);
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+  }
+
+  .coin:hover { background: var(--card-3); }
+  .coin:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+  .coin[aria-checked="true"] {
+    border-color: var(--lime);
+    background: var(--lime-dim);
+  }
+
+  .coin-mark {
+    width: 1.5rem;
+    height: 1.5rem;
+    flex: none;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    font-weight: 700;
+    background: var(--card-3);
+    color: var(--muted);
+  }
+
+  .coin[aria-checked="true"] .coin-mark { background: var(--lime); color: #000; }
+
+  .coin-text { display: flex; flex-direction: column; gap: 0.0625rem; min-width: 0; }
+  .coin-sym { font-weight: 700; font-size: var(--s0); font-family: var(--mono); }
+  .coin-name {
+    font-size: var(--s-2);
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* The network step stays out of the way until there is a currency to list
+     networks for. Showing an empty table first suggests something failed. */
+  .net-step[hidden] { display: none; }
+
   .net-table { display: flex; flex-direction: column; gap: 0.375rem; }
 
   .net-row {
@@ -663,17 +723,29 @@
           <div class="lock-track"><div class="lock-fill" id="lock-fill"></div></div>
         </section>
 
-        <!-- ── screen 1: pick the network ──────────────────────────────── -->
+        <!-- ── screen 1: pick the currency, then the network ──────────────
+             Two choices in one screen, in the order they constrain each other: a
+             currency exists on a fixed set of networks, so the network list cannot
+             be drawn until the currency is known. -->
         <section class="screen" id="screen-network">
           <div class="chooser">
-            <p class="section-label">🌐 Choose a network</p>
+            <p class="section-label">💰 Choose a currency</p>
             <p class="chooser-note">
+              Every currency here is one we can actually settle. Pick what you hold.
+            </p>
+            <div class="coin-grid" role="radiogroup" aria-label="Payment currency" id="currencies"></div>
+          </div>
+
+          <div class="chooser net-step" id="net-step" hidden>
+            <p class="section-label">🌐 Choose a network</p>
+            <p class="chooser-note" id="net-note">
               We show what settling on each network costs — the cheapest option is at the top.
             </p>
             <div class="net-table" role="radiogroup" aria-label="Payment network" id="networks"></div>
           </div>
+
           <button class="primary" type="button" id="to-pay" disabled>Continue</button>
-          <p class="hint" id="choose-hint">Pick a network to continue.</p>
+          <p class="hint" id="choose-hint">Pick a currency to continue.</p>
         </section>
 
         <!-- ── screen 2: pay ──────────────────────────────────────────── -->
@@ -723,10 +795,10 @@
         <div class="body">
           <dl class="summary">
             <div class="summary-row"><dt>Item</dt><dd class="prose">Annual subscription</dd></div>
-            <div class="summary-row"><dt>Amount</dt><dd>$20.00</dd></div>
+            <div class="summary-row"><dt>Amount</dt><dd id="summary-amount">—</dd></div>
             <div class="summary-row"><dt>Network</dt><dd id="summary-network">—</dd></div>
             <div class="summary-row"><dt>Settlement cost</dt><dd id="summary-cost">—</dd></div>
-            <div class="summary-row"><dt>Rate</dt><dd id="summary-rate">1 USDT = $1.00</dd></div>
+            <div class="summary-row"><dt>Rate</dt><dd id="summary-rate">—</dd></div>
             <div class="summary-row total"><dt>You send</dt><dd id="summary-total">—</dd></div>
           </dl>
         </div>
@@ -738,7 +810,7 @@
           <ol class="steps" id="steps">
             <li class="step" data-state="active">
               <span class="step-num">1</span>
-              <span>Choose the network you want to pay on</span>
+              <span>Choose the currency and network you want to pay on</span>
             </li>
             <li class="step">
               <span class="step-num">2</span>
@@ -792,44 +864,55 @@
   'use strict';
 
   /**
-   * Networks, ordered cheapest settlement first.
+   * What we can take, as currency-then-network.
    *
-   * The costs are the figures FeePolicy produces for a single settlement, and
-   * showing them is the point: a payer choosing a network is choosing what the
-   * transfer costs, and every other checkout hides that.
+   * The nesting is the safety property. A currency exists on a fixed set of chains,
+   * and sending USDT to a Solana address or BNB to a TRON one loses the money with
+   * no way back. Deriving the network list from the chosen currency means a wrong
+   * pairing is not something the payer can select — rather than something we warn
+   * about and hope they read.
+   *
+   * Only assets we can genuinely settle appear. BTC, LTC and DOGE are absent
+   * because AVEX has no UTXO adapter yet, and listing a currency we cannot sweep
+   * would take a payment we could not deliver.
    */
-  const NETWORKS = [
-    {
-      id: 'ton', label: 'TON', asset: 'USDT', decimals: 6, confirm: '~5 sec',
-      cost: 0, memo: true,
-      address: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
-      amount: '20.020000',
-    },
-    {
-      id: 'solana', label: 'Solana', asset: 'USDT', decimals: 6, confirm: '~1 sec',
-      cost: 0.001,
-      address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
-      amount: '20.020000',
-    },
-    {
-      id: 'bsc', label: 'BNB Chain', asset: 'USDT', decimals: 18, confirm: '~45 sec',
-      cost: 0.015,
-      address: '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52',
-      amount: '20.100000',
-    },
-    {
-      id: 'polygon', label: 'Polygon', asset: 'USDT', decimals: 6, confirm: '~3 min',
-      cost: 0.015,
-      address: '0x3Bd18aE2Cc41fD7719Ae5cB0c3aF9C4E7d21B860',
-      amount: '20.100000',
-    },
-    {
-      id: 'ethereum', label: 'Ethereum', asset: 'USDT', decimals: 6, confirm: '~3 min',
-      cost: 0.014,
-      address: '0xC91e5b2A4dF06BeF3F1a7b09C82d5Ae4f3B10E77',
-      amount: '20.100000',
-    },
+  const CHAINS = {
+    ton:      { label: 'TON',        confirm: '~5 sec',  cost: 0,     memo: true,
+                address: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs' },
+    solana:   { label: 'Solana',     confirm: '~1 sec',  cost: 0.001,
+                address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB' },
+    tron:     { label: 'TRON',       confirm: '~1 min',  cost: 0.008,
+                address: 'TQ5NMqJjW8kFrT9pC3sVbY7dLxHn2AeRuP' },
+    ethereum: { label: 'Ethereum',   confirm: '~3 min',  cost: 0.014,
+                address: '0xC91e5b2A4dF06BeF3F1a7b09C82d5Ae4f3B10E77' },
+    bsc:      { label: 'BNB Chain',  confirm: '~45 sec', cost: 0.015,
+                address: '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52' },
+    polygon:  { label: 'Polygon',    confirm: '~3 min',  cost: 0.015,
+                address: '0x3Bd18aE2Cc41fD7719Ae5cB0c3aF9C4E7d21B860' },
+  };
+
+  /**
+   * Currencies, each with the chains that carry it.
+   *
+   * `decimals` and `usdPrice` are here rather than on the chain because they belong
+   * to the asset: USDT is six decimals on TON and eighteen on BNB Chain in reality,
+   * but what the payer is shown is the asset's own precision, and the amount is
+   * computed rather than written down.
+   */
+  const CURRENCIES = [
+    { id: 'USDT', name: 'Tether',   decimals: 2, usdPrice: 1,
+      networks: ['ton', 'solana', 'tron', 'ethereum', 'bsc', 'polygon'] },
+    { id: 'USDC', name: 'USD Coin', decimals: 2, usdPrice: 1,
+      networks: ['solana', 'ethereum', 'bsc', 'polygon'] },
+    { id: 'TON',  name: 'Toncoin',  decimals: 4, usdPrice: 5.42,  networks: ['ton'] },
+    { id: 'ETH',  name: 'Ethereum', decimals: 6, usdPrice: 3410,  networks: ['ethereum'] },
+    { id: 'BNB',  name: 'BNB',      decimals: 5, usdPrice: 604,   networks: ['bsc'] },
+    { id: 'SOL',  name: 'Solana',   decimals: 5, usdPrice: 168,   networks: ['solana'] },
+    { id: 'TRX',  name: 'TRON',     decimals: 3, usdPrice: 0.288, networks: ['tron'] },
+    { id: 'POL',  name: 'Polygon',  decimals: 3, usdPrice: 0.412, networks: ['polygon'] },
   ];
+
+  const INVOICE_USD = 20;
 
   const MEMO = 'AVEX-INV-8F2C41';
   const LOCK_SECONDS = 15 * 60;
@@ -845,6 +928,7 @@
    * means the amount due can honestly stay hidden until there is a network to
    * compute it for — the settlement cost differs per chain.
    */
+  let currency = null;
   let selected = null;
   let screen = 'network';
   let state = 'awaiting';
@@ -855,18 +939,112 @@
   // can no longer be changed.
   const paymentSeen = () => state === 'confirming' || state === 'paid' || state === 'underpaid';
 
-  // ── network chooser ─────────────────────────────────────────────────────
+  // ── currency and network choosers ───────────────────────────────────────
 
   function costLabel(cost) {
     if (cost === 0) return { text: 'Free', free: true };
     return { text: '$' + cost.toFixed(cost < 0.01 ? 4 : 3), free: false };
   }
 
+  /**
+   * What the payer sends: the invoice plus what settling on their chosen chain
+   * costs, rounded UP to the asset's precision.
+   *
+   * Up, never down. Rounding an amount owed downwards would leave every invoice a
+   * fraction short and read as an underpayment, which is a worse outcome for the
+   * payer than being asked for one extra smallest unit.
+   */
+  function amountFor(currencyRow, chain) {
+    const scale = Math.pow(10, currencyRow.decimals);
+    const units = Math.ceil(((INVOICE_USD + chain.cost) / currencyRow.usdPrice) * scale);
+    return (units / scale).toFixed(currencyRow.decimals);
+  }
+
+  /** The selectable rows for a currency: one per chain that carries it. */
+  function optionsFor(currencyRow) {
+    return currencyRow.networks.map((id) => ({
+      id,
+      ...CHAINS[id],
+      asset: currencyRow.id,
+      amount: amountFor(currencyRow, CHAINS[id]),
+    }));
+  }
+
+  function renderCurrencies() {
+    const container = el('currencies');
+    container.textContent = '';
+
+    for (const row of CURRENCIES) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'coin';
+      chip.setAttribute('role', 'radio');
+      chip.setAttribute('aria-checked', String(currency !== null && row.id === currency.id));
+
+      const mark = document.createElement('span');
+      mark.className = 'coin-mark';
+      mark.setAttribute('aria-hidden', 'true');
+      // The ticker's first two letters, not an icon: a remote image would be a
+      // request to another host, and this page is deliberately self-contained.
+      mark.textContent = row.id.slice(0, 2);
+
+      const text = document.createElement('span');
+      text.className = 'coin-text';
+
+      const symbol = document.createElement('span');
+      symbol.className = 'coin-sym';
+      symbol.textContent = row.id;
+
+      const name = document.createElement('span');
+      name.className = 'coin-name';
+      name.textContent = row.name;
+
+      text.append(symbol, name);
+      chip.append(mark, text);
+
+      chip.addEventListener('click', () => {
+        if (paymentSeen()) return;
+        chooseCurrency(row);
+      });
+      container.append(chip);
+    }
+  }
+
+  /**
+   * Picking a currency clears the network.
+   *
+   * Not tidiness — correctness. A payer who chose USDT on TRON and then switched to
+   * BNB must not keep a TRON selection, because BNB does not exist there and the
+   * address on the next screen would belong to the wrong chain entirely.
+   */
+  function chooseCurrency(row) {
+    currency = row;
+    selected = null;
+    confirmations = 0;
+
+    // A currency carried by exactly one chain has no wrong choice to make, so
+    // asking for a second click adds friction without adding safety. Where there
+    // are several, nothing is preselected — see the note on `selected`.
+    const options = optionsFor(row);
+    if (options.length === 1) selected = options[0];
+
+    renderCurrencies();
+    renderNetworks();
+    renderSelection();
+    renderScreen();
+  }
+
   function renderNetworks() {
     const container = el('networks');
     container.textContent = '';
+    if (currency === null) return;
 
-    for (const network of NETWORKS) {
+    const options = optionsFor(currency);
+    // Cheapest first, so the option that costs the payer least is the one they read
+    // before any other.
+    options.sort((a, b) => a.cost - b.cost);
+
+    for (const network of options) {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'net-row';
@@ -892,6 +1070,7 @@
 
       row.append(dot, name, time, costEl);
       row.addEventListener('click', () => {
+        if (paymentSeen()) return;
         selected = network;
         confirmations = 0;
         renderNetworks();
@@ -915,8 +1094,20 @@
     // wherever they are.
     el('status').hidden = screen === 'network' && state !== 'expired';
 
+    // The network step appears only once there is a currency to list chains for.
+    el('net-step').hidden = currency === null;
+    if (currency !== null) {
+      const count = currency.networks.length;
+      el('net-note').textContent = count === 1
+        ? currency.id + ' exists on one network only, so it is already selected.'
+        : 'We show what settling on each network costs — the cheapest option is at the top.';
+    }
+
     el('to-pay').disabled = selected === null;
     el('choose-hint').hidden = selected !== null;
+    el('choose-hint').textContent = currency === null
+      ? 'Pick a currency to continue.'
+      : 'Pick a network to continue.';
     el('back-to-network').disabled = paymentSeen();
     el('back-to-network').textContent = paymentSeen() ? 'Locked in' : 'Change';
   }
@@ -976,15 +1167,27 @@
   function renderSelection() {
     if (selected === null) {
       // The hero stays on the fiat figure, which is the only amount that is true
-      // before a network is picked.
-      el('amount').textContent = '20.00';
+      // before a network is picked. It stays true after a currency is picked too:
+      // the settlement cost differs per chain, so the crypto amount is not yet
+      // knowable even once the asset is.
+      el('amount').textContent = INVOICE_USD.toFixed(2);
       el('amount-unit').textContent = 'USD';
-      el('amount-note').textContent =
-        'The exact amount depends on the network you choose — each one costs a ' +
-        'different amount to settle.';
+      el('amount-note').textContent = currency === null
+        ? 'The exact amount depends on the currency and network you choose — each ' +
+          'one costs a different amount to settle.'
+        : 'Choose a network to see the exact amount of ' + currency.id + ' to send.';
       for (const id of ['summary-network', 'summary-cost', 'summary-total']) {
         el(id).textContent = '—';
       }
+      el('summary-amount').textContent = '$' + INVOICE_USD.toFixed(2);
+      // The rate is a property of the currency, so it is knowable as soon as one is
+      // picked — and must not read '1 USDT = $1.00' before anything is.
+      el('summary-rate').textContent = currency === null
+        ? '—'
+        : '1 ' + currency.id + ' = $' + currency.usdPrice.toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          });
 
       // Clear the previous network's address, memo and QR rather than leaving them
       // on the hidden screen. A stale deposit address is the one piece of state that
@@ -1001,16 +1204,24 @@
     el('amount').textContent = selected.amount;
     el('amount-unit').textContent = selected.asset;
     el('amount-note').textContent =
-      'Equal to $20.00 — the rate holds until the countdown below runs out.';
+      'Equal to $' + INVOICE_USD.toFixed(2) + ' including the ' +
+      (selected.cost === 0 ? 'free' : '$' + selected.cost.toFixed(4)) +
+      ' network fee — the rate holds until the countdown below runs out.';
 
-    el('chosen-net').textContent = selected.label;
+    el('chosen-net').textContent = selected.asset + ' on ' + selected.label;
     el('chosen-time').textContent = 'confirms in ' + selected.confirm;
 
     el('address').textContent = selected.address;
-    el('summary-network').textContent = selected.label;
+    el('summary-network').textContent = selected.asset + ' · ' + selected.label;
     el('summary-total').textContent = selected.amount + ' ' + selected.asset;
     el('summary-cost').textContent =
       selected.cost === 0 ? '$0.0000' : '$' + selected.cost.toFixed(4);
+    el('summary-amount').textContent = '$' + INVOICE_USD.toFixed(2);
+    el('summary-rate').textContent =
+      '1 ' + currency.id + ' = $' + currency.usdPrice.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
 
     el('memo-block').hidden = !selected.memo;
     el('memo').textContent = MEMO;
@@ -1123,11 +1334,13 @@
       clearInterval(confirmTimer);
 
       if (target === 'awaiting') {
-        // Back to the very start, including the network choice.
+        // Back to the very start, including both choices.
         remaining = LOCK_SECONDS;
         confirmations = 0;
+        currency = null;
         selected = null;
         screen = 'network';
+        renderCurrencies();
         renderNetworks();
         renderSelection();
         setState('awaiting');
@@ -1140,8 +1353,14 @@
       // Every other state presupposes money already sent to an address, which means
       // a network was chosen and the payer is past the first screen.
       if (target !== 'expired') {
-        if (selected === null) selected = NETWORKS[0];
+        if (selected === null) {
+          // Any state past the first screen implies both choices were made, so the
+          // demo makes them rather than rendering a pay screen with no address.
+          if (currency === null) currency = CURRENCIES[0];
+          selected = optionsFor(currency)[0];
+        }
         screen = 'pay';
+        renderCurrencies();
         renderNetworks();
         renderSelection();
       }
@@ -1164,6 +1383,7 @@
     });
   }
 
+  renderCurrencies();
   renderNetworks();
   renderSelection();
   setState('awaiting');
