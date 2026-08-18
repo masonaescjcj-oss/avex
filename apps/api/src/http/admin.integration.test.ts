@@ -202,6 +202,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       checkouts: new CheckoutService(
         db,
         adminInvoiceCreation,
+        feePlanService,
         adminDeriver,
         adminRates as never,
         audit,

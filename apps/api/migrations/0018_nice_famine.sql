@@ -1,0 +1,1 @@
+ALTER TABLE "checkout_sessions" ADD COLUMN "fee_payer" "fee_payer";

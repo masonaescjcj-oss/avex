@@ -1,4 +1,10 @@
-import { fiatToTokenAmount, type PriceSymbol } from '@avex/core';
+import {
+  applyFeePayer,
+  feeOnAmount,
+  fiatToTokenAmount,
+  type FeePayer,
+  type PriceSymbol,
+} from '@avex/core';
 import { and, eq, isNull } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
@@ -11,6 +17,7 @@ import {
   payoutAddresses,
 } from '../db/schema.js';
 import type { AuditService } from './audit.js';
+import type { FeePlanService } from './fee-plan-service.js';
 import type { DepositAddressDeriver } from './deposit-address.js';
 import { InvoiceCreationError, type InvoiceCreationService } from './invoice-creation.js';
 import type { RateProvider } from './invoice-creation.js';
@@ -54,8 +61,23 @@ export interface CheckoutOption {
   readonly name: string;
   readonly chain: string;
   readonly decimals: number;
-  /** What they would send, in the asset's smallest unit, as a decimal string. */
+  /**
+   * What they would send, in the asset's smallest unit, as a decimal string.
+   *
+   * Includes the commission when the merchant passes it on, because this is the figure
+   * the payer is about to be asked for. A picker that quoted the price and a payment page
+   * that then asked for half a per cent more would look like a bait and switch.
+   */
   readonly amount: string;
+  /**
+   * The part of `amount` that is our commission, when the payer is the one paying it.
+   *
+   * Zero when the merchant absorbs it. The payer is told what they are charged and not
+   * told what somebody else is charged, which is the line this whole field exists to draw.
+   */
+  readonly feeIncluded: string;
+  /** The rate this commission is charged at, or zero. Shown alongside `feeIncluded`. */
+  readonly feeBps: number;
   /** The rate used, so the figure can be checked rather than taken on trust. */
   readonly rateUsd: string | null;
   /** Null when we could not price it, which is why the option may be unavailable. */
@@ -69,6 +91,13 @@ export class CheckoutService {
   constructor(
     private readonly db: Database,
     private readonly invoiceCreation: InvoiceCreationService,
+    /**
+     * Read to quote the payer the same amount the invoice will ask for.
+     *
+     * The options list is computed before any invoice exists, so it has to reach the fee
+     * the way invoice creation does. Quoting from anywhere else would eventually disagree.
+     */
+    private readonly feePlans: FeePlanService,
     private readonly deriver: DepositAddressDeriver,
     private readonly rates: RateProvider,
     private readonly audit: AuditService,
@@ -92,6 +121,8 @@ export class CheckoutService {
       readonly cancelUrl?: string | undefined;
       readonly ttlMs?: number | undefined;
       readonly mode?: 'test' | 'live' | undefined;
+      /** Overrides the merchant's default for this checkout only. */
+      readonly feePayer?: FeePayer | undefined;
     },
     actor: { readonly userId: string | null; readonly apiKeyId: string | null },
   ): Promise<{ readonly session: typeof checkoutSessions.$inferSelect; readonly created: boolean }> {
@@ -127,6 +158,7 @@ export class CheckoutService {
         successUrl: input.successUrl ?? null,
         cancelUrl: input.cancelUrl ?? null,
         mode: input.mode ?? 'live',
+        feePayer: input.feePayer ?? null,
         expiresAt,
       })
       .onConflictDoNothing()
@@ -249,6 +281,19 @@ export class CheckoutService {
     const amountFiat = BigInt(session.amountFiatMicros);
     const options: CheckoutOption[] = [];
 
+    /**
+     * The commission per chain, looked up once each.
+     *
+     * Per chain because a chain we hold no collector address for charges nothing, so two
+     * rows in the same list can legitimately carry different fees — and a payer choosing
+     * between them should see that in the amounts rather than discover it afterwards.
+     */
+    const fees = new Map<string, { readonly feeBps: number; readonly feePayer: FeePayer } | undefined>();
+    const feeForChain = async (chain: string) => {
+      if (!fees.has(chain)) fees.set(chain, await this.feePlans.feeFor(session.organizationId, chain));
+      return fees.get(chain);
+    };
+
     for (const entry of payable) {
       const spread = BigInt(entry.spreadBps);
       let rate: bigint | null = null;
@@ -279,28 +324,38 @@ export class CheckoutService {
         }
       }
 
+      /**
+       * The price, rounded up so the merchant is never left short of the fiat figure.
+       *
+       * Reusing `fiatToTokenAmount` rather than open-coding the scaling. The naive
+       * version divides the rate down to micro-dollar scale first, which truncates
+       * a precise rate before it is used — for a sub-cent token that is real lost
+       * precision, and in the direction that overcharges the payer.
+       */
+      const price =
+        rate === null
+          ? 0n
+          : fiatToTokenAmount(
+              amountFiat,
+              { priceScaled: rate, observedAt: Date.now() },
+              entry.decimals,
+            );
+
+      const fee = rate === null ? undefined : await feeForChain(entry.chain);
+      const charged = applyFeePayer(price, fee?.feeBps ?? 0, fee?.feePayer ?? 'merchant');
+      const passedOn = fee?.feePayer === 'payer';
+
       options.push({
         assetId: entry.assetId,
         symbol: entry.symbol,
         name: entry.symbol,
         chain: entry.chain,
         decimals: entry.decimals,
-        /**
-         * Rounded up, so the merchant is never left short of the fiat figure.
-         *
-         * Reusing `fiatToTokenAmount` rather than open-coding the scaling. The naive
-         * version divides the rate down to micro-dollar scale first, which truncates
-         * a precise rate before it is used — for a sub-cent token that is real lost
-         * precision, and in the direction that overcharges the payer.
-         */
-        amount:
-          rate === null
-            ? '0'
-            : fiatToTokenAmount(
-                amountFiat,
-                { priceScaled: rate, observedAt: Date.now() },
-                entry.decimals,
-              ).toString(),
+        amount: charged.amountDue.toString(),
+        // The surcharge, not the whole commission: when the merchant absorbs it there is
+        // nothing here for the payer to be told about.
+        feeIncluded: passedOn ? charged.surcharge.toString() : '0',
+        feeBps: passedOn ? (fee?.feeBps ?? 0) : 0,
         rateUsd: rate === null ? null : rate.toString(),
         available: rate !== null,
         unavailableReason: reason,
@@ -386,6 +441,14 @@ export class CheckoutService {
            * that produced a live invoice would take real money on a rehearsal.
            */
           mode: session.mode,
+          /**
+           * Undefined, not `'merchant'`, when the session made no choice.
+           *
+           * Invoice creation reads the merchant's default in that case, which is what a
+           * session that has been sitting open for an hour should get — a merchant who
+           * changed their mind in between meant it to apply.
+           */
+          ...(session.feePayer ? { feePayer: session.feePayer } : {}),
           // The invoice must not outlive the session it belongs to.
           ttlMs: Math.max(60_000, session.expiresAt.getTime() - Date.now()),
         },
@@ -514,10 +577,23 @@ export class CheckoutService {
       memo: row.invoice.memo,
       status: row.invoice.status,
       toleranceBps: row.invoice.toleranceBps,
+      /**
+       * Our commission, but only when the payer is the one paying it.
+       *
+       * The line this draws is the honest one: you are told what you are being charged,
+       * and not told what somebody else is being charged. When the merchant absorbs the
+       * commission it comes out of their settlement and is none of the payer's business;
+       * when it has been added to what the payer must send, showing the total without the
+       * breakdown would make our fee look like the merchant's price.
+       */
+      feeBps: row.invoice.feePayer === 'payer' ? row.invoice.feeBps : 0,
+      feeIncluded:
+        row.invoice.feePayer === 'payer'
+          ? feeOnAmount(BigInt(row.invoice.amountDue), row.invoice.feeBps).toString()
+          : '0',
       expiresAt: row.invoice.expiresAt.toISOString(),
-      // Deliberately absent: payoutAddress, feeDestination, feeBps, organizationId.
-      // A payer has no business knowing where the money goes afterwards or what we
-      // charge for moving it.
+      // Deliberately absent: payoutAddress, feeDestination, organizationId. A payer has no
+      // business knowing where the money goes afterwards.
     };
   }
 

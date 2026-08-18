@@ -41,7 +41,13 @@ const playwright = await loadPlaywright();
 const FIXTURE = {
   commission: {
     plan: { feeBps: 50, negotiatedFee: false },
-    commission: { feeBps: 50, perThousandUsd: 5, negotiated: false, nextTier: { bps: 45, fromUsdMicros: '50000000000' } },
+    commission: {
+      feeBps: 50,
+      perThousandUsd: 5,
+      negotiated: false,
+      feePayer: 'merchant',
+      nextTier: { bps: 45, fromUsdMicros: '50000000000' },
+    },
     ladder: [
       { bps: 50, fromUsdMicros: '0' },
       { bps: 45, fromUsdMicros: '50000000000' },
@@ -470,6 +476,39 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     const body = await text(page, '#view-commission');
     assert.match(body, /No monthly fee|no subscription/i);
     assert.ok(!/\$49/.test(body), body);
+    await context.close();
+  });
+
+  test('who pays the commission is offered as two stated options, not one toggle', async () => {
+    /**
+     * A single "pass the fee on" checkbox leaves the unchecked state unsaid — and the
+     * unchecked state is the one where the merchant is paying, which is the more expensive
+     * of the two to be in by accident.
+     */
+    const { page, context } = await open();
+    await page.click('nav.tabs button:has-text("Commission")');
+    await page.waitForTimeout(150);
+
+    const choices = await all(page, '#fee-payer-options .choice');
+    assert.equal(choices.length, 2);
+    // Spelled out as a worked figure, because "your customer pays the fee" reads like a
+    // separate bill and what actually happens is the invoice asks for more.
+    assert.match(choices.join(' | '), /sends \$100 and you receive \$99\.5/);
+    assert.match(choices.join(' | '), /sends \$100\.5 and you receive \$100/);
+    await context.close();
+  });
+
+  test('the option in force is the one that cannot be clicked', async () => {
+    // Pressing the state you are already in should not fire a request that changes
+    // nothing, and a merchant should be able to see which one they are in at a glance.
+    const { page, context } = await open();
+    await page.click('nav.tabs button:has-text("Commission")');
+    await page.waitForTimeout(150);
+
+    const pressed = await page.$$eval('#fee-payer-options .choice', (nodes) =>
+      nodes.map((node) => [node.getAttribute('aria-pressed'), node.disabled]),
+    );
+    assert.deepEqual(pressed, [['true', true], ['false', false]]);
     await context.close();
   });
 

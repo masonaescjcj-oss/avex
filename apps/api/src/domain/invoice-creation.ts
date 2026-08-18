@@ -2,10 +2,12 @@ import {
   DEFAULT_MAX_ROUNDING_BPS,
   DEFAULT_QUOTE_TTL_MS,
   QuoteInputError,
+  applyFeePayer,
   createQuote,
   fiatToTokenAmount,
   tokenAmountToFiat,
   type Asset,
+  type FeePayer,
   type FeeSplit,
   type PriceSymbol,
   type PricingMode,
@@ -73,6 +75,14 @@ export interface CreateInvoiceRequest {
    * have one, and `resolveMode` below is what stops a request overriding it.
    */
   readonly mode?: 'test' | 'live' | undefined;
+  /**
+   * Who this invoice charges the commission to. Absent means the merchant's default.
+   *
+   * Per invoice as well as per merchant, because a merchant who normally passes the fee
+   * on still has orders where they would rather absorb it — a goodwill replacement, a
+   * complaint, a customer they want to keep.
+   */
+  readonly feePayer?: FeePayer | undefined;
 }
 
 /**
@@ -194,6 +204,19 @@ export class InvoiceCreationService {
       ? undefined
       : await this.feePlans.feeFor(organizationId, config.asset.chain);
 
+    /**
+     * Who bears it, and what that does to the amount.
+     *
+     * When the payer bears it the invoice asks for more, so that what is left after the
+     * forwarder's split is the price the merchant actually quoted. The gross-up lands on
+     * the invoice rather than on the quote: the quote priced the goods, and this is the
+     * disclosed commission on top. `applyFeePayer` is a no-op at a zero rate, so a
+     * merchant on a waived commission never surcharges their customers whatever their
+     * default says.
+     */
+    const feePayer: FeePayer = request.feePayer ?? fee?.feePayer ?? 'merchant';
+    const charged = applyFeePayer(quote.amountDue, fee?.feeBps ?? 0, feePayer);
+
     // 5. Write the quote, then derive the address from the id it was given, then the
     //    invoice. The id has to exist before the address can be derived from it.
     const [quoteRow] = await this.db
@@ -256,7 +279,12 @@ export class InvoiceCreationService {
         assetId: config.asset.id,
         quoteId: quoteRow!.id,
         reference: request.reference ?? null,
-        amountDue: quote.amountDue.toString(),
+        /**
+         * The grossed-up figure when the payer bears the fee, so this is deliberately not
+         * the quote's amount. The quote records what the goods cost; the invoice records
+         * what the payer is asked to send, which is that plus the disclosed commission.
+         */
+        amountDue: charged.amountDue.toString(),
         mode,
         chain: config.asset.chain,
         depositAddress: target.address,
@@ -264,6 +292,9 @@ export class InvoiceCreationService {
         payoutAddress,
         feeBps: fee?.feeBps ?? 0,
         feeDestination: fee?.feeDestination ?? null,
+        // Recorded, not derived: the same 20.1 USDT could be a payer-paid 20 USDT invoice
+        // or a merchant-paid 20.1 one, and afterwards nothing else could tell them apart.
+        feePayer: charged.surcharge > 0n ? feePayer : 'merchant',
         toleranceBps: config.toleranceBps,
         expiresAt: new Date(quote.expiresAt),
       })
@@ -294,12 +325,17 @@ export class InvoiceCreationService {
       metadata: {
         chain: config.asset.chain,
         assetSymbol: config.asset.symbol,
-        amountDue: quote.amountDue.toString(),
+        amountDue: charged.amountDue.toString(),
         pricingMode: config.pricingMode,
         mode,
         // Recorded because it is the number a merchant is most likely to dispute
         // later, and it cannot be recovered from the address afterwards.
         feeBps: fee?.feeBps ?? 0,
+        feePayer,
+        // What the payer was asked for beyond the price, and what the merchant should
+        // expect to receive. Both are the figures a dispute would be about.
+        surcharge: charged.surcharge.toString(),
+        amountNet: charged.amountNet.toString(),
         reference: request.reference ?? null,
       },
       ...(actor.ip === undefined ? {} : { ip: actor.ip }),

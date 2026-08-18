@@ -218,6 +218,31 @@
   .banner[data-kind="warn"] { background: var(--amber-wash); border-color: var(--amber); color: var(--ink); }
   .banner[hidden] { display: none; }
 
+  /* The who-pays pair. Two buttons rather than a toggle, so neither state is unstated. */
+  .choice {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    width: 100%;
+    text-align: left;
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 0.8rem 0.95rem;
+    color: var(--ink);
+    font: inherit;
+    cursor: pointer;
+  }
+  .choice + .choice { margin-top: 0.5rem; }
+  .choice[aria-pressed="true"] {
+    border-color: var(--lime-edge);
+    background: var(--lime-wash);
+    cursor: default;
+  }
+  .choice-label { font-weight: 700; }
+  .choice[aria-pressed="true"] .choice-label { color: var(--lime); }
+  .choice-detail { font-size: var(--s-1); color: var(--muted); }
+
   .copyable { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
   .copyable code {
     font-family: var(--mono); font-size: var(--s-1); word-break: break-all;
@@ -445,6 +470,20 @@
           </p>
           <div class="grid" id="commission-stats"></div>
           <div class="scroll"><table id="ladder-table"></table></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>🧮 Who pays it</h2></div>
+        <div class="panel-body">
+          <p class="note">
+            Our cut is taken on chain, out of the payment, in the same transaction that pays
+            you. So passing it on does not bill your customer separately — it asks them for
+            enough that what reaches you is your full price. Either way we receive the same,
+            so this is your pricing decision and not ours.
+          </p>
+          <div id="fee-payer-options"></div>
+          <p class="note" id="fee-payer-note"></p>
         </div>
       </div>
     </section>
@@ -1087,6 +1126,8 @@
           : 'nothing cheaper is published'),
     ]);
 
+    renderFeePayer(commission.feeBps, commission.feePayer);
+
     const rows = ladderRows(data.ladder || [], commission.feeBps, commission.negotiated);
     fill(el('ladder-table'), [
       h('thead', {}, [h('tr', {}, ['Rate', 'Applies', ''].map((label) => h('th', { text: label })))]),
@@ -1098,6 +1139,56 @@
         ]),
       )),
     ]);
+  }
+
+  /**
+   * The two answers, as buttons that say what they do.
+   *
+   * Rendered as a pair rather than as a checkbox, because "pass the fee on" as a single
+   * toggle leaves the unchecked state unstated — and the unchecked state is the one where
+   * the merchant is paying, which is the more expensive of the two to be in by accident.
+   */
+  function renderFeePayer(feeBps, feePayer) {
+    fill(
+      el('fee-payer-options'),
+      feePayerChoices(feeBps, feePayer || 'merchant').map((choice) =>
+        h('button', {
+          type: 'button',
+          class: 'choice',
+          'aria-pressed': String(choice.current),
+          disabled: choice.current ? '' : null,
+          onclick: () => void setFeePayer(choice.value),
+        }, [
+          h('span', { class: 'choice-label', text: choice.label }),
+          h('span', { class: 'choice-detail', text: choice.detail }),
+        ]),
+      ),
+    );
+    el('fee-payer-note').textContent =
+      'Invoices you have already issued keep the amounts they were created with — a ' +
+      'customer may be looking at one right now.';
+  }
+
+  async function setFeePayer(feePayer) {
+    try {
+      await api('/v1/organizations/' + orgId + '/commission/fee-payer', {
+        method: 'POST',
+        body: JSON.stringify({ feePayer }),
+      });
+      flash(
+        feePayer === 'payer'
+          ? 'New invoices will ask your customer for the commission on top of your price.'
+          : 'New invoices will ask for your price, and the commission comes out of your settlement.',
+        'ok',
+      );
+      cache.commission = await api('/v1/organizations/' + orgId + '/commission');
+      renderCommission();
+      // The overview's bar and stats read the same record, so it would otherwise keep
+      // showing the old answer until the merchant navigated away and back.
+      renderOverview();
+    } catch (problem) {
+      flash('Could not change it: ' + problem.message, 'error');
+    }
   }
 
   // ── copy buttons ──────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import type { FeePayer } from '@avex/core';
 import { and, count, eq, gte, isNull, lt, lte, sql } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
@@ -131,9 +132,17 @@ export class FeePlanService {
   async feeFor(
     organizationId: string,
     chain: string,
-  ): Promise<{ readonly feeDestination: string; readonly feeBps: number } | undefined> {
+  ): Promise<
+    | {
+        readonly feeDestination: string;
+        readonly feeBps: number;
+        /** The merchant's default. An individual invoice may still override it. */
+        readonly feePayer: FeePayer;
+      }
+    | undefined
+  > {
     const [plan] = await this.db
-      .select({ feeBps: feePlans.feeBps })
+      .select({ feeBps: feePlans.feeBps, feePayer: feePlans.feePayer })
       .from(feePlans)
       .where(eq(feePlans.organizationId, organizationId))
       .limit(1);
@@ -145,7 +154,46 @@ export class FeePlanService {
     // Clamped rather than trusted. The column has a check constraint, but this is the
     // value that reaches a constructor argument, and the forwarder reverts above the
     // ceiling — a revert here would mean a funded address we cannot deploy.
-    return { feeDestination, feeBps: Math.min(plan.feeBps, MAX_FEE_BPS) };
+    return {
+      feeDestination,
+      feeBps: Math.min(plan.feeBps, MAX_FEE_BPS),
+      feePayer: plan.feePayer,
+    };
+  }
+
+  /**
+   * Set who this merchant's invoices charge the commission to, by default.
+   *
+   * The merchant's own decision rather than a staff one, which is why this takes a user
+   * and not a staff actor: it changes what their customers are asked to pay, not what we
+   * are paid. Either way our cut is the same.
+   *
+   * Recorded in the audit trail because it changes the amount on every subsequent
+   * invoice, and "why did our prices go up half a per cent last Tuesday" deserves an
+   * answer that is not a guess.
+   */
+  async setFeePayer(
+    organizationId: string,
+    feePayer: FeePayer,
+    userId: string | null,
+  ): Promise<void> {
+    const [updated] = await this.db
+      .update(feePlans)
+      .set({ feePayer })
+      .where(eq(feePlans.organizationId, organizationId))
+      .returning({ id: feePlans.id, previous: feePlans.feePayer });
+    if (!updated) throw new FeePlanError('not_found', 'No fee plan for this merchant.');
+
+    await this.audit.record({
+      organizationId,
+      userId,
+      action: 'fee_plan.fee_payer_changed',
+      targetType: 'fee_plan',
+      targetId: updated.id,
+      // Invoices already issued keep what they were created with — their amounts are
+      // committed — so this only affects future ones.
+      metadata: { from: updated.previous, to: feePayer },
+    });
   }
 
   /**
@@ -328,6 +376,14 @@ export class FeePlanService {
         feeBps: plan.feeBps,
         perThousandUsd: FeePlanService.feeExample(plan.feeBps),
         negotiated: plan.negotiatedFee,
+        /**
+         * Who their invoices charge it to, by default.
+         *
+         * Alongside the rate rather than buried in settings, because the two together are
+         * the answer to "what does this cost me" — a merchant passing the fee on pays
+         * nothing at all, and one absorbing it pays the full 0.5%.
+         */
+        feePayer: plan.feePayer,
         nextTier: nextTierFrom(plan.feeBps, plan.negotiatedFee),
       },
       /**

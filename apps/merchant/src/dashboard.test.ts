@@ -4,6 +4,7 @@ import { describe, test } from 'node:test';
 import {
   commissionLabel,
   commissionParts,
+  feePayerChoices,
   ladderRows,
   keyMode,
   setupSteps,
@@ -289,6 +290,46 @@ describe('the published ladder', () => {
      */
     const rows = ladderRows(LADDER, 45, true);
     assert.ok(rows.every((row) => !row.current));
+  });
+});
+
+describe('who pays the commission', () => {
+  test('the choice is spelled out in what it does to a $100 order', () => {
+    /**
+     * Written as a worked figure rather than as a rule, because the rule reads the wrong
+     * way round. "Your customer pays the fee" sounds like a separate bill; what actually
+     * happens is the invoice asks for more, and only a number says that unambiguously.
+     */
+    const [absorb, pass] = feePayerChoices(50, 'merchant');
+    assert.match(absorb!.detail, /sends \$100 and you receive \$99\.5/);
+    assert.match(pass!.detail, /sends \$100\.5 and you receive \$100/);
+    // And the payer is told, which is the part a merchant needs to know before choosing.
+    assert.match(pass!.detail, /shown to them on the checkout/);
+  });
+
+  test('exactly one option is marked as the current one', () => {
+    const choices = feePayerChoices(50, 'payer');
+    assert.deepEqual(
+      choices.map((choice) => choice.current),
+      [false, true],
+    );
+  });
+
+  test('at a zero commission passing it on is described as a no-op', () => {
+    /**
+     * Otherwise the option promises a surcharge we would not apply. A merchant on a waived
+     * commission who switched this expecting their customers to cover something would find
+     * nothing had changed and no explanation of why.
+     */
+    const [, pass] = feePayerChoices(0, 'merchant');
+    assert.match(pass!.detail, /changes nothing/);
+  });
+
+  test('the rate follows the merchant own rung', () => {
+    // 0.4% of $100 is 40 cents, not 50. A hardcoded example would be wrong for every
+    // merchant who earned their way down the ladder.
+    const [, pass] = feePayerChoices(40, 'merchant');
+    assert.match(pass!.detail, /sends \$100\.4 and you receive \$100/);
   });
 });
 

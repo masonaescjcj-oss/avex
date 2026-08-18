@@ -161,6 +161,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
       checkouts: new CheckoutService(
         db,
         invoiceCreation,
+        feePlans,
         deriver,
         rates,
         audit,
@@ -372,12 +373,11 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     assert.equal(view.payment, null);
   });
 
-  test('the public view never carries the merchant payout address or our fee', async () => {
+  test('the public view never carries the merchant payout address or our collector', async () => {
     /**
-     * The boundary this whole surface turns on. A payer has no business knowing where
-     * the money goes afterwards or what we charge for moving it, and both are on the
-     * invoice row this view is built from — so their absence is a decision, not an
-     * accident of what happened to be selected.
+     * The boundary this whole surface turns on. A payer has no business knowing where the
+     * money goes afterwards, and both addresses are on the invoice row this view is built
+     * from — so their absence is a decision, not an accident of what was selected.
      */
     const assetId = await enableAsset({ symbol: 'USDT' });
     const payout = await ensurePayout('bsc');
@@ -387,8 +387,116 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     const body = (await state(session.id)).body;
     assert.ok(!body.includes(payout), 'the payout address must not be exposed to a payer');
     assert.ok(!body.includes(FEE_COLLECTOR), 'the fee collector must not be exposed');
-    assert.ok(!body.includes('feeBps'), 'the commission must not be exposed');
     assert.ok(!body.includes(orgId), 'the merchant id must not be exposed');
+  });
+
+  test('a merchant-absorbed commission is not shown to the payer', async () => {
+    /**
+     * The default, and the half of the disclosure rule that is about restraint. The
+     * commission comes out of the merchant's settlement, so it is a term between us and
+     * them — telling the payer what a shop pays its processor is neither their business
+     * nor ours to publish.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+    await select(session.id, assetId);
+
+    const invoice = (await state(session.id)).json().payment;
+    assert.equal(invoice.feeBps, 0, 'a fee the payer is not paying reads as no fee to them');
+    assert.equal(invoice.feeIncluded, '0');
+  });
+
+  test('a payer-borne commission is disclosed as its own figure', async () => {
+    /**
+     * The other half. Once the commission has been added to what the payer must send,
+     * showing only the total would make our fee look like the merchant's price — which is
+     * exactly the complaint a surcharge attracts when it is not itemised.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    await feePlans.setFeePayer(orgId, 'payer', null);
+
+    try {
+      const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+      await select(session.id, assetId);
+
+      const invoice = (await state(session.id)).json().payment;
+      assert.equal(invoice.feeBps, 50);
+      assert.ok(BigInt(invoice.feeIncluded) > 0n, 'the payer must be told the amount');
+      // And it is a part of the total, not something extra to send separately.
+      assert.ok(BigInt(invoice.feeIncluded) < BigInt(invoice.amountDue));
+      // Still nothing about where it goes.
+      assert.ok(!(await state(session.id)).body.includes(FEE_COLLECTOR));
+    } finally {
+      await feePlans.setFeePayer(orgId, 'merchant', null);
+    }
+  });
+
+  test('a checkout may override who pays, for that checkout only', async () => {
+    /**
+     * The per-order escape hatch. A merchant who normally passes the fee on still has
+     * orders where they would rather absorb it — a goodwill replacement, a complaint.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+
+    const passedOn = (await createCheckout({ amountFiatMicros: '1000000', feePayer: 'payer' })).json();
+    await select(passedOn.id, assetId);
+    const surcharged = (await state(passedOn.id)).json().payment;
+    assert.equal(surcharged.feeBps, 50);
+    assert.ok(BigInt(surcharged.feeIncluded) > 0n);
+
+    // And the merchant's own default is untouched by it.
+    const absorbed = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+    await select(absorbed.id, assetId);
+    assert.equal((await state(absorbed.id)).json().payment.feeIncluded, '0');
+    assert.ok(BigInt(surcharged.amountDue) > BigInt((await state(absorbed.id)).json().payment.amountDue));
+  });
+
+  test('a checkout that made no choice follows the default at selection time', async () => {
+    /**
+     * Not at creation time, and the difference is the point. A link can sit unopened for
+     * an hour; a merchant who switched in between meant it to apply to the orders still
+     * outstanding, not only to the ones not yet created.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+
+    const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+    await feePlans.setFeePayer(orgId, 'payer', null);
+    try {
+      await select(session.id, assetId);
+      assert.ok(BigInt((await state(session.id)).json().payment.feeIncluded) > 0n);
+    } finally {
+      await feePlans.setFeePayer(orgId, 'merchant', null);
+    }
+  });
+
+  test('the currency list quotes what the payment page will ask for', async () => {
+    /**
+     * A picker that quoted the price and a payment page that then asked for half a per
+     * cent more would look like a bait and switch, and the payer would be right to think
+     * so. Both figures come from the same fee, and this is what pins them together.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    await feePlans.setFeePayer(orgId, 'payer', null);
+
+    try {
+      const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+      const offered = (await app.inject({ method: 'GET', url: `/pay/${session.id}/options` }))
+        .json()
+        .options.find((option: { assetId: string }) => option.assetId === assetId);
+      assert.ok(offered, 'the enabled asset should be on offer');
+      assert.ok(BigInt(offered.feeIncluded) > 0n);
+
+      await select(session.id, assetId);
+      const invoice = (await state(session.id)).json().payment;
+      assert.equal(invoice.amountDue, offered.amount, 'the quoted amount must be the real one');
+    } finally {
+      await feePlans.setFeePayer(orgId, 'merchant', null);
+    }
   });
 
   test('an unknown session is a 404, whether guessed or mistyped', async () => {

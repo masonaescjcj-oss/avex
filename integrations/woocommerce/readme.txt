@@ -20,6 +20,7 @@ can only ever pay the address you configured.
 * USDT and USDC on TON, TRON, BNB Chain, Ethereum, Polygon and Solana
 * Native TON, ETH, BNB, SOL, TRX and POL
 * 0.5% commission and no monthly fee, taken out of the payment on chain
+* Absorb that commission or pass it to the customer — your choice, set in AVEX
 * A test mode that needs no faucet and no testnet
 
 == Installation ==
@@ -48,7 +49,25 @@ Configure an `ak_test_` key. Orders placed with it create test invoices, whose d
 addresses are not valid on any chain — nothing can be sent to them by accident. Pay them
 from the AVEX API with `simulate-payment`, and your webhook handler runs exactly as it
 would for a real payment. Test volume never appears in your reports and never counts
-towards your bill.
+towards your commission tier.
+
+= What does it cost? =
+
+0.5% of what you process, and nothing else — no monthly fee, no minimum, and nothing to
+pay in a month you took no orders. It is deducted from the payment on chain, in the same
+transaction that settles to your wallet, so there is never an invoice from AVEX to pay.
+Above $50,000 a month the rate is 0.45%, above $250,000 it is 0.4%.
+
+= Can I charge the commission to the customer instead? =
+
+Yes, in AVEX under Commission → Who pays it. On a $100 order, absorbing it means the
+customer sends $100 and you receive $99.50; passing it on means they send $100.50 and you
+receive $100. Either way AVEX receives the same, so it is your pricing decision. When you
+pass it on, the checkout page shows the customer the fee as its own line — a customer
+charged more than your price and not told why has been overcharged as far as they can tell.
+
+The setting lives in AVEX rather than in this plugin on purpose: one place to set it means
+the amount your customer is shown and the amount your order records cannot disagree.
 
 = Can a customer mark their own order paid? =
 

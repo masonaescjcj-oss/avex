@@ -174,6 +174,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       checkouts: new CheckoutService(
         db,
         invoiceCreation,
+        feePlans,
         deriver,
         { requireRate: (symbol) => prices.requireRate(symbol) },
         audit,
@@ -463,6 +464,136 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       .update(schema.feePlans)
       .set({ negotiatedFee: false })
       .where(eq(schema.feePlans.organizationId, orgId));
+  });
+
+  // ── who pays the commission ────────────────────────────────────────────────
+  //
+  // The forwarder always takes its cut out of what arrives, so "the payer pays it"
+  // cannot mean a second transfer. It means the invoice asks for more, so that what is
+  // left after the split is the price the merchant quoted. Both directions of getting
+  // that wrong are silent losses to a real party, which is what these pin.
+
+  test('by default the merchant absorbs the commission and the payer sends the price', async () => {
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+
+    const invoice = (await open({ assetId, amountFiatMicros: '20000000' })).json();
+    assert.equal(invoice.feePayer, 'merchant');
+    // The merchant is short by the commission, which is the whole meaning of the default.
+    assert.equal(BigInt(invoice.amountNet), BigInt(invoice.amountDue) - BigInt(invoice.amountDue) * 50n / 10_000n);
+    assert.ok(BigInt(invoice.amountNet) < BigInt(invoice.amountDue));
+  });
+
+  test('a payer-borne commission grosses the invoice up so the merchant is whole', async () => {
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+
+    const absorbed = (await open({ assetId, amountFiatMicros: '20000000' })).json();
+    const passedOn = (await open({
+      assetId,
+      amountFiatMicros: '20000000',
+      feePayer: 'payer',
+    })).json();
+
+    assert.equal(passedOn.feePayer, 'payer');
+    // The payer is asked for more...
+    assert.ok(BigInt(passedOn.amountDue) > BigInt(absorbed.amountDue));
+    // ...and what reaches the merchant is the price they asked for, not less.
+    assert.ok(BigInt(passedOn.amountNet) >= BigInt(absorbed.amountDue));
+    // The surcharge is the commission and not a penny more: one unit less would leave
+    // the merchant short.
+    assert.ok(BigInt(passedOn.amountDue) - 1n - (BigInt(passedOn.amountDue) - 1n) * 50n / 10_000n < BigInt(absorbed.amountDue));
+  });
+
+  test('an invoice may override the merchant default in either direction', async () => {
+    /**
+     * Per invoice as well as per merchant, because a merchant who normally passes the fee
+     * on still has orders where they would rather absorb it — a goodwill replacement, a
+     * complaint, a customer they want to keep.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+    await feePlans.setFeePayer(orgId, 'payer', null);
+
+    try {
+      const byDefault = (await open({ assetId, amountFiatMicros: '20000000' })).json();
+      assert.equal(byDefault.feePayer, 'payer');
+
+      const goodwill = (await open({
+        assetId,
+        amountFiatMicros: '20000000',
+        feePayer: 'merchant',
+      })).json();
+      assert.equal(goodwill.feePayer, 'merchant');
+      assert.ok(BigInt(goodwill.amountDue) < BigInt(byDefault.amountDue));
+    } finally {
+      await feePlans.setFeePayer(orgId, 'merchant', null);
+    }
+  });
+
+  test('who bears the commission is snapshotted, not read back later', async () => {
+    /**
+     * The gross-up is baked into `amount_due` and cannot be recovered from it: the same
+     * 20.1 USDT could be a payer-paid 20 USDT invoice or a merchant-paid 20.1 one. So
+     * changing the default afterwards must not change how an existing invoice reads —
+     * otherwise nothing could explain the figure to a merchant disputing it.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+    const reference = `snapshot-payer-${unique}`;
+
+    const before = (await open({ assetId, amountFiatMicros: '20000000', reference, feePayer: 'payer' })).json();
+    await feePlans.setFeePayer(orgId, 'merchant', null);
+
+    const reread = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/invoices/${before.id}`,
+      headers: auth(),
+    });
+    assert.equal(reread.json().feePayer, 'payer');
+    assert.equal(reread.json().amountDue, before.amountDue);
+  });
+
+  test('passing on a commission that does not exist changes nothing', async () => {
+    /**
+     * `ton` has a deposit wallet in this deployment but no fee collector, so there is no
+     * commission on it. A merchant who passes fees on must not be surcharging their
+     * customers for a fee we are not charging — that would be us inventing a fee for them
+     * to keep.
+     */
+    const assetId = await enableAsset({ chain: 'ton', symbol: 'TON', decimals: 9 });
+    await addPayoutAddress('ton');
+
+    const first = await open({ assetId, amountFiatMicros: '20000000' });
+    assert.equal(first.statusCode, 201, first.body);
+    const absorbed = first.json();
+    const second = await open({ assetId, amountFiatMicros: '20000000', feePayer: 'payer' });
+    assert.equal(second.statusCode, 201, second.body);
+    const passedOn = second.json();
+
+    assert.equal(passedOn.feeBps, 0);
+    assert.equal(passedOn.amountDue, absorbed.amountDue);
+    // And it records `merchant`, because nothing was passed on to anyone.
+    assert.equal(passedOn.feePayer, 'merchant');
+  });
+
+  test('changing who pays is written to the audit trail', async () => {
+    // It changes the amount on every subsequent invoice, and "why did our prices go up
+    // half a per cent last Tuesday" deserves an answer that is not a guess.
+    await feePlans.setFeePayer(orgId, 'payer', null);
+    try {
+      const log = await app.inject({
+        method: 'GET',
+        url: `/v1/organizations/${orgId}/audit-log?limit=50`,
+        headers: auth(),
+      });
+      const rows = log.json().data as { action: string; metadata?: Record<string, unknown> }[];
+      const entry = rows.find((row) => row.action === 'fee_plan.fee_payer_changed');
+      assert.ok(entry, 'the change must be in the merchant audit log');
+      assert.equal(entry!.metadata?.to, 'payer');
+    } finally {
+      await feePlans.setFeePayer(orgId, 'merchant', null);
+    }
   });
 
   test('a chain with no fee collector charges nothing', async () => {

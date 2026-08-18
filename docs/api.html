@@ -524,7 +524,9 @@
         minimum, no setup cost, and no charge for a month you took no payments in. The
         commission comes out of the payment on chain as it is swept to you — 0.45% above
         $50,000 a month, 0.4% above $250,000 — so there is never an invoice from us to pay,
-        and nothing about your account with us can stop your checkout working.
+        and nothing about your account with us can stop your checkout working. You choose
+        whether you absorb it or your customer does; see
+        <a href="#fee-payer">who pays the commission</a>.
       </p>
       <p class="note">
         Everything below is the same API in test and live mode. Start with a test key,
@@ -535,6 +537,7 @@
         <a href="#auth">Authentication</a>
         <a href="#modes">Test and live</a>
         <a href="#money">Amounts</a>
+        <a href="#fee-payer">Who pays the fee</a>
         <a href="#checkouts">Checkouts</a>
         <a href="#invoices">Invoices</a>
         <a href="#stars">Telegram Stars</a>
@@ -624,6 +627,62 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
   </section>
 
   <!-- ── checkouts ────────────────────────────────────────────────────── -->
+  <!-- ── who pays the commission ──────────────────────────────────────── -->
+  <section class="panel" id="fee-payer">
+    <div class="panel-head"><h2>🧮 Who pays the commission</h2></div>
+    <div class="body">
+      <p>
+        Our cut is taken on chain, by the contract that sweeps the payment to you: it sends
+        us the commission and you the rest, in one transaction. There is no second transfer
+        available, so "the customer pays the fee" cannot mean one. It means the invoice asks
+        for more, so that what is left after the split is the price you quoted.
+      </p>
+      <p>
+        Set a default with <code>POST /v1/organizations/:orgId/commission/fee-payer</code>,
+        and override it for one order by sending <code>feePayer</code> when you create an
+        invoice or a checkout. A checkout that sends nothing follows your default at the
+        moment the customer picks a currency, not the moment you created the link — a link
+        can sit unopened for an hour, and a change you made in between was meant to apply.
+      </p>
+      <div class="codes">
+        <div class="code-row"><b>merchant</b><code>default</code><span>The customer sends your price. You receive it less the commission.</span></div>
+        <div class="code-row"><b>payer</b><code>opt in</code><span>The customer sends your price plus the commission. You receive your price.</span></div>
+      </div>
+      <pre class="code"><span class="c"># $20.00 of USDT, at 0.5%, with the customer paying the fee</span>
+{
+  <span class="k">"assetId"</span>: <span class="s">"…"</span>,
+  <span class="k">"amountFiatMicros"</span>: <span class="s">"20000000"</span>,
+  <span class="k">"feePayer"</span>: <span class="s">"payer"</span>
+}
+
+<span class="c"># 201 Created — amountDue is grossed up, amountNet is what reaches you</span>
+{
+  <span class="k">"amountDue"</span>: <span class="s">"20100502512562814071"</span>,
+  <span class="k">"amountNet"</span>: <span class="s">"20000000000000000000"</span>,
+  <span class="k">"feeBps"</span>: <span class="s">50</span>,
+  <span class="k">"feePayer"</span>: <span class="s">"payer"</span>
+}</pre>
+      <p class="note">
+        <strong>The customer is told.</strong> On the hosted checkout the commission appears
+        as its own line, because a customer charged more than your price and not told why has
+        been overcharged as far as they can tell. If your own payment page renders the invoice
+        yourself, show it the same way — <code>amountDue</code> and <code>amountNet</code>
+        give you the figures.
+      </p>
+      <p class="note">
+        Two things this does not change. Our cut is the same either way, so this is your
+        pricing decision and not ours. And it is snapshotted on the invoice: changing your
+        default never moves the amount on an invoice already issued, because a payer may
+        already be looking at it.
+      </p>
+      <p class="note">
+        On an asset we take no commission on — Telegram Stars, or a chain we hold no
+        collector address for — <code>feePayer: "payer"</code> changes nothing at all.
+        There is no fee to pass on, and we will not invent one for you to keep.
+      </p>
+    </div>
+  </section>
+
   <section class="panel" id="checkouts">
     <div class="panel-head"><h2>🧾 Checkouts — the shortest path</h2></div>
     <div class="body">
@@ -1005,6 +1064,15 @@ curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices/
           There is no monthly fee and no minimum: 0.5% of what you process, 0.45% above
           $50,000 a month, 0.4% above $250,000. The rate is reviewed when a month closes
           and moves in both directions.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/commission/fee-payer">
+        <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/commission/fee-payer</span></div>
+        <p>
+          <code>{ "feePayer": "merchant" | "payer" }</code>. Your default for new invoices;
+          see <a href="#fee-payer">who pays the commission</a>. Invoices already issued keep
+          the amounts they were created with.
         </p>
       </div>
 

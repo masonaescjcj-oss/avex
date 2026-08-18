@@ -1,4 +1,4 @@
-import { SUPPORTED_CHAINS } from '@avex/core';
+import { SUPPORTED_CHAINS, amountAfterFee } from '@avex/core';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
@@ -57,6 +57,13 @@ const createInvoiceBody = z
      * key's own and cannot be overridden from the body. See `resolveMode`.
      */
     mode: z.enum(['test', 'live']).optional(),
+    /**
+     * Who pays the commission on this invoice. Absent means the merchant's default.
+     *
+     * `payer` grosses the amount up so the split leaves the merchant the price they
+     * asked for. It is disclosed on the hosted checkout as its own line.
+     */
+    feePayer: z.enum(['merchant', 'payer']).optional(),
   })
   .refine(
     (value) => (value.amountFiatMicros === undefined) !== (value.amountToken === undefined),
@@ -69,6 +76,11 @@ const createInvoiceBody = z
  * `feeBps` is included because it is the number a merchant is most likely to want to
  * check, and because the deposit address commits to it — so this is the value that
  * settlement will use, not a rate that might change before then.
+ *
+ * `amountNet` is returned rather than left to be worked out. It is derivable from
+ * `amountDue` and `feeBps`, but a merchant reconciling a settlement against an invoice
+ * needs it constantly, and every integration deriving it themselves is another place the
+ * rounding could be done the wrong way round.
  */
 function serialiseInvoice(invoice: {
   id: string;
@@ -81,6 +93,7 @@ function serialiseInvoice(invoice: {
   depositAddress: string;
   memo: string | null;
   feeBps: number;
+  feePayer: 'merchant' | 'payer';
   toleranceBps: number;
   createdAt: Date;
   expiresAt: Date;
@@ -103,6 +116,9 @@ function serialiseInvoice(invoice: {
     depositAddress: invoice.depositAddress,
     memo: invoice.memo,
     feeBps: invoice.feeBps,
+    feePayer: invoice.feePayer,
+    /** What reaches the merchant when `amountDue` arrives, after the commission. */
+    amountNet: amountAfterFee(BigInt(invoice.amountDue), invoice.feeBps).toString(),
     toleranceBps: invoice.toleranceBps,
     createdAt: invoice.createdAt.toISOString(),
     expiresAt: invoice.expiresAt.toISOString(),
@@ -176,6 +192,7 @@ export function registerMerchantRoutes(app: FastifyInstance, context: AppContext
         amountToken: body.amountToken,
         ttlMs: body.ttlMs,
         mode: resolveMode(granted.principal, body.mode),
+        feePayer: body.feePayer,
       },
       {
         userId: granted.principal.kind === 'session' ? granted.principal.session.userId : null,
@@ -322,6 +339,35 @@ export function registerMerchantRoutes(app: FastifyInstance, context: AppContext
     requirePermission(granted, 'settings:read');
 
     return reply.send(await context.feePlans.forOrganization(granted.organizationId));
+  });
+
+  app.post('/v1/organizations/:orgId/commission/fee-payer', async (request, reply) => {
+    const body = z.object({ feePayer: z.enum(['merchant', 'payer']) }).parse(request.body);
+    const granted = await access(request);
+    /**
+     * `settings:write`, not a payout-grade permission.
+     *
+     * This changes what the merchant's customers are asked to pay, not where any money
+     * goes — our cut is the same either way and the destination is unchanged. So it does
+     * not need the scheduled-change protection a payout address gets.
+     */
+    requirePermission(granted, 'settings:write');
+
+    await context.feePlans.setFeePayer(
+      granted.organizationId,
+      body.feePayer,
+      granted.principal.kind === 'session' ? granted.principal.session.userId : null,
+    );
+    return reply.send({
+      status: 'updated',
+      feePayer: body.feePayer,
+      message:
+        body.feePayer === 'payer'
+          ? 'New invoices will ask for the commission on top of your price, shown to the ' +
+            'payer as its own line. Invoices already issued keep their amounts.'
+          : 'New invoices will ask for your price, and the commission comes out of the ' +
+            'settlement. Invoices already issued keep their amounts.',
+    });
   });
 
   // ── webhooks ──────────────────────────────────────────────────────────────

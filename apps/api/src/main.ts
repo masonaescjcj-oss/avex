@@ -200,6 +200,7 @@ async function main(): Promise<void> {
     checkouts: new CheckoutService(
       db,
       invoiceCreation,
+      feePlans,
       deriver,
       { requireRate: (symbol) => prices.requireRate(symbol) },
       audit,

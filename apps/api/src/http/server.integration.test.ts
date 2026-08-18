@@ -110,6 +110,7 @@ function invoiceServices(
     checkouts: new CheckoutService(
       db,
       invoiceCreation,
+      feePlans,
       deriver,
       prices as never,
       audit,

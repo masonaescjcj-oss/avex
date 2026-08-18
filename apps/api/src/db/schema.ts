@@ -342,11 +342,23 @@ export const pendingChanges = pgTable(
  *
  * Everything that follows from that is about keeping the two apart. A test invoice gets
  * no real deposit address, is never settled, and is excluded from every figure that
- * decides money: the merchant's volume report, the billing assessment, and the free
- * tier. A merchant able to inflate or deflate their assessed volume with test data
- * would be able to choose their own bill.
+ * decides money: the merchant's volume report and the commission assessment. A merchant
+ * able to inflate their assessed volume with test data would be able to choose their own
+ * commission tier.
  */
 export const objectModeEnum = pgEnum('object_mode', ['test', 'live']);
+
+/**
+ * Who the commission is charged to.
+ *
+ * The forwarder always takes its cut out of what arrives, so this is not a choice about
+ * how the money moves — it is a choice about what the invoice asks for. `merchant` asks
+ * for the price and settles less the commission. `payer` asks for enough that the split
+ * leaves the merchant the full price.
+ *
+ * `merchant` is the default because it is the option that cannot surprise a payer.
+ */
+export const feePayerEnum = pgEnum('fee_payer', ['merchant', 'payer']);
 
 export const pricingModeEnum = pgEnum('pricing_mode', ['fiat', 'token', 'fixed_rate']);
 
@@ -645,6 +657,16 @@ export const invoices = pgTable(
     feeBps: integer('fee_bps').notNull().default(0),
     /** Null whenever `fee_bps` is zero: there is nowhere for nothing to go. */
     feeDestination: text('fee_destination'),
+    /**
+     * Who the commission was charged to, snapshotted for the same reason as the rate.
+     *
+     * Load-bearing rather than informational: when this is `payer`, `amount_due` was
+     * grossed up so the split leaves the merchant the price they asked for. The gross-up
+     * is baked into `amount_due` and cannot be recovered from it — the same 20.1 USDT
+     * could be a payer-paid $20 invoice or a merchant-paid $20.1 one — so without this
+     * column nothing could later explain the figure to a merchant disputing it.
+     */
+    feePayer: feePayerEnum('fee_payer').notNull().default('merchant'),
 
     toleranceBps: integer('tolerance_bps').notNull().default(50),
 
@@ -1080,6 +1102,16 @@ export const feePlans = pgTable(
     negotiatedFee: boolean('negotiated_fee').notNull().default(false),
 
     /**
+     * This merchant's default answer to who bears the commission.
+     *
+     * A default rather than a rule, because a merchant who normally passes the fee on
+     * still has orders where they would rather absorb it — a refund top-up, a complaint,
+     * a customer they want to keep. So each invoice may override it, and each invoice
+     * records what it used.
+     */
+    feePayer: feePayerEnum('fee_payer').notNull().default('merchant'),
+
+    /**
      * The volume period currently being measured.
      *
      * A closed period rather than a rolling window, because "you processed $61,000 in
@@ -1144,6 +1176,17 @@ export const checkoutSessions = pgTable(
     status: checkoutSessionStatusEnum('status').notNull().default('open'),
     /** Test or live, from the credential. A test session opens test invoices only. */
     mode: objectModeEnum('mode').notNull().default('live'),
+
+    /**
+     * Who pays the commission on the invoice this session opens. Null means the
+     * merchant's current default.
+     *
+     * Null rather than a copy of the default, and the difference matters: a session can
+     * sit unopened for an hour, and a merchant who changed their mind in between should
+     * have the invoice follow the new answer. Only an explicit per-checkout choice — a
+     * goodwill order, a complaint — should survive that.
+     */
+    feePayer: feePayerEnum('fee_payer'),
 
     /**
      * The invoice for the currency the payer chose. Null while still open.

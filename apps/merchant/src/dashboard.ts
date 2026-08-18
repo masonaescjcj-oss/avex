@@ -278,6 +278,49 @@ export function ladderRows(
   }));
 }
 
+/** How the two answers to "who pays the commission" read to a merchant. */
+export interface FeePayerChoice {
+  readonly value: 'merchant' | 'payer';
+  readonly label: string;
+  readonly detail: string;
+  readonly current: boolean;
+}
+
+/**
+ * The choice, spelled out in what it does to a $100 order.
+ *
+ * Written as an example rather than as a rule because the rule is easy to read the wrong
+ * way round. "The customer pays the fee" sounds like the customer is billed separately;
+ * what actually happens is the invoice asks for more. A worked figure removes the
+ * ambiguity in a way no phrasing of the abstraction does.
+ */
+export function feePayerChoices(feeBps: number, current: 'merchant' | 'payer'): readonly FeePayerChoice[] {
+  const onHundred = (100 * feeBps) / 10_000;
+  const fee = `$${trimZeros(onHundred.toFixed(2))}`;
+  const gross = `$${trimZeros((100 + onHundred).toFixed(2))}`;
+
+  return [
+    {
+      value: 'merchant',
+      label: 'You absorb it',
+      detail: `A $100 order: your customer sends $100 and you receive $${trimZeros(
+        (100 - onHundred).toFixed(2),
+      )}.`,
+      current: current === 'merchant',
+    },
+    {
+      value: 'payer',
+      label: 'Your customer pays it',
+      detail:
+        feeBps === 0
+          ? 'Nothing to pass on while your commission is zero, so this changes nothing.'
+          : `A $100 order: your customer sends ${gross} and you receive $100. The ${fee} is ` +
+            'shown to them on the checkout as its own line.',
+      current: current === 'payer',
+    },
+  ];
+}
+
 /**
  * A commission in basis points, as the money it actually costs.
  *

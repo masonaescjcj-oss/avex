@@ -607,6 +607,9 @@
     padding: 0.5rem 0;
     font-size: var(--s-1);
   }
+  /* Author `display` beats the user-agent `[hidden]` rule, so a row that sets one has to
+     say so itself — otherwise `hidden` renders as a visible empty row. */
+  .summary-row[hidden] { display: none; }
   .summary-row + .summary-row { border-top: 1px solid var(--line); }
   .summary-row dt { color: var(--muted); margin: 0; }
   .summary-row dd {
@@ -803,6 +806,14 @@
             <div class="summary-row"><dt>Network</dt><dd id="summary-network">—</dd></div>
             <div class="summary-row"><dt>Settlement cost</dt><dd id="summary-cost">—</dd></div>
             <div class="summary-row"><dt>Rate</dt><dd id="summary-rate">—</dd></div>
+            <!--
+              Shown only when the merchant has chosen to pass our commission on. A payer
+              charged more than the merchant's price and not told why has been overcharged
+              as far as they can tell, so this line is a requirement rather than a detail.
+              Hidden entirely otherwise: a "Service fee — none" row invites the question it
+              is answering.
+            -->
+            <div class="summary-row" id="summary-fee-row" hidden><dt id="summary-fee-label">Service fee</dt><dd id="summary-fee">—</dd></div>
             <div class="summary-row total"><dt>You send</dt><dd id="summary-total">—</dd></div>
           </dl>
         </div>
@@ -1103,6 +1114,14 @@
         decimals: network.decimals,
         amount: formatUnits(network.amount, network.decimals),
         rateUsd: network.rateUsd,
+        /**
+         * Our commission, as a token amount, and only when the payer is the one paying it.
+         *
+         * Per network rather than per currency: a chain we hold no collector address for
+         * carries no commission, so two rows under one coin can legitimately differ.
+         */
+        feeIncluded: network.feeIncluded ?? '0',
+        feeBps: network.feeBps ?? 0,
         address: null,
       }));
     }
@@ -1375,6 +1394,8 @@
         el(id).textContent = '—';
       }
       el('summary-amount').textContent = '$' + INVOICE_USD.toFixed(2);
+      // Nothing is chosen, so there is no chain and therefore no known commission.
+      el('summary-fee-row').hidden = true;
       // The rate is a property of the currency, so it is knowable as soon as one is
       // picked — and must not read '1 USDT = $1.00' before anything is.
       el('summary-rate').textContent =
@@ -1420,6 +1441,7 @@
         ? '$0.0000'
         : '$' + selected.cost.toFixed(4);
     el('summary-amount').textContent = '$' + INVOICE_USD.toFixed(2);
+    renderFeeLine();
     /**
      * The rate, from the API in live mode and from the demo catalogue otherwise.
      *
@@ -1468,12 +1490,43 @@
       memo: Boolean(payment.memo),
       memoValue: payment.memo,
       amount: formatUnits(payment.amountDue, payment.decimals ?? selected.decimals ?? 0),
+      // Taken from the invoice rather than left as the option's estimate. The invoice is
+      // what the payer is being held to, and its figure is the one a dispute would cite.
+      feeIncluded: payment.feeIncluded ?? '0',
+      feeBps: payment.feeBps ?? 0,
       invoiceId: payment.invoiceId,
       toleranceBps: payment.toleranceBps,
     };
     liveExpiresAt = Date.parse(payment.expiresAt);
     renderSelection();
     applyInvoiceStatus(payment.status, payment.amountPaid);
+  }
+
+  /**
+   * The commission line, when the merchant passes it on.
+   *
+   * Deliberately not a percentage on its own. "0.5%" leaves the payer to multiply; the
+   * token figure is what they can check against the total they are being asked for, and
+   * the percentage explains where it came from.
+   */
+  function renderFeeLine() {
+    const row = el('summary-fee-row');
+    const included = selected && selected.feeIncluded ? String(selected.feeIncluded) : '0';
+    if (!selected || included === '0' || !selected.feeBps) {
+      row.hidden = true;
+      return;
+    }
+
+    row.hidden = false;
+    el('summary-fee-label').textContent =
+      'Service fee (' + trimNumber(selected.feeBps / 100) + '%)';
+    el('summary-fee').textContent =
+      formatUnits(included, selected.decimals ?? 0) + ' ' + selected.asset;
+  }
+
+  /** 0.5 rather than 0.50, and 1 rather than 1.00. */
+  function trimNumber(value) {
+    return value.toFixed(2).replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
   }
 
   /** Map the API's invoice status onto the page's own state machine. */

@@ -51,6 +51,10 @@ const OPTIONS = [
     decimals: 18,
     amount: '20100502512562814071',
     rateUsd: '995000000000000000',
+    // The default: the merchant absorbs the commission, so there is nothing here for the
+    // payer to be told about.
+    feeIncluded: '0',
+    feeBps: 0,
     available: true,
     unavailableReason: null,
   },
@@ -62,6 +66,8 @@ const OPTIONS = [
     decimals: 6,
     amount: '20100503',
     rateUsd: '995000000000000000',
+    feeIncluded: '0',
+    feeBps: 0,
     available: true,
     unavailableReason: null,
   },
@@ -175,6 +181,8 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
             memo: ton ? 'AVEX-0123456789AB' : null,
             status: 'pending',
             toleranceBps: 50,
+            feeIncluded: behaviour.feeIncluded ?? '0',
+            feeBps: behaviour.feeBps ?? 0,
             expiresAt: new Date(Date.now() + 900_000).toISOString(),
           },
         }),
@@ -235,6 +243,88 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
 
     const networks = await list(page, '#networks .net-name');
     assert.deepEqual([...networks].sort(), ['BNB Chain', 'TON']);
+    await context.close();
+  });
+
+  test('a commission the merchant absorbs is not shown to the payer', async () => {
+    /**
+     * The default, and the half of this that is about restraint. The commission comes out
+     * of the merchant's settlement, so what a shop pays its processor is a term between
+     * us and them — and a "Service fee — none" row invites the question it is answering.
+     */
+    const { page, context } = await open();
+    await page.click('#currencies .coin:has-text("USDT")');
+    await page.click('#networks .net-row:has-text("BNB Chain")');
+
+    assert.equal(await shown(page, '#summary-fee-row'), false);
+    await context.close();
+  });
+
+  test('a commission the payer bears is itemised in the summary', async () => {
+    /**
+     * The other half. Once our fee has been added to what the payer must send, showing
+     * only the total would make it look like the merchant's price — which is exactly the
+     * complaint a surcharge attracts when it is not itemised.
+     */
+    const { page, context } = await open({
+      options: [
+        { ...OPTIONS[0], amount: '20201005025125628140', feeIncluded: '100502512562814070', feeBps: 50 },
+        OPTIONS[1],
+      ],
+    });
+    await page.click('#currencies .coin:has-text("USDT")');
+    await page.click('#networks .net-row:has-text("BNB Chain")');
+
+    assert.equal(await shown(page, '#summary-fee-row'), true);
+    // The percentage explains where the figure came from; the figure is what the payer
+    // can check against the total. Neither alone is enough.
+    assert.match(await text(page, '#summary-fee-label'), /0\.5%/);
+    assert.match(await text(page, '#summary-fee'), /^0\.10050251256281407 USDT$/);
+    await context.close();
+  });
+
+  test('the itemised fee comes from the invoice once one exists', async () => {
+    /**
+     * The options list is an estimate against a live rate; the invoice is what the payer
+     * is actually held to. If the two ever disagree the invoice wins, because its figure
+     * is the one a dispute would cite.
+     */
+    const { page, context } = await open({
+      options: [
+        { ...OPTIONS[0], amount: '20201005025125628140', feeIncluded: '1', feeBps: 50 },
+        OPTIONS[1],
+      ],
+      feeIncluded: '100502512562814070',
+      feeBps: 50,
+    });
+    await page.click('#currencies .coin:has-text("USDT")');
+    await page.click('#networks .net-row:has-text("BNB Chain")');
+    await page.click('#to-pay');
+    await page.waitForFunction(
+      () => document.getElementById('address')?.textContent?.startsWith('0x'),
+      { timeout: 5000 },
+    );
+
+    assert.match(await text(page, '#summary-fee'), /^0\.10050251256281407 USDT$/);
+    await context.close();
+  });
+
+  test('a chain with no commission shows no fee line even when another does', async () => {
+    /**
+     * Per network, not per currency. We hold no collector address for every chain, so two
+     * rows under one coin can legitimately differ — and quoting the same surcharge on both
+     * would be charging the payer for a fee we are not taking.
+     */
+    const { page, context } = await open({
+      options: [
+        { ...OPTIONS[0], amount: '20201005025125628140', feeIncluded: '100502512562814070', feeBps: 50 },
+        OPTIONS[1],
+      ],
+    });
+    await page.click('#currencies .coin:has-text("USDT")');
+    await page.click('#networks .net-row:has-text("TON")');
+
+    assert.equal(await shown(page, '#summary-fee-row'), false);
     await context.close();
   });
 

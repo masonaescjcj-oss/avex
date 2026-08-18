@@ -21,8 +21,9 @@ import type { AppContext } from '../server.js';
  * written against a specific question: what may a stranger holding this link learn,
  * and what may they change? They may read the amount, the currencies on offer and the
  * address once chosen. They may choose a currency. They may not learn the merchant's
- * payout address, their commission, their other orders, or anything about an id they
- * guessed rather than were given.
+ * payout address, their other orders, or anything about an id they guessed rather than
+ * were given. They may learn our commission only when they are the ones paying it, which
+ * is a disclosure requirement rather than a leak — see `publicInvoice`.
  */
 
 const orgParams = z.object({ orgId: z.string().uuid() });
@@ -39,6 +40,12 @@ const createBody = z.object({
   ttlMs: z.coerce.number().int().min(60_000).max(24 * 60 * 60 * 1000).optional(),
   /** Honoured for a session only; an API key's own mode always wins. */
   mode: z.enum(['test', 'live']).optional(),
+  /**
+   * Who pays the commission on this checkout. Absent means the merchant's default at the
+   * moment the payer picks a currency, which is deliberately not the moment this is
+   * created — a session can sit open for an hour.
+   */
+  feePayer: z.enum(['merchant', 'payer']).optional(),
 });
 
 export function registerCheckoutRoutes(app: FastifyInstance, context: AppContext): void {
@@ -63,6 +70,7 @@ export function registerCheckoutRoutes(app: FastifyInstance, context: AppContext
         cancelUrl: body.cancelUrl,
         ttlMs: body.ttlMs,
         mode: resolveMode(granted.principal, body.mode),
+        feePayer: body.feePayer,
       },
       {
         userId: granted.principal.kind === 'session' ? granted.principal.session.userId : null,
