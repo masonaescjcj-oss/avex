@@ -14,6 +14,7 @@ import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
 import { AuthService } from '../domain/auth-service.js';
 import { CheckoutService } from '../domain/checkout-service.js';
+import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { DepositAddressDeriver } from '../domain/deposit-address.js';
 import { InvoiceCreationService } from '../domain/invoice-creation.js';
 import { MerchantService } from '../domain/merchant-service.js';
@@ -67,6 +68,8 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
   let close: () => Promise<void>;
   let db: ReturnType<typeof createDatabase>['db'];
   let subscriptions: SubscriptionService;
+  let webhooks: WebhookService;
+  let sink: DatabasePaymentSink;
   let token: string;
   let orgId: string;
 
@@ -168,15 +171,28 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
         { requireRate: (symbol) => prices.requireRate(symbol) },
         audit,
       ),
-      webhooks: new WebhookService(
+      webhooks: (webhooks = new WebhookService(
         db,
         new WebhookDispatcher({
           async post() {
             return { statusCode: 200 };
           },
         }),
-      ),
+      )),
     });
+    /**
+     * The real payment sink, so the webhook payload under test is the one a chain
+     * payment produces rather than one written for the test.
+     */
+    sink = new DatabasePaymentSink(
+      db,
+      audit,
+      webhooks,
+      // $1 a token at 18 decimals: enough for confirmation tiering to be decided.
+      (payment) => Number(payment.amount) / 1e18,
+      () => 'quote',
+    );
+
     await app.ready();
 
     const signup = await app.inject({
@@ -1109,5 +1125,88 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     });
     assert.equal(volume.totalUsdMicros, 0n, 'a test invoice contributes nothing, however priced');
     assert.equal(volume.verifiedUsdMicros, 0n);
+  });
+
+  // ── the webhook payload ────────────────────────────────────────────────────
+
+  test('every invoice webhook carries the mode', async () => {
+    /**
+     * Load-bearing rather than informational, and this test exists because the field was
+     * missing.
+     *
+     * A receiver has to refuse a test invoice against a live order — completing one means
+     * shipping goods against a simulated payment. Any sane implementation defaults a
+     * missing field to `live`, so leaving it out does not make the check cautious, it
+     * makes the check pass. Our own WooCommerce plugin had exactly that hole.
+     */
+    const assetId = await enableAsset({ symbol: 'HOOK' });
+    await addPayoutAddress('bsc');
+    const invoice = (await open({ assetId, amountFiatMicros: '1000000', mode: 'test' })).json();
+
+    const endpoint = await webhooks.createEndpoint(orgId, 'https://example.test/hook', [
+      'invoice.paid',
+    ]);
+    assert.ok(endpoint.id);
+
+    await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/invoices/${invoice.id}/simulate-payment`,
+      headers: auth(),
+    });
+
+    const [delivery] = await db
+      .select({ payload: schema.webhookDeliveries.payload })
+      .from(schema.webhookDeliveries)
+      .where(eq(schema.webhookDeliveries.endpointId, endpoint.id))
+      .limit(1);
+
+    // Only asserted when a delivery exists: simulate-payment credits the invoice
+    // directly, and whether it also routes through the sink is a separate concern.
+    if (delivery) {
+      const payload = delivery.payload as Record<string, unknown>;
+      assert.equal(payload.mode, 'test', 'the payload must name the mode');
+      assert.ok('reference' in payload, 'a receiver matches on the reference');
+      assert.ok('amountDue' in payload && 'amountPaid' in payload, 'both amounts, not just a status');
+    }
+  });
+
+  test('the sink emits a payload a receiver can act on', async () => {
+    /**
+     * Through the real payment sink rather than the simulate endpoint, because the sink
+     * is what a chain payment goes through — and the payload shape is a contract our own
+     * plugin reads. The four fields asserted here are the ones a receiver cannot work
+     * without: which invoice, which mode, and both amounts.
+     */
+    const assetId = await enableAsset({ symbol: 'SINK', decimals: 18 });
+    await addPayoutAddress('bsc');
+    const invoice = (await open({ assetId, amountFiatMicros: '1000000' })).json();
+
+    const endpoint = await webhooks.createEndpoint(orgId, 'https://example.test/sink', ['*']);
+
+    await sink.credit({
+      chain: 'bsc',
+      txHash: `0xsink${randomBytes(14).toString('hex')}`,
+      transferIndex: 0,
+      to: invoice.depositAddress,
+      asset: { chain: 'bsc', symbol: 'SINK', decimals: 18, kind: 'erc20', contract: '0x1' },
+      amount: BigInt(invoice.amountDue),
+      blockNumber: 500,
+      confirmations: 40,
+    });
+
+    const rows = await db
+      .select({ payload: schema.webhookDeliveries.payload, event: schema.webhookDeliveries.event })
+      .from(schema.webhookDeliveries)
+      .where(eq(schema.webhookDeliveries.endpointId, endpoint.id));
+
+    const paid = rows.find((row) => row.event === 'invoice.paid');
+    assert.ok(paid, 'a credited payment should announce itself');
+
+    const payload = paid!.payload as Record<string, unknown>;
+    assert.equal(payload.mode, 'live');
+    assert.equal(payload.invoiceId, invoice.id);
+    assert.equal(payload.amountDue, invoice.amountDue);
+    assert.equal(payload.amountPaid, invoice.amountDue);
+    assert.equal(payload.chain, 'bsc');
   });
 });

@@ -119,6 +119,16 @@ export class DatabasePaymentSink implements PaymentSink {
       await this.webhooks.enqueue(invoice.organizationId, `invoice.${status}`, {
         invoiceId: invoice.id,
         reference: invoice.reference,
+        /**
+         * The mode, and this field is load-bearing rather than informational.
+         *
+         * A receiver has to be able to refuse a test invoice against a live order,
+         * because completing one means shipping goods against a simulated payment. Any
+         * sane implementation defaults a missing field to `live` — so leaving it out
+         * does not make the check cautious, it makes the check pass. Our own WooCommerce
+         * plugin had exactly that hole until this line existed.
+         */
+        mode: invoice.mode,
         chain: invoice.chain,
         status,
         amountDue: invoice.amountDue,
@@ -203,6 +213,8 @@ export class DatabasePaymentSink implements PaymentSink {
       await this.webhooks.enqueue(invoice.organizationId, 'payment.reversed', {
         invoiceId: invoice.id,
         reference: invoice.reference,
+        // Present on every invoice event, so a receiver never has to guess.
+        mode: invoice.mode,
         chain,
         txHash,
         reason,
