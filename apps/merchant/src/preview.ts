@@ -12,9 +12,74 @@
  * typed, tested code rather than as a blob of JSON in the page.
  */
 
+import { CURATED_ASSETS } from '@avex/core';
+
 export interface PreviewRoute {
   readonly status: number;
   readonly body: unknown;
+}
+
+/**
+ * The merchant's currency list, derived from the real curated catalogue.
+ *
+ * Written out by hand it showed five entries, and somebody reading the preview reasonably
+ * concluded the platform supported three chains. A preview that under-reports the product
+ * is worse than none, so the fixture is the list.
+ *
+ * The per-row states on top are the point of the tab: "off" has six causes and five are not
+ * the merchant's to fix, and a fixture where everything was approved and on would show one
+ * of them.
+ */
+export function previewAssets(): readonly unknown[] {
+  const priced = new Set(['USDT', 'USDC', 'BNB', 'ETH', 'POL', 'TON', 'SOL', 'TRX']);
+  /** Accepting on BSC, and TON is on with no payout address — the row that matters most. */
+  const enabled = new Set(['bsc:USDT', 'bsc:BNB', 'ton:USDT']);
+  /** Vetted but withdrawn by us: nothing the merchant does changes it. */
+  const closedChains = new Set(['solana']);
+
+  const entries = CURATED_ASSETS.map((asset) => {
+    const key = `${asset.chain}:${asset.symbol}`;
+    const on = enabled.has(key);
+    return {
+      id: key,
+      symbol: asset.symbol,
+      chain: asset.chain,
+      contract: asset.contract ?? null,
+      decimals: asset.decimals,
+      kind: asset.kind,
+      curated: true,
+      verdict: 'approved',
+      listed: !closedChains.has(asset.chain),
+      requiresFixedRate: !priced.has(asset.symbol),
+      enabled: on,
+      pricingMode: on ? 'fiat' : null,
+      fixedRateValidUntil: null,
+      spreadBps: on ? 50 : null,
+      toleranceBps: on ? 50 : null,
+    };
+  });
+
+  return [
+    ...entries,
+    {
+      /** Their own token, still in the review queue, and nothing prices it. */
+      id: 'own:KIAN',
+      symbol: 'KIAN',
+      chain: 'bsc',
+      contract: '0x9f2c41ab77e05d63c8b1a2049e6d3b8c41ab77e0',
+      decimals: 18,
+      kind: 'erc20',
+      curated: false,
+      verdict: 'review',
+      listed: true,
+      requiresFixedRate: true,
+      enabled: false,
+      pricingMode: null,
+      fixedRateValidUntil: null,
+      spreadBps: null,
+      toleranceBps: null,
+    },
+  ];
 }
 
 /**
@@ -141,108 +206,7 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
         invoicesByStatus: { paid: 34, underpaid: 1, pending: 3, expired: 5 },
       }),
     ],
-    [
-      /**
-       * Every state the currency list can be in, in one response.
-       *
-       * The point of the Currencies tab is that "off" has six causes and five are not the
-       * merchant's to fix. A fixture with three approved rows would show one of them.
-       */
-      'GET /assets',
-      ok({
-        data: [
-          {
-            id: 'a1',
-            symbol: 'USDT',
-            chain: 'bsc',
-            contract: '0x55d398326f99059fF775485246999027B3197955',
-            decimals: 18,
-            kind: 'erc20',
-            curated: true,
-            verdict: 'approved',
-            listed: true,
-            requiresFixedRate: false,
-            enabled: true,
-            pricingMode: 'fiat',
-            fixedRateValidUntil: null,
-            spreadBps: 50,
-            toleranceBps: 50,
-          },
-          {
-            /** Available and untouched: the row the merchant can actually act on. */
-            id: 'a2',
-            symbol: 'USDC',
-            chain: 'bsc',
-            contract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
-            decimals: 18,
-            kind: 'erc20',
-            curated: true,
-            verdict: 'approved',
-            listed: true,
-            requiresFixedRate: false,
-            enabled: false,
-            pricingMode: null,
-            fixedRateValidUntil: null,
-            spreadBps: null,
-            toleranceBps: null,
-          },
-          {
-            /** On, but no payout address on TON — so every invoice is being refused. */
-            id: 'a3',
-            symbol: 'TON',
-            chain: 'ton',
-            contract: null,
-            decimals: 9,
-            kind: 'native',
-            curated: true,
-            verdict: 'approved',
-            listed: true,
-            requiresFixedRate: false,
-            enabled: true,
-            pricingMode: 'fiat',
-            fixedRateValidUntil: null,
-            spreadBps: 50,
-            toleranceBps: 50,
-          },
-          {
-            /** Their own token, still in the review queue. */
-            id: 'a4',
-            symbol: 'KIAN',
-            chain: 'bsc',
-            contract: '0x9f2c41ab77e05d63c8b1a2049e6d3b8c41ab77e0',
-            decimals: 18,
-            kind: 'erc20',
-            curated: false,
-            verdict: 'review',
-            listed: true,
-            requiresFixedRate: true,
-            enabled: false,
-            pricingMode: null,
-            fixedRateValidUntil: null,
-            spreadBps: null,
-            toleranceBps: null,
-          },
-          {
-            /** Vetted, but we have stopped offering it. Nothing the merchant does helps. */
-            id: 'a5',
-            symbol: 'USDC',
-            chain: 'solana',
-            contract: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-            decimals: 6,
-            kind: 'spl',
-            curated: true,
-            verdict: 'approved',
-            listed: false,
-            requiresFixedRate: false,
-            enabled: false,
-            pricingMode: null,
-            fixedRateValidUntil: null,
-            spreadBps: null,
-            toleranceBps: null,
-          },
-        ],
-      }),
-    ],
+    ['GET /assets', ok({ data: previewAssets() })],
     [
       'GET /payout-addresses',
       ok({

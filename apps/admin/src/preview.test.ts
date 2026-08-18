@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 
 import { PREVIEW_REFUSAL, matchPreview, previewRoutes } from './preview.js';
 import { NAV } from './permissions.js';
+import { CURATED_ASSETS } from '@avex/core';
 
 /**
  * The staff panel's preview fixtures.
@@ -78,6 +79,36 @@ describe('the preview fixtures', () => {
     assert.ok(health.chains.some((chain) => chain.lastError !== null));
     assert.ok(health.reconciliation.pending > 0);
     assert.ok(health.review.waiting > 0);
+  });
+
+  test('the catalogue fixture is the real curated list, not a sample of it', () => {
+    /**
+     * A hand-written fixture showed five of sixteen entries, and somebody reading the
+     * preview reasonably concluded the platform supported three chains. Deriving it from
+     * `CURATED_ASSETS` is what stops that recurring; this is what stops somebody
+     * un-deriving it.
+     */
+    const catalogue = matchPreview('GET', '/admin/assets', routes)?.body as {
+      assets: { chain: string; symbol: string; curated: boolean }[];
+    };
+
+    const curated = catalogue.assets.filter((asset) => asset.curated);
+    assert.equal(curated.length, CURATED_ASSETS.length);
+    for (const asset of CURATED_ASSETS) {
+      assert.ok(
+        curated.some((entry) => entry.chain === asset.chain && entry.symbol === asset.symbol),
+        `${asset.symbol} on ${asset.chain} is missing from the preview`,
+      );
+    }
+  });
+
+  test('the gaps travel with the catalogue', () => {
+    // An absence has no row, so the panel can only show it if the response carries it.
+    const body = matchPreview('GET', '/admin/assets', routes)?.body as {
+      gaps: { chain: string; symbol: string; reason: string | null }[];
+    };
+    assert.ok(body.gaps.length > 0, 'the curated list still has holes; they must be shown');
+    assert.ok(body.gaps.every((gap) => gap.reason !== null), 'an undeclared gap is an oversight');
   });
 
   test('the catalogue has a vetted asset we are not offering', () => {

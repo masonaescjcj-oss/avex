@@ -746,6 +746,180 @@ function stripLeadingZeros(digits) {
     return trimmed.length > 0 ? trimmed : '0';
 }
 
+const CURATED_ASSETS = [
+    // ── BNB Smart Chain — the first chain to go live ──────────────────────────
+    {
+        symbol: 'USDT',
+        chain: 'bsc',
+        decimals: 18,
+        kind: 'erc20',
+        contract: '0x55d398326f99059fF775485246999027B3197955',
+        note: 'Binance-Peg BSC-USD. Note 18 decimals, not the 6 used on Ethereum.',
+    },
+    {
+        symbol: 'USDC',
+        chain: 'bsc',
+        decimals: 18,
+        kind: 'erc20',
+        contract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+        note: 'Binance-Peg USD Coin, 18 decimals.',
+    },
+    { symbol: 'BNB', chain: 'bsc', decimals: 18, kind: 'native', note: 'Native gas asset.' },
+    // ── Ethereum ─────────────────────────────────────────────────────────────
+    {
+        symbol: 'USDT',
+        chain: 'ethereum',
+        decimals: 6,
+        kind: 'erc20',
+        contract: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+        note: 'Tether USD. Issuer can freeze balances; disclosed rather than disqualifying.',
+    },
+    {
+        symbol: 'USDC',
+        chain: 'ethereum',
+        decimals: 6,
+        kind: 'erc20',
+        contract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        note: 'Circle USD Coin. Upgradeable proxy by design.',
+    },
+    { symbol: 'ETH', chain: 'ethereum', decimals: 18, kind: 'native', note: 'Native gas asset.' },
+    // ── Polygon PoS ──────────────────────────────────────────────────────────
+    {
+        symbol: 'USDT',
+        chain: 'polygon',
+        decimals: 6,
+        kind: 'erc20',
+        contract: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
+        note: 'Bridged Tether USD on Polygon PoS.',
+    },
+    {
+        symbol: 'USDC',
+        chain: 'polygon',
+        decimals: 6,
+        kind: 'erc20',
+        contract: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+        note: 'Native Circle USDC on Polygon, not the older bridged USDC.e.',
+    },
+    { symbol: 'POL', chain: 'polygon', decimals: 18, kind: 'native', note: 'Native gas asset.' },
+    // ── TON ──────────────────────────────────────────────────────────────────
+    { symbol: 'TON', chain: 'ton', decimals: 9, kind: 'native', note: 'Native asset.' },
+    {
+        symbol: 'USDT',
+        chain: 'ton',
+        decimals: 6,
+        kind: 'jetton',
+        contract: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
+        note: 'Tether USD jetton on TON.',
+    },
+    // ── Solana ───────────────────────────────────────────────────────────────
+    { symbol: 'SOL', chain: 'solana', decimals: 9, kind: 'native', note: 'Native asset.' },
+    {
+        symbol: 'USDC',
+        chain: 'solana',
+        decimals: 6,
+        kind: 'spl',
+        contract: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        note: 'Circle USDC SPL mint.',
+    },
+    {
+        symbol: 'USDT',
+        chain: 'solana',
+        decimals: 6,
+        kind: 'spl',
+        contract: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+        note: 'Tether USD SPL mint.',
+    },
+    // ── TRON — built last, but the registry entry is settled ─────────────────
+    { symbol: 'TRX', chain: 'tron', decimals: 6, kind: 'native', note: 'Native asset.' },
+    {
+        symbol: 'USDT',
+        chain: 'tron',
+        decimals: 6,
+        kind: 'trc20',
+        contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+        note: 'Tether USD TRC-20, the highest-volume stablecoin contract anywhere.',
+    },
+];
+/**
+ * What a complete catalogue would carry on every chain.
+ *
+ * Written down so that "missing" and "deliberately absent" are different states. Without
+ * it, a chain quietly lacking USDC looks identical to a chain where we decided against it,
+ * and the only way to tell is for somebody to notice — usually a merchant.
+ */
+const EXPECTED_STABLECOINS = ['USDT', 'USDC'];
+const CURATED_GAPS = [
+    {
+        chain: 'ton',
+        symbol: 'USDC',
+        kind: 'jetton',
+        reason: 'Circle issues USDC on TON, but its jetton master address is not recorded here. ' +
+            'Add it through the admin catalogue once the address has been read off Circle’s own ' +
+            'documentation — not from memory, and not from a block explorer’s search results, ' +
+            'which rank by activity and will happily put a copycat first.',
+    },
+    {
+        chain: 'tron',
+        symbol: 'USDC',
+        kind: 'trc20',
+        reason: 'Circle issues USDC as a TRC-20 contract, but its address is not recorded here. ' +
+            'Same rule: verify it against Circle’s own documentation before adding it, because a ' +
+            'curated entry is approved for every merchant with no review behind it.',
+    },
+];
+/**
+ * Which of the expected stablecoins each chain is missing, and whether that is on purpose.
+ *
+ * Returns one row per hole. A hole with a declared gap is a decision; one without is an
+ * oversight, and the test beside this refuses to let the second kind exist quietly.
+ */
+function curatedCoverage(chains) {
+    const holes = [];
+    for (const chain of chains) {
+        const carried = new Set(CURATED_ASSETS.filter((asset) => asset.chain === chain).map((asset) => asset.symbol.toUpperCase()));
+        for (const symbol of EXPECTED_STABLECOINS) {
+            if (carried.has(symbol))
+                continue;
+            holes.push({
+                chain,
+                symbol,
+                declared: CURATED_GAPS.find((gap) => gap.chain === chain && gap.symbol.toUpperCase() === symbol) ?? null,
+            });
+        }
+    }
+    return holes;
+}
+/** Curated entry for a chain and contract, or null. Case-insensitive. */
+function findCuratedAsset(chain, contract) {
+    const needle = contract?.toLowerCase() ?? null;
+    return (CURATED_ASSETS.find((asset) => {
+        if (asset.chain !== chain)
+            return false;
+        if (needle === null)
+            return asset.contract === undefined;
+        return asset.contract?.toLowerCase() === needle;
+    }) ?? null);
+}
+function isCurated(chain, contract) {
+    return findCuratedAsset(chain, contract) !== null;
+}
+function curatedForChain(chain) {
+    return CURATED_ASSETS.filter((asset) => asset.chain === chain);
+}
+/**
+ * Whether a symbol is claimed by a curated asset on a *different* contract.
+ *
+ * The impersonation test: "USDT" on BSC is legitimate at one address and a fraud
+ * at every other.
+ */
+function symbolClaimedElsewhere(chain, contract, symbol) {
+    const upper = symbol.toUpperCase();
+    const needle = contract?.toLowerCase() ?? null;
+    return CURATED_ASSETS.some((asset) => asset.chain === chain &&
+        asset.symbol.toUpperCase() === upper &&
+        (asset.contract?.toLowerCase() ?? null) !== needle);
+}
+
 /**
  * The merchant dashboard's own decisions, as pure functions.
  *
@@ -1191,6 +1365,67 @@ function trimZeros(value) {
  * breaks in the same way the real thing would, which is the point of keeping them here in
  * typed, tested code rather than as a blob of JSON in the page.
  */
+
+/**
+ * The merchant's currency list, derived from the real curated catalogue.
+ *
+ * Written out by hand it showed five entries, and somebody reading the preview reasonably
+ * concluded the platform supported three chains. A preview that under-reports the product
+ * is worse than none, so the fixture is the list.
+ *
+ * The per-row states on top are the point of the tab: "off" has six causes and five are not
+ * the merchant's to fix, and a fixture where everything was approved and on would show one
+ * of them.
+ */
+function previewAssets() {
+    const priced = new Set(['USDT', 'USDC', 'BNB', 'ETH', 'POL', 'TON', 'SOL', 'TRX']);
+    /** Accepting on BSC, and TON is on with no payout address — the row that matters most. */
+    const enabled = new Set(['bsc:USDT', 'bsc:BNB', 'ton:USDT']);
+    /** Vetted but withdrawn by us: nothing the merchant does changes it. */
+    const closedChains = new Set(['solana']);
+    const entries = CURATED_ASSETS.map((asset) => {
+        const key = `${asset.chain}:${asset.symbol}`;
+        const on = enabled.has(key);
+        return {
+            id: key,
+            symbol: asset.symbol,
+            chain: asset.chain,
+            contract: asset.contract ?? null,
+            decimals: asset.decimals,
+            kind: asset.kind,
+            curated: true,
+            verdict: 'approved',
+            listed: !closedChains.has(asset.chain),
+            requiresFixedRate: !priced.has(asset.symbol),
+            enabled: on,
+            pricingMode: on ? 'fiat' : null,
+            fixedRateValidUntil: null,
+            spreadBps: on ? 50 : null,
+            toleranceBps: on ? 50 : null,
+        };
+    });
+    return [
+        ...entries,
+        {
+            /** Their own token, still in the review queue, and nothing prices it. */
+            id: 'own:KIAN',
+            symbol: 'KIAN',
+            chain: 'bsc',
+            contract: '0x9f2c41ab77e05d63c8b1a2049e6d3b8c41ab77e0',
+            decimals: 18,
+            kind: 'erc20',
+            curated: false,
+            verdict: 'review',
+            listed: true,
+            requiresFixedRate: true,
+            enabled: false,
+            pricingMode: null,
+            fixedRateValidUntil: null,
+            spreadBps: null,
+            toleranceBps: null,
+        },
+    ];
+}
 /**
  * Enough of a merchant to be worth looking at.
  *
@@ -1311,108 +1546,7 @@ function previewRoutes() {
                 invoicesByStatus: { paid: 34, underpaid: 1, pending: 3, expired: 5 },
             }),
         ],
-        [
-            /**
-             * Every state the currency list can be in, in one response.
-             *
-             * The point of the Currencies tab is that "off" has six causes and five are not the
-             * merchant's to fix. A fixture with three approved rows would show one of them.
-             */
-            'GET /assets',
-            ok({
-                data: [
-                    {
-                        id: 'a1',
-                        symbol: 'USDT',
-                        chain: 'bsc',
-                        contract: '0x55d398326f99059fF775485246999027B3197955',
-                        decimals: 18,
-                        kind: 'erc20',
-                        curated: true,
-                        verdict: 'approved',
-                        listed: true,
-                        requiresFixedRate: false,
-                        enabled: true,
-                        pricingMode: 'fiat',
-                        fixedRateValidUntil: null,
-                        spreadBps: 50,
-                        toleranceBps: 50,
-                    },
-                    {
-                        /** Available and untouched: the row the merchant can actually act on. */
-                        id: 'a2',
-                        symbol: 'USDC',
-                        chain: 'bsc',
-                        contract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
-                        decimals: 18,
-                        kind: 'erc20',
-                        curated: true,
-                        verdict: 'approved',
-                        listed: true,
-                        requiresFixedRate: false,
-                        enabled: false,
-                        pricingMode: null,
-                        fixedRateValidUntil: null,
-                        spreadBps: null,
-                        toleranceBps: null,
-                    },
-                    {
-                        /** On, but no payout address on TON — so every invoice is being refused. */
-                        id: 'a3',
-                        symbol: 'TON',
-                        chain: 'ton',
-                        contract: null,
-                        decimals: 9,
-                        kind: 'native',
-                        curated: true,
-                        verdict: 'approved',
-                        listed: true,
-                        requiresFixedRate: false,
-                        enabled: true,
-                        pricingMode: 'fiat',
-                        fixedRateValidUntil: null,
-                        spreadBps: 50,
-                        toleranceBps: 50,
-                    },
-                    {
-                        /** Their own token, still in the review queue. */
-                        id: 'a4',
-                        symbol: 'KIAN',
-                        chain: 'bsc',
-                        contract: '0x9f2c41ab77e05d63c8b1a2049e6d3b8c41ab77e0',
-                        decimals: 18,
-                        kind: 'erc20',
-                        curated: false,
-                        verdict: 'review',
-                        listed: true,
-                        requiresFixedRate: true,
-                        enabled: false,
-                        pricingMode: null,
-                        fixedRateValidUntil: null,
-                        spreadBps: null,
-                        toleranceBps: null,
-                    },
-                    {
-                        /** Vetted, but we have stopped offering it. Nothing the merchant does helps. */
-                        id: 'a5',
-                        symbol: 'USDC',
-                        chain: 'solana',
-                        contract: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-                        decimals: 6,
-                        kind: 'spl',
-                        curated: true,
-                        verdict: 'approved',
-                        listed: false,
-                        requiresFixedRate: false,
-                        enabled: false,
-                        pricingMode: null,
-                        fixedRateValidUntil: null,
-                        spreadBps: null,
-                        toleranceBps: null,
-                    },
-                ],
-            }),
-        ],
+        ['GET /assets', ok({ data: previewAssets() })],
         [
             'GET /payout-addresses',
             ok({

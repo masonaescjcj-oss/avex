@@ -1,7 +1,9 @@
 import {
   CURATED_ASSETS,
   ContractProbe,
+  SUPPORTED_CHAINS,
   assessRisk,
+  curatedCoverage,
   findCuratedAsset,
   isCurated,
   rateFromDecimalString,
@@ -398,6 +400,27 @@ export class AssetService {
       submittedByOrganizationId: asset.submittedByOrganizationId,
       enabledByMerchants: byAsset.get(asset.id) ?? 0,
       createdAt: asset.createdAt.toISOString(),
+    }));
+  }
+
+  /**
+   * Stablecoins a chain we support does not carry, with why not.
+   *
+   * Surfaced beside the catalogue so an omission is a visible task rather than something a
+   * merchant discovers. Each one names where the address must be read from, because a
+   * curated entry arrives approved with no probe behind it — a wrong address is a
+   * counterfeit approved for every merchant at once, and the commonest way a wrong one gets
+   * in is somebody typing an address they half-remember.
+   */
+  gaps(): readonly {
+    readonly chain: string;
+    readonly symbol: string;
+    readonly reason: string | null;
+  }[] {
+    return curatedCoverage(SUPPORTED_CHAINS).map((hole) => ({
+      chain: hole.chain,
+      symbol: hole.symbol,
+      reason: hole.declared?.reason ?? null,
     }));
   }
 

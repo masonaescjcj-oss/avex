@@ -23,6 +23,14 @@ const here = dirname(fileURLToPath(import.meta.url));
  */
 const MODULES = [
   join(here, '..', '..', 'packages', 'ui-format', 'dist', 'index.js'),
+  /**
+   * The curated asset list, so the preview's catalogue *is* the real one.
+   *
+   * A hand-written fixture showed five of sixteen entries and left somebody concluding the
+   * platform supported three chains. Injecting the list is what stops that recurring — the
+   * import in `preview.ts` is stripped by the inliner, so the module has to come in here.
+   */
+  join(here, '..', '..', 'packages', 'core', 'dist', 'assets', 'registry.js'),
   join(here, 'dist', 'permissions.js'),
   join(here, 'dist', 'preview.js'),
 ];

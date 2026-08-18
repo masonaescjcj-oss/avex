@@ -12,9 +12,85 @@
  * rate. Those are the states an operator opens this panel to act on.
  */
 
+import { CURATED_ASSETS, curatedCoverage } from '@avex/core';
+
 export interface PreviewRoute {
   readonly status: number;
   readonly body: unknown;
+}
+
+/**
+ * The catalogue, derived from the real curated list rather than written out again.
+ *
+ * A hand-written fixture here showed five of the sixteen curated entries, and somebody
+ * reading the preview reasonably concluded the platform only supported three chains. A
+ * preview that under-reports the product is worse than no preview, and the only way to stop
+ * that happening again is for the fixture to be the list.
+ *
+ * The states layered on top are the ones an operator needs to see and a healthy catalogue
+ * would not show: one chain closed, one merchant-submitted token in review.
+ */
+export function previewCatalogue(): readonly unknown[] {
+  const priced = new Set(['USDT', 'USDC', 'BNB', 'ETH', 'POL', 'TON', 'SOL', 'TRX']);
+  /** Solana is vetted but not offered — the state the whole section exists for. */
+  const closedChains = new Set(['solana']);
+  const inUse: Record<string, number> = { 'bsc:USDT': 2, 'bsc:BNB': 1, 'ton:USDT': 1 };
+
+  const entries = CURATED_ASSETS.map((asset) => ({
+    id: previewId(asset.chain, asset.symbol),
+    chain: asset.chain,
+    symbol: asset.symbol,
+    contract: asset.contract ?? null,
+    decimals: asset.decimals,
+    kind: asset.kind,
+    curated: true,
+    verdict: 'approved',
+    listed: !closedChains.has(asset.chain),
+    requiresFixedRate: !priced.has(asset.symbol),
+    priced: priced.has(asset.symbol),
+    note: asset.note,
+    submittedByOrganizationId: null,
+    enabledByMerchants: inUse[`${asset.chain}:${asset.symbol}`] ?? 0,
+    createdAt: ago(60 * 24 * 210),
+  }));
+
+  return [
+    ...entries,
+    {
+      /** A merchant's own token, waiting on the review queue. Nothing prices it. */
+      id: 'd4e5f6a7-4444-4444-8444-444444444444',
+      chain: 'bsc',
+      symbol: 'KIAN',
+      contract: '0x9f2c41ab77e05d63c8b1a2049e6d3b8c41ab77e0',
+      decimals: 18,
+      kind: 'erc20',
+      curated: false,
+      verdict: 'review',
+      listed: true,
+      requiresFixedRate: true,
+      priced: false,
+      note: null,
+      submittedByOrganizationId: ORG_A,
+      enabledByMerchants: 0,
+      createdAt: ago(60 * 26),
+    },
+  ];
+}
+
+/**
+ * A stable, uuid-shaped id per curated entry.
+ *
+ * Stable because the panel keys rows and modals by it, and random ones would make a
+ * re-render look like a different catalogue. Derived rather than listed so a new curated
+ * asset needs no change here.
+ */
+function previewId(chain: string, symbol: string): string {
+  const seed = [...`${chain}:${symbol}`].reduce(
+    (hash, character) => (hash * 31 + character.charCodeAt(0)) % 0xffffffff,
+    7,
+  );
+  const hex = seed.toString(16).padStart(8, '0');
+  return `${hex}-1111-4111-8111-${hex}${hex.slice(0, 4)}`;
 }
 
 const NOW = Date.parse('2026-08-18T09:00:00.000Z');
@@ -206,98 +282,15 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
     [
       'GET /admin/assets',
       ok({
-        assets: [
-          {
-            id: 'aa000001-1111-4111-8111-111111111111',
-            chain: 'bsc',
-            symbol: 'USDT',
-            contract: '0x55d398326f99059fF775485246999027B3197955',
-            decimals: 18,
-            kind: 'erc20',
-            curated: true,
-            verdict: 'approved',
-            listed: true,
-            requiresFixedRate: false,
-            priced: true,
-            note: 'Binance-Peg BSC-USD. Note 18 decimals, not the 6 used on Ethereum.',
-            submittedByOrganizationId: null,
-            enabledByMerchants: 2,
-            createdAt: ago(60 * 24 * 210),
-          },
-          {
-            id: 'aa000002-2222-4222-8222-222222222222',
-            chain: 'bsc',
-            symbol: 'BNB',
-            contract: null,
-            decimals: 18,
-            kind: 'native',
-            curated: true,
-            verdict: 'approved',
-            listed: true,
-            requiresFixedRate: false,
-            priced: true,
-            note: 'Native gas asset.',
-            submittedByOrganizationId: null,
-            enabledByMerchants: 1,
-            createdAt: ago(60 * 24 * 210),
-          },
-          {
-            /**
-             * Vetted but not offered, which is the state this whole section exists for. The
-             * mint is Circle's and perfectly good; our Solana watcher is not running yet.
-             */
-            id: 'aa000003-3333-4333-8333-333333333333',
-            chain: 'solana',
-            symbol: 'USDC',
-            contract: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-            decimals: 6,
-            kind: 'spl',
-            curated: true,
-            verdict: 'approved',
-            listed: false,
-            requiresFixedRate: false,
-            priced: true,
-            note: 'Circle USDC SPL mint.',
-            submittedByOrganizationId: null,
-            enabledByMerchants: 0,
-            createdAt: ago(60 * 24 * 210),
-          },
-          {
-            id: 'aa000004-4444-4444-8444-444444444444',
-            chain: 'ton',
-            symbol: 'USDT',
-            contract: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
-            decimals: 6,
-            kind: 'jetton',
-            curated: true,
-            verdict: 'approved',
-            listed: true,
-            requiresFixedRate: false,
-            priced: true,
-            note: 'Tether USD jetton on TON.',
-            submittedByOrganizationId: null,
-            enabledByMerchants: 1,
-            createdAt: ago(60 * 24 * 210),
-          },
-          {
-            /** A merchant's own token, waiting on the review queue. Nothing prices it. */
-            id: 'd4e5f6a7-4444-4444-8444-444444444444',
-            chain: 'bsc',
-            symbol: 'KIAN',
-            contract: '0x9f2c41ab77e05d63c8b1a2049e6d3b8c41ab77e0',
-            decimals: 18,
-            kind: 'erc20',
-            curated: false,
-            verdict: 'review',
-            listed: true,
-            requiresFixedRate: true,
-            priced: false,
-            note: null,
-            submittedByOrganizationId: ORG_A,
-            enabledByMerchants: 0,
-            createdAt: ago(60 * 26),
-          },
-        ],
+        assets: previewCatalogue(),
+        /**
+         * The real gaps, from the same source the API reads. Two stablecoins we do not carry
+         * because nobody has verified their addresses yet — which is the safe state, and the
+         * reason it is shown rather than left silent.
+         */
+        gaps: curatedCoverage(['bsc', 'ethereum', 'polygon', 'ton', 'solana', 'tron']).map(
+          (hole) => ({ chain: hole.chain, symbol: hole.symbol, reason: hole.declared?.reason ?? null }),
+        ),
       }),
     ],
     [

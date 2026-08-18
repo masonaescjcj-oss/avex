@@ -169,6 +169,46 @@ describe('staff panel', { skip: playwright ? false : 'playwright is not installe
     await context.close();
   });
 
+  test('the catalogue shows every chain the platform supports', async () => {
+    /**
+     * The regression this guards, and it was a real one: the preview carried five of sixteen
+     * curated entries by hand, and somebody reading it reasonably concluded the platform
+     * supported three chains. The fixture is now the curated list itself.
+     */
+    const { page, context } = await open();
+    await section(page, 'Currencies');
+
+    const chains = await page.$$eval('#view h2', (nodes) => nodes.map((node) => node.textContent));
+    for (const chain of ['bsc', 'ethereum', 'polygon', 'solana', 'ton', 'tron']) {
+      assert.ok(chains.includes(chain), `${chain} is missing: ${chains.join(', ')}`);
+    }
+    // USDT, USDC and a native asset on the chains that carry all three.
+    const body = await text(page, '#view');
+    assert.match(body, /USDT/);
+    assert.match(body, /USDC/);
+    assert.match(body, /BNB/);
+    assert.match(body, /ETH/);
+    await context.close();
+  });
+
+  test('a stablecoin the catalogue lacks is named rather than left absent', async () => {
+    /**
+     * An absence has no row to render, so it can only be shown deliberately. Without this a
+     * chain missing USDC looks exactly like a chain where we decided against it, and the
+     * only person who finds out is a merchant who cannot enable it.
+     */
+    const { page, context } = await open();
+    await section(page, 'Currencies');
+
+    const notice = await text(page, '#view .notice.warn');
+    assert.match(notice, /Not in the catalogue/);
+    assert.match(notice, /USDC on ton/);
+    assert.match(notice, /USDC on tron/);
+    // And it says what would close it, because "not yet" is a note to nobody.
+    assert.match(notice, /issuer/);
+    await context.close();
+  });
+
   test('a vetted currency we are not offering shows as approved and closed', async () => {
     // The state the section exists for: a contract we trust on a chain we are not ready for.
     const { page, context } = await open();

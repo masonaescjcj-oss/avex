@@ -513,7 +513,17 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
     // A read, and a support-level one: "why can't I enable USDC on Solana" is a question
     // support gets, and the answer is on this list.
     await requireStaffPermission(context.audit, request.staff, 'asset_list:read');
-    return reply.send({ assets: await context.assets.catalogue() });
+    return reply.send({
+      assets: await context.assets.catalogue(),
+      /**
+       * What we do not carry and why, returned with what we do.
+       *
+       * An absence has no row to render, so without this a chain missing USDC looks exactly
+       * like a chain where we decided against it — and the only person who finds out is a
+       * merchant who cannot enable it.
+       */
+      gaps: context.assets.gaps(),
+    });
   });
 
   app.post('/admin/assets/:assetId/listing', async (request, reply) => {

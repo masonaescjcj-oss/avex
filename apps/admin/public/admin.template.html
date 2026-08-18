@@ -1176,6 +1176,27 @@
           ]),
         ]),
 
+        /**
+         * What we do not carry, before what we do.
+         *
+         * An absence has no row, so it can only be shown deliberately — and this is the
+         * list somebody scanning for "why is USDC not there" is looking for. Each entry
+         * names where the address must be read from, because adding a curated currency
+         * bypasses the probe entirely.
+         */
+        (data.gaps || []).length > 0
+          ? h('div', { class: 'notice warn', style: 'margin-bottom:1rem' }, [
+              h('span', {}, [
+                h('strong', { text: 'Not in the catalogue: ' }),
+                (data.gaps || []).map((gap) => gap.symbol + ' on ' + gap.chain).join(', ') + '. ',
+                (data.gaps || []).some((gap) => gap.reason === null)
+                  ? 'One or more of these has no recorded reason, which means nobody decided — it was missed. '
+                  : 'Each is a deliberate hold: the address has to be read off the issuer\'s own documentation before it can be added, because a curated currency arrives approved with no probe behind it. ',
+                mayList ? 'Use "Add a currency" once you have verified one.' : '',
+              ]),
+            ])
+          : null,
+
         ...chains.flatMap((chain) => {
           const rows = data.assets.filter((asset) => asset.chain === chain);
           const offered = rows.filter((asset) => asset.listed && asset.verdict === 'approved').length;

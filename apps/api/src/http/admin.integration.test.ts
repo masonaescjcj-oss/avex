@@ -3,10 +3,12 @@ import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
 
 import {
+  CURATED_ASSETS,
   ContractProbe,
   DEFAULT_AGGREGATION,
   DEFAULT_BREAKER,
   PriceService,
+  SUPPORTED_CHAINS,
   WebhookDispatcher,
 } from '@avex/core';
 import type { PriceSource } from '@avex/core';
@@ -2461,6 +2463,59 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     assert.ok(usdt);
     assert.equal(usdt!.verdict, 'approved');
     assert.equal(usdt!.priced, true);
+  });
+
+  test('the catalogue carries every chain and every curated entry', async () => {
+    /**
+     * The seeded list is the platform's answer to "what do you support", so a chain missing
+     * from it is a chain no merchant can be paid on. Checked against the list in code rather
+     * than against a copy written here, because a copy is the thing that drifts.
+     */
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/assets',
+      headers: asStaff(supportToken),
+    });
+    const catalogue = response.json().assets as { chain: string; symbol: string; curated: boolean }[];
+
+    for (const asset of CURATED_ASSETS) {
+      assert.ok(
+        catalogue.some(
+          (entry) => entry.chain === asset.chain && entry.symbol === asset.symbol && entry.curated,
+        ),
+        `${asset.symbol} on ${asset.chain} was not seeded`,
+      );
+    }
+
+    // Every supported chain has its native asset, or that chain cannot pay anyone.
+    for (const chain of SUPPORTED_CHAINS) {
+      assert.ok(
+        catalogue.some((entry) => entry.chain === chain),
+        `${chain} has no catalogue entries at all`,
+      );
+    }
+  });
+
+  test('the gaps are returned with the catalogue, each with a reason', async () => {
+    /**
+     * An absence has no row, so it can only reach an operator if the response carries it.
+     * A gap with no reason means nobody decided — it was missed — and the panel says so
+     * differently from one that was held deliberately.
+     */
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/assets',
+      headers: asStaff(supportToken),
+    });
+    const gaps = response.json().gaps as { chain: string; symbol: string; reason: string | null }[];
+
+    assert.ok(gaps.length > 0, 'USDC is not carried everywhere yet');
+    for (const gap of gaps) {
+      assert.ok(gap.reason, `${gap.symbol} on ${gap.chain} has no recorded reason`);
+      // Each names where the address must come from, because a curated entry arrives
+      // approved with no probe behind it.
+      assert.match(gap.reason!, /documentation/i);
+    }
   });
 
   test('the usage count is merchants accepting it, not merchants who configured it once', async () => {

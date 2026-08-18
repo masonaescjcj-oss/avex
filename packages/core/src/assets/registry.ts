@@ -117,6 +117,95 @@ export const CURATED_ASSETS: readonly CuratedAsset[] = [
   },
 ];
 
+/**
+ * What a complete catalogue would carry on every chain.
+ *
+ * Written down so that "missing" and "deliberately absent" are different states. Without
+ * it, a chain quietly lacking USDC looks identical to a chain where we decided against it,
+ * and the only way to tell is for somebody to notice — usually a merchant.
+ */
+export const EXPECTED_STABLECOINS: readonly string[] = ['USDT', 'USDC'];
+
+/**
+ * A stablecoin we do not carry on a chain, and why not.
+ *
+ * Every one of these is here for the same reason: the address is the whole of the
+ * protection. `CURATED_ASSETS` entries arrive `approved` with no probe and no review, so a
+ * wrong address in that list is a counterfeit token approved for every merchant at once —
+ * and an address recalled from memory is exactly how a wrong one gets in.
+ *
+ * So a gap stays a gap until a human has the issuer's own page open beside the panel. The
+ * admin catalogue offers "Add a currency" for precisely that, and it records where the
+ * address was verified. Listing the gaps here is what turns an omission into a task.
+ */
+export interface CuratedGap {
+  readonly chain: ChainId;
+  readonly symbol: string;
+  readonly kind: Asset['kind'];
+  /** What is missing, and what would close it. */
+  readonly reason: string;
+}
+
+export const CURATED_GAPS: readonly CuratedGap[] = [
+  {
+    chain: 'ton',
+    symbol: 'USDC',
+    kind: 'jetton',
+    reason:
+      'Circle issues USDC on TON, but its jetton master address is not recorded here. ' +
+      'Add it through the admin catalogue once the address has been read off Circle’s own ' +
+      'documentation — not from memory, and not from a block explorer’s search results, ' +
+      'which rank by activity and will happily put a copycat first.',
+  },
+  {
+    chain: 'tron',
+    symbol: 'USDC',
+    kind: 'trc20',
+    reason:
+      'Circle issues USDC as a TRC-20 contract, but its address is not recorded here. ' +
+      'Same rule: verify it against Circle’s own documentation before adding it, because a ' +
+      'curated entry is approved for every merchant with no review behind it.',
+  },
+];
+
+/**
+ * Which of the expected stablecoins each chain is missing, and whether that is on purpose.
+ *
+ * Returns one row per hole. A hole with a declared gap is a decision; one without is an
+ * oversight, and the test beside this refuses to let the second kind exist quietly.
+ */
+export function curatedCoverage(
+  chains: readonly ChainId[],
+): readonly {
+  readonly chain: ChainId;
+  readonly symbol: string;
+  readonly declared: CuratedGap | null;
+}[] {
+  const holes = [];
+
+  for (const chain of chains) {
+    const carried = new Set(
+      CURATED_ASSETS.filter((asset) => asset.chain === chain).map((asset) =>
+        asset.symbol.toUpperCase(),
+      ),
+    );
+
+    for (const symbol of EXPECTED_STABLECOINS) {
+      if (carried.has(symbol)) continue;
+      holes.push({
+        chain,
+        symbol,
+        declared:
+          CURATED_GAPS.find(
+            (gap) => gap.chain === chain && gap.symbol.toUpperCase() === symbol,
+          ) ?? null,
+      });
+    }
+  }
+
+  return holes;
+}
+
 /** Curated entry for a chain and contract, or null. Case-insensitive. */
 export function findCuratedAsset(
   chain: ChainId,
