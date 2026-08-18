@@ -47,6 +47,52 @@ export const DEFAULT_FREE_TIER_USD_MICROS = 1_500_000_000n;
  */
 export const DEFAULT_GRACE_DAYS = 7;
 
+/**
+ * The percentage commission, in basis points, by monthly volume.
+ *
+ * These are the market's numbers, not ours. Cryptomus and Heleket both advertise
+ * "from 0.4%", NOWPayments charges 0.5% on a same-coin settlement, and the
+ * card-shaped processors sit at 1% or above — CoinGate and Coinbase Commerce at 1%,
+ * BitPay at 1-2% plus $0.25, Stripe's USDC at 1.5% plus $0.30. A crypto-native
+ * gateway that charged more than 0.5% would be choosing to lose on price.
+ *
+ * So the entry rate is 0.5% and volume earns its way down to 0.4%, which is where
+ * the competitive floor is. Tiers are read from the volume a merchant actually
+ * processed rather than negotiated one merchant at a time, because a published
+ * ladder is something a merchant can plan against and a private rate is not.
+ *
+ * One thing worth saying plainly about the 0.4% figures: they are entry teasers.
+ * Cryptomus starts new merchants at 2% and comes down with turnover. Ours applies
+ * from the first invoice.
+ */
+export const FEE_TIERS: readonly { readonly fromUsdMicros: bigint; readonly bps: number }[] = [
+  { fromUsdMicros: 250_000_000_000n, bps: 40 }, // $250k+/month
+  { fromUsdMicros: 50_000_000_000n, bps: 45 }, //  $50k+/month
+  { fromUsdMicros: 0n, bps: 50 }, //             everyone else
+];
+
+/** The rate a merchant pays before any volume history exists. */
+export const DEFAULT_FEE_BPS = 50;
+
+/**
+ * Hard ceiling, mirroring `Forwarder.MAX_FEE_BPS`.
+ *
+ * A rate above this cannot be delivered on chain — the forwarder reverts — so a
+ * negotiated rate that exceeded it would produce invoices that take a payment and
+ * then cannot be swept.
+ */
+export const MAX_FEE_BPS = 500;
+
+/** The tier a given monthly volume falls into. */
+export function feeBpsForVolume(usdMicros: bigint): number {
+  for (const tier of FEE_TIERS) {
+    if (usdMicros >= tier.fromUsdMicros) return tier.bps;
+  }
+  // Unreachable while the last tier starts at zero, and a cheap guard against
+  // someone reordering the table and silently dropping the floor.
+  return DEFAULT_FEE_BPS;
+}
+
 export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'unpaid' | 'cancelled';
 
 export class SubscriptionError extends Error {
@@ -64,6 +110,15 @@ export interface SubscriptionOptions {
   readonly trialDays?: number;
   readonly graceDays?: number;
   readonly freeTierUsdMicros?: bigint;
+  /**
+   * Where commission is sent, per chain.
+   *
+   * Per chain because an address is chain-shaped: our BSC collector is not a valid
+   * TRON address. A chain absent from this map cannot charge commission at all —
+   * `feeFor` returns nothing rather than guessing, because a fee to a malformed
+   * address is a fee that burns the merchant's money.
+   */
+  readonly feeCollectors?: Readonly<Record<string, string>>;
 }
 
 /** What the gateway needs to know before letting a merchant issue an invoice. */
@@ -82,6 +137,7 @@ export class SubscriptionService {
   private readonly trialDays: number;
   private readonly graceDays: number;
   private readonly freeTier: bigint;
+  private readonly feeCollectors: Readonly<Record<string, string>>;
 
   constructor(
     private readonly db: Database,
@@ -92,6 +148,158 @@ export class SubscriptionService {
     this.trialDays = options.trialDays ?? DEFAULT_TRIAL_DAYS;
     this.graceDays = options.graceDays ?? DEFAULT_GRACE_DAYS;
     this.freeTier = options.freeTierUsdMicros ?? DEFAULT_FREE_TIER_USD_MICROS;
+    this.feeCollectors = options.feeCollectors ?? {};
+  }
+
+  /**
+   * The commission a new invoice for this merchant should carry, on this chain.
+   *
+   * Returns nothing — meaning no fee — in three cases, and each is deliberate. The
+   * merchant's rate is zero, because someone negotiated that. We have no collector
+   * address for the chain, because sending a fee to an address we cannot form would
+   * burn it. Or there is no subscription row at all, which is a gap in our own
+   * bookkeeping and must not become a charge the merchant did not agree to.
+   *
+   * Read at invoice creation and then snapshotted onto the invoice. It must not be
+   * consulted again at settlement: the deposit address commits to the fee, so a rate
+   * that changed in between would derive an address nobody funded.
+   */
+  async feeFor(
+    organizationId: string,
+    chain: string,
+  ): Promise<{ readonly feeDestination: string; readonly feeBps: number } | undefined> {
+    const [subscription] = await this.db
+      .select({ feeBps: subscriptions.feeBps })
+      .from(subscriptions)
+      .where(eq(subscriptions.organizationId, organizationId))
+      .limit(1);
+    if (!subscription || subscription.feeBps === 0) return undefined;
+
+    const feeDestination = this.feeCollectors[chain];
+    if (!feeDestination) return undefined;
+
+    // Clamped rather than trusted. The column has a check constraint, but this is the
+    // value that reaches a constructor argument, and the forwarder reverts above the
+    // ceiling — a revert here would mean a funded address we cannot deploy.
+    return { feeDestination, feeBps: Math.min(subscription.feeBps, MAX_FEE_BPS) };
+  }
+
+  /**
+   * Move merchants onto the tier their volume earns.
+   *
+   * Run alongside billing, on the period that just closed. Volume-based pricing that
+   * a merchant has to ask for is a discount in name only, so the ladder applies
+   * itself — and it applies in both directions, because a rate earned by one busy
+   * month is not a rate the merchant keeps forever.
+   *
+   * A negotiated rate is left alone. Someone set it deliberately, and having the
+   * ladder overwrite it the following month would make every negotiation temporary
+   * without telling anyone.
+   */
+  async applyVolumeTiers(now: Date = new Date()): Promise<{
+    readonly moved: number;
+    readonly changes: readonly {
+      readonly organizationId: string;
+      readonly fromBps: number;
+      readonly toBps: number;
+    }[];
+  }> {
+    const rows = await this.db
+      .select({
+        id: subscriptions.id,
+        organizationId: subscriptions.organizationId,
+        feeBps: subscriptions.feeBps,
+        negotiatedFee: subscriptions.negotiatedFee,
+        periodStart: subscriptions.currentPeriodStart,
+      })
+      .from(subscriptions)
+      .where(isNull(subscriptions.cancelledAt));
+
+    const changes: { organizationId: string; fromBps: number; toBps: number }[] = [];
+
+    for (const row of rows) {
+      if (row.negotiatedFee) continue;
+
+      const volume = await this.assessedVolume(row.organizationId, {
+        from: row.periodStart ?? addDays(now, -31),
+        to: now,
+      });
+      const earned = feeBpsForVolume(volume.totalUsdMicros);
+      if (earned === row.feeBps) continue;
+
+      await this.db
+        .update(subscriptions)
+        .set({ feeBps: earned })
+        .where(eq(subscriptions.id, row.id));
+
+      await this.audit.record({
+        organizationId: row.organizationId,
+        action: 'subscription.fee_tier_changed',
+        targetType: 'subscription',
+        targetId: row.id,
+        metadata: {
+          fromBps: row.feeBps,
+          toBps: earned,
+          volumeUsdMicros: volume.totalUsdMicros.toString(),
+          reason: 'volume tier',
+        },
+      });
+      changes.push({ organizationId: row.organizationId, fromBps: row.feeBps, toBps: earned });
+    }
+
+    return { moved: changes.length, changes };
+  }
+
+  /**
+   * Set a rate by hand, outside the ladder.
+   *
+   * Marks the subscription as negotiated, which is what stops `applyVolumeTiers` from
+   * quietly undoing it next month. Refused above the on-chain ceiling here as well as
+   * in the database, so the caller gets an error naming the fee rather than a
+   * constraint violation.
+   */
+  async setFeeBps(
+    actor: { readonly staffId: string; readonly role: StaffRole },
+    organizationId: string,
+    feeBps: number,
+    note: string,
+  ): Promise<void> {
+    if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > MAX_FEE_BPS) {
+      throw new SubscriptionError(
+        'not_found',
+        `A fee of ${feeBps}bps is outside the 0-${MAX_FEE_BPS}bps the forwarder can deliver.`,
+      );
+    }
+
+    const [updated] = await this.db
+      .update(subscriptions)
+      .set({ feeBps, negotiatedFee: true })
+      .where(eq(subscriptions.organizationId, organizationId))
+      .returning({ id: subscriptions.id, previous: subscriptions.feeBps });
+    if (!updated) throw new SubscriptionError('not_found', 'No subscription for this merchant.');
+
+    await this.audit.record({
+      organizationId,
+      staffId: actor.staffId,
+      action: 'subscription.fee_negotiated',
+      targetType: 'subscription',
+      targetId: updated.id,
+      // The note is required by the route, and it is the only record of *why* this
+      // merchant pays a different rate from the published ladder.
+      metadata: { feeBps, note, role: actor.role },
+    });
+  }
+
+  /**
+   * What a merchant would pay per $1,000 at their current rate.
+   *
+   * Shown rather than left as basis points. "50 bps" is the unit the ladder is
+   * written in; "$5.00 per $1,000" is the unit a merchant thinks in, and the two
+   * being the same number expressed differently is exactly why one of them should be
+   * computed for them rather than by them.
+   */
+  static feeExample(feeBps: number, perUsd = 1_000): number {
+    return (perUsd * feeBps) / 10_000;
   }
 
   /**
@@ -225,6 +433,18 @@ export class SubscriptionService {
       subscription,
       charges,
       verdict: verdictFor(subscription, charges),
+      /**
+       * The commission, alongside the next tier and what it would take to reach it.
+       *
+       * Showing the next rung is the difference between a ladder a merchant can plan
+       * against and a discount they discover after the fact.
+       */
+      commission: {
+        feeBps: subscription.feeBps,
+        perThousandUsd: SubscriptionService.feeExample(subscription.feeBps),
+        negotiated: subscription.negotiatedFee,
+        nextTier: nextTierFrom(subscription.feeBps, subscription.negotiatedFee),
+      },
       freeTier: {
         thresholdUsdMicros: this.freeTier.toString(),
         processedUsdMicros: volume.totalUsdMicros.toString(),
@@ -712,6 +932,25 @@ function verdictFor(
 
   // Trialing, active, or past due inside grace: the gateway works.
   return { ...base, mayIssueInvoices: true, reason: null };
+}
+
+/**
+ * The rung below a merchant's current rate, and the volume that reaches it.
+ *
+ * Null at the bottom rung, and null for a negotiated rate — the ladder does not apply
+ * to those, so naming a threshold would promise a reduction that will not arrive.
+ */
+function nextTierFrom(
+  feeBps: number,
+  negotiated: boolean,
+): { readonly bps: number; readonly fromUsdMicros: string } | null {
+  if (negotiated) return null;
+
+  // Tiers are declared cheapest-first, so the next one down is the last entry with a
+  // lower rate than the current one.
+  const better = FEE_TIERS.filter((tier) => tier.bps < feeBps);
+  const next = better.at(-1);
+  return next ? { bps: next.bps, fromUsdMicros: next.fromUsdMicros.toString() } : null;
 }
 
 function addDays(from: Date, days: number): Date {

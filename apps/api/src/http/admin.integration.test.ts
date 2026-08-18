@@ -76,6 +76,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
   const merchantEmail = `merchant-${unique}@example.com`;
 
   let superadminSecret: string;
+  let superadminId: string;
   let supportSecret: string;
   let superadminToken: string;
   let supportToken: string;
@@ -139,7 +140,14 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     );
     paymentSink = new DatabasePaymentSink(db, audit, webhookService, () => 0);
     reconciliation = new ReconciliationService(db, audit, paymentSink);
-    subscriptionsService = new SubscriptionService(db, audit);
+    subscriptionsService = new SubscriptionService(db, audit, {
+      // Collectors for two chains only, on purpose: the third is what proves a chain
+      // we cannot form an address for charges nothing rather than burning the fee.
+      feeCollectors: {
+        bsc: FEE_COLLECTOR_EVM,
+        ethereum: FEE_COLLECTOR_EVM,
+      },
+    });
 
     app = buildServer({
       env,
@@ -187,6 +195,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
         ),
       );
     superadminSecret = created.totpSecret;
+    superadminId = created.staffId;
     superadminToken = await signIn(superadminEmail, superadminSecret);
 
     const support = await staffAuth.createStaff(
@@ -336,6 +345,8 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     assert.equal(signup.statusCode, 201, signup.body);
     return signup.json().organizationId as string;
   }
+
+  const FEE_COLLECTOR_EVM = '0x3333333333333333333333333333333333333333';
 
   const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
@@ -2403,6 +2414,234 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     const { freeTier } = await subscriptionsService.forOrganization(org);
     assert.equal(freeTier.remainingUsdMicros, '0');
     assert.equal(freeTier.willBeFree, false);
+  });
+
+  // ── commission ─────────────────────────────────────────────────────────────
+  //
+  // 0.5% entry, down to 0.4% at volume. Those are the market's numbers — Cryptomus
+  // and Heleket advertise "from 0.4%", NOWPayments takes 0.5% on a same-coin
+  // settlement — and the tests below are about the ladder applying itself rather
+  // than about the figures, which are a business decision that can move.
+
+  test('a new merchant starts on the published entry rate', async () => {
+    const org = await freshMerchant('feestart');
+    await subscriptionsService.ensureForOrganization(org);
+
+    const { commission } = await subscriptionsService.forOrganization(org);
+    assert.equal(commission.feeBps, 50);
+    // Basis points are our unit; dollars per thousand is the merchant's.
+    assert.equal(commission.perThousandUsd, 5);
+    assert.equal(commission.negotiated, false);
+  });
+
+  test('the merchant is shown the next rung and what reaches it', async () => {
+    // A volume discount a merchant has to ask about is not a published ladder.
+    const org = await freshMerchant('feeladder');
+    await subscriptionsService.ensureForOrganization(org);
+
+    const { commission } = await subscriptionsService.forOrganization(org);
+    assert.equal(commission.nextTier?.bps, 45);
+    assert.equal(commission.nextTier?.fromUsdMicros, '50000000000');
+  });
+
+  test('an invoice carries the merchant rate and our collector for that chain', async () => {
+    const org = await freshMerchant('feefor');
+    await subscriptionsService.ensureForOrganization(org);
+
+    const fee = await subscriptionsService.feeFor(org, 'bsc');
+    assert.equal(fee?.feeBps, 50);
+    assert.equal(fee?.feeDestination, FEE_COLLECTOR_EVM);
+  });
+
+  test('a chain with no collector charges nothing rather than burning the fee', async () => {
+    /**
+     * `tron` is deliberately absent from the configured collectors. An EVM address is
+     * not a valid TRON one, so substituting the one we do have would send the
+     * commission to an address that cannot receive it — and the forwarder would
+     * either revert or the funds would be gone. No fee is the only safe answer.
+     */
+    const org = await freshMerchant('nocollector');
+    await subscriptionsService.ensureForOrganization(org);
+
+    assert.equal(await subscriptionsService.feeFor(org, 'tron'), undefined);
+  });
+
+  test('a merchant with no subscription row is charged no commission', async () => {
+    // Our bookkeeping gap must not become a charge the merchant never agreed to.
+    const org = await freshMerchant('nosub');
+    assert.equal(await subscriptionsService.feeFor(org, 'bsc'), undefined);
+  });
+
+  test('volume moves a merchant down the ladder without being asked', async () => {
+    const org = await freshMerchant('earnstier');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    // Past the $50k rung.
+    await giveVolume(org, 60_000, daysAgo(10));
+
+    const report = await subscriptionsService.applyVolumeTiers();
+    assert.ok(report.moved >= 1);
+
+    const { commission } = await subscriptionsService.forOrganization(org);
+    assert.equal(commission.feeBps, 45);
+    assert.equal(commission.perThousandUsd, 4.5);
+  });
+
+  test('the top rung is reached at the top threshold', async () => {
+    const org = await freshMerchant('toptier');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await giveVolume(org, 300_000, daysAgo(10));
+
+    await subscriptionsService.applyVolumeTiers();
+    const { commission } = await subscriptionsService.forOrganization(org);
+    assert.equal(commission.feeBps, 40);
+    // Nothing below it, so no promise of a further reduction.
+    assert.equal(commission.nextTier, null);
+  });
+
+  test('the ladder moves merchants back up when volume falls away', async () => {
+    /**
+     * Both directions, or the rate is a one-way ratchet: one busy month would buy a
+     * permanent discount. Stated as a test because the sympathetic reading — never
+     * raise a merchant's rate — is the one that quietly loses the revenue.
+     */
+    const org = await freshMerchant('fallsback');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(40));
+    await giveVolume(org, 60_000, daysAgo(30));
+    await subscriptionsService.applyVolumeTiers();
+    assert.equal((await subscriptionsService.forOrganization(org)).commission.feeBps, 45);
+
+    // A new period with nothing in it.
+    await db
+      .update(schema.subscriptions)
+      .set({ currentPeriodStart: daysAgo(5) })
+      .where(eq(schema.subscriptions.organizationId, org));
+    await subscriptionsService.applyVolumeTiers();
+
+    assert.equal((await subscriptionsService.forOrganization(org)).commission.feeBps, 50);
+  });
+
+  test('a negotiated rate survives the ladder', async () => {
+    /**
+     * The point of the flag. Without it, a rate someone agreed with a merchant would
+     * be overwritten at the next period and nobody would find out until the merchant
+     * read their invoice.
+     */
+    const org = await freshMerchant('negotiated');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await giveVolume(org, 60_000, daysAgo(10));
+
+    await subscriptionsService.setFeeBps(
+      { staffId: superadminId, role: 'superadmin' },
+      org,
+      25,
+      'agreed with the merchant during onboarding',
+    );
+
+    await subscriptionsService.applyVolumeTiers();
+    const { commission } = await subscriptionsService.forOrganization(org);
+    assert.equal(commission.feeBps, 25);
+    assert.equal(commission.negotiated, true);
+    // No next rung is promised, because the ladder no longer applies to them.
+    assert.equal(commission.nextTier, null);
+  });
+
+  test('a rate the forwarder could not deliver is refused', async () => {
+    /**
+     * 500bps is `Forwarder.MAX_FEE_BPS`. Above it the constructor reverts, so an
+     * invoice created at that rate would take a payment to an address whose contract
+     * can never be deployed — the funds would be unreachable.
+     */
+    const org = await freshMerchant('greedy');
+    await subscriptionsService.ensureForOrganization(org);
+
+    await assert.rejects(
+      () =>
+        subscriptionsService.setFeeBps(
+          { staffId: superadminId, role: 'superadmin' },
+          org,
+          501,
+          'trying to charge more than the contract allows',
+        ),
+      /outside the 0-500bps/,
+    );
+    assert.equal((await subscriptionsService.forOrganization(org)).commission.feeBps, 50);
+  });
+
+  test('a zero rate means no fee at all, not a zero-value transfer', async () => {
+    const org = await freshMerchant('zerofee');
+    await subscriptionsService.ensureForOrganization(org);
+    await subscriptionsService.setFeeBps(
+      { staffId: superadminId, role: 'superadmin' },
+      org,
+      0,
+      'launch partner, commission waived',
+    );
+
+    assert.equal(await subscriptionsService.feeFor(org, 'bsc'), undefined);
+  });
+
+  test('setting a commission is written to the audit trail with its reason', async () => {
+    // The only record of why this merchant pays something other than the published
+    // rate. A rate with no reason attached is indistinguishable from a mistake.
+    const before = await countAudit('subscription.fee_negotiated');
+
+    const org = await freshMerchant('feeaudit');
+    await subscriptionsService.ensureForOrganization(org);
+    await subscriptionsService.setFeeBps(
+      { staffId: superadminId, role: 'superadmin' },
+      org,
+      30,
+      'matched a competitor quote the merchant forwarded',
+    );
+
+    assert.equal(await countAudit('subscription.fee_negotiated'), before + 1);
+  });
+
+  test('a tier change is written to the audit trail', async () => {
+    const before = await countAudit('subscription.fee_tier_changed');
+
+    const org = await freshMerchant('tieraudit');
+    await subscriptionsService.ensureForOrganization(org, daysAgo(20));
+    await giveVolume(org, 80_000, daysAgo(10));
+    await subscriptionsService.applyVolumeTiers();
+
+    assert.ok(await countAudit('subscription.fee_tier_changed') > before);
+  });
+
+  test('support cannot change a commission', async () => {
+    // Pricing is not a support action, and this is the route a stolen support session
+    // would reach for.
+    const org = await freshMerchant('feeperm');
+    await subscriptionsService.ensureForOrganization(org);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/billing/${org}/fee`,
+      headers: asStaff(supportToken),
+      payload: { feeBps: 10, note: 'trying it on from a support session' },
+    });
+    assert.equal(response.statusCode, 403, response.body);
+  });
+
+  test('the route refuses a rate above the on-chain ceiling with a 400', async () => {
+    // Rejected at the edge rather than surfacing a constraint violation as a 500.
+    const org = await freshMerchant('feeroute');
+    await subscriptionsService.ensureForOrganization(org);
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/auth/reauthenticate',
+      headers: asStaff(superadminToken),
+      payload: { code: totpCode(superadminSecret) },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/billing/${org}/fee`,
+      headers: asStaff(superadminToken),
+      payload: { feeBps: 600, note: 'over the contract ceiling on purpose' },
+    });
+    assert.equal(response.statusCode, 400, response.body);
   });
 
   async function countAudit(action: string): Promise<number> {

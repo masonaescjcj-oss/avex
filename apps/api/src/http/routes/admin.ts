@@ -526,6 +526,47 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
     });
   });
 
+  app.post('/admin/billing/:orgId/fee', async (request, reply) => {
+    const params = orgParams.parse(request.params);
+    const body = z
+      .object({
+        // Bounded here as well as in the service and the database. This is the outer
+        // edge, and rejecting 600 with a 400 is a better answer than a 500 from a
+        // constraint three layers down.
+        feeBps: z.coerce.number().int().min(0).max(500),
+        note: z.string().trim().min(10).max(500),
+      })
+      .parse(request.body);
+    // Elevation-gated like the monthly price: a commission change is quiet, durable,
+    // and worth something to anyone holding a stolen session.
+    const staff = await requireStaffPermission(context.audit, request.staff, 'staff:write', {
+      targetType: 'organization',
+      targetId: params.orgId,
+      context: requestContext(request),
+    });
+
+    await context.subscriptions.setFeeBps(staff, params.orgId, body.feeBps, body.note);
+    return reply.send({
+      status: 'updated',
+      feeBps: body.feeBps,
+      message:
+        'Applies to invoices created from now on. Invoices already issued keep the ' +
+        'rate they were quoted with — their deposit addresses commit to it.',
+    });
+  });
+
+  app.post('/admin/billing/apply-volume-tiers', async (request, reply) => {
+    // A read-shaped name would be a lie: this writes rates. `merchant:read` is not
+    // enough, so it takes the same permission as any other billing change.
+    const staff = await requireStaffPermission(context.audit, request.staff, 'staff:write', {
+      context: requestContext(request),
+    });
+    void staff;
+
+    const report = await context.subscriptions.applyVolumeTiers();
+    return reply.send(report);
+  });
+
   // ── staff administration ──────────────────────────────────────────────────
 
   app.post('/admin/staff', async (request, reply) => {

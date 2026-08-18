@@ -996,6 +996,28 @@ export const subscriptions = pgTable(
     /** Months per period. One for now; the column exists so annual needs no migration. */
     intervalMonths: integer('interval_months').notNull().default(1),
 
+    /**
+     * The percentage commission this merchant pays, in basis points.
+     *
+     * Separate from `price_usd_micros` because the two are different levers on the
+     * same relationship: a monthly fee is what a merchant pays to have the gateway
+     * at all, a commission is what they pay for what flows through it. Crypto-native
+     * competitors charge only the second — 0.4% to 0.5% — so this is the number that
+     * has to be competitive.
+     *
+     * Bounded by the same 500bps ceiling as the forwarder, because a rate this
+     * column cannot deliver on chain is not a rate at all.
+     */
+    feeBps: integer('fee_bps').notNull().default(50),
+    /**
+     * Set when a human chose this rate rather than the volume ladder producing it.
+     *
+     * Without it the ladder would overwrite every negotiated rate at the next period,
+     * which would make each negotiation silently temporary — the worst of both, since
+     * nobody would find out until the merchant read their next invoice.
+     */
+    negotiatedFee: boolean('negotiated_fee').notNull().default(false),
+
     trialEndsAt: timestamp('trial_ends_at', { withTimezone: true }),
     currentPeriodStart: timestamp('current_period_start', { withTimezone: true }),
     currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
@@ -1011,6 +1033,10 @@ export const subscriptions = pgTable(
     // One subscription per merchant. Two would mean two answers to "may they trade".
     uniqueIndex('subscriptions_org_key').on(table.organizationId),
     index('subscriptions_status_idx').on(table.status),
+
+    // The forwarder reverts above 500bps, so a subscription carrying more than that
+    // could never produce a settleable invoice.
+    check('subscriptions_fee_bps_ceiling', sql`${table.feeBps} between 0 and 500`),
   ],
 );
 
