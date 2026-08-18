@@ -530,6 +530,7 @@
         <a href="#money">Amounts</a>
         <a href="#checkouts">Checkouts</a>
         <a href="#invoices">Invoices</a>
+        <a href="#stars">Telegram Stars</a>
         <a href="#payer">Payer endpoints</a>
         <a href="#webhooks">Webhooks</a>
         <a href="#config">Configuration</a>
@@ -771,6 +772,79 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
     </div>
   </section>
 
+  <!-- ── telegram stars ───────────────────────────────────────────────── -->
+  <section class="panel" id="stars">
+    <div class="panel-head"><h2>⭐ Telegram Stars</h2></div>
+    <div class="body">
+      <p>
+        If you sell inside Telegram, Stars can sit alongside your crypto orders — one
+        invoice model, one dashboard, one webhook stream. What we do for Stars is narrower
+        than for crypto, and the difference is structural rather than something we will fill
+        in later, so it is worth reading before you build.
+      </p>
+      <p class="note">
+        <strong>Your bot takes the Stars, not us.</strong> Stars paid to a bot land in that
+        bot's own Telegram balance. There is no address, no chain and nothing for a third
+        party to intercept — so AVEX is the record, not the custodian. We cannot hold them,
+        settle them, or take a percentage of them, and we do not pretend to: a Stars invoice
+        always carries <code>feeBps: 0</code>.
+      </p>
+
+      <h3>Setting up</h3>
+      <p>
+        Enable the <code>XTR</code> currency and set your own rate for it. Nothing prices
+        Stars — Telegram sells them in bundles at varying rates — so the rate is yours, the
+        same way it is for a token you issued. Stars are whole units, so an invoice too
+        small to express in them is refused rather than rounded up.
+      </p>
+
+      <h3>Taking a payment</h3>
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/invoices">
+        <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/invoices</span></div>
+        <p>
+          The same route as any invoice, with the <code>XTR</code> asset. You get back a
+          <code>depositAddress</code> of the form <code>telegram:&lt;uuid&gt;</code> — not an
+          address, a <strong>payload</strong>. Put it in <code>invoice_payload</code> when
+          your bot calls Telegram's <code>createInvoiceLink</code> with
+          <code>currency: "XTR"</code>.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/invoices/:invoiceId/telegram-payment">
+        <div class="route">
+          <span class="verb" data-verb="POST">POST</span>
+          <span class="path">/v1/organizations/<em>:orgId</em>/invoices/<em>:invoiceId</em>/telegram-payment</span>
+        </div>
+        <div class="params">
+          <div class="param"><code>chargeId</code><span><span class="req">required</span> — <code>telegram_payment_charge_id</code> from <code>successful_payment</code>. Also the idempotency key.</span></div>
+          <div class="param"><code>amountStars</code><span><span class="req">required</span> — <code>total_amount</code> from the same object.</span></div>
+          <div class="param"><code>payload</code><span><code>invoice_payload</code>. Checked against the invoice when sent, which catches a payment reported against the wrong order.</span></div>
+        </div>
+        <pre><span class="c"># In your bot's successful_payment handler</span>
+curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices/<em>INVOICE_ID</em>/telegram-payment \
+  -H <span class="s">"Authorization: Bearer ak_live_…"</span> \
+  -H <span class="s">"Content-Type: application/json"</span> \
+  -d <span class="s">'{"chargeId":"...","amountStars":"200","payload":"telegram:4d2a..."}'</span></pre>
+        <p class="note">
+          Safe to call twice. Telegram does not promise an update arrives exactly once, so
+          the charge id is the idempotency key — a repeat answers
+          <code>alreadyRecorded: true</code> and credits nothing further. Reporting the same
+          charge against a <em>different</em> invoice is refused with
+          <code>422 charge_reused</code>: that is an integration bug, not a retry, and
+          treating it as one would mark a second order paid against the first one's money.
+        </p>
+      </div>
+
+      <h3>What this means for your figures</h3>
+      <p class="note">
+        The evidence for a Stars payment is your API key and nothing else — there is no chain
+        for us to read. So Stars are recorded as <strong>self-reported</strong> and
+        contribute no priced volume to your reports. They are visible as what they are
+        rather than blended into figures we can stand behind.
+      </p>
+    </div>
+  </section>
+
   <!-- ── payer endpoints ──────────────────────────────────────────────── -->
   <section class="panel" id="payer">
     <div class="panel-head"><h2>🌐 Payer endpoints <span class="tag" data-tag="public">no credentials</span></h2></div>
@@ -969,6 +1043,9 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
         <div class="code-row"><b>409</b><code>no_payout_address</code><span>Add one for that chain.</span></div>
         <div class="code-row"><b>409</b><code>fixed_rate_expired</code><span>Your own rate lapsed. Set a current one.</span></div>
         <div class="code-row"><b>409</b><code>not_test_mode</code><span>That only works on a test invoice.</span></div>
+        <div class="code-row"><b>409</b><code>not_stars</code><span>That invoice is not in Stars. A crypto invoice is paid on chain.</span></div>
+        <div class="code-row"><b>422</b><code>charge_reused</code><span>That Telegram charge is already recorded against another invoice.</span></div>
+        <div class="code-row"><b>422</b><code>payload_mismatch</code><span>The Telegram payload belongs to a different invoice.</span></div>
         <div class="code-row"><b>409</b><code>locked</code><span>A payment is already on its way; the currency cannot change.</span></div>
         <div class="code-row"><b>410</b><code>expired</code><span>The checkout link was real and is now gone. Issue a new one.</span></div>
         <div class="code-row"><b>422</b><code>amount_invalid</code><span>Zero, negative, both amounts at once, or an asset too coarse to express it.</span></div>

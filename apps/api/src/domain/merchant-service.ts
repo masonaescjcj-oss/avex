@@ -29,7 +29,12 @@ import {
 
 export class MerchantError extends Error {
   constructor(
-    readonly code: 'not_found' | 'not_test_mode',
+    readonly code:
+      | 'not_found'
+      | 'not_test_mode'
+      | 'not_stars'
+      | 'payload_mismatch'
+      | 'charge_reused',
     message: string,
   ) {
     super(message);
@@ -312,6 +317,141 @@ export class MerchantService {
       .where(eq(invoices.id, invoiceId));
 
     return { invoiceId, mode: invoice.mode, status, amountPaid: amountPaid.toString(), txHash };
+  }
+
+  /**
+   * Record a Telegram Stars payment reported by the merchant's own bot.
+   *
+   * What AVEX can honestly do for Stars is narrower than for crypto, and the narrowness is
+   * structural. Stars paid to a bot land in that bot's Telegram balance: there is no chain
+   * to read, no address to watch and nothing for us to sweep. So we are the record rather
+   * than the custodian — one order model, one dashboard, one webhook stream covering both
+   * rails, which is what a merchant selling inside Telegram actually wants.
+   *
+   * The evidence is the merchant's API key and nothing more. That is worth stating plainly
+   * rather than dressing up: a merchant could report Stars that never arrived. It would
+   * only inflate their own volume — which raises their bill — except in one direction that
+   * matters, since more volume reaches a cheaper commission tier. So the payment is
+   * recorded with `self_reported` provenance and counted as such, the same trade already
+   * made for merchant-set rates: prevention is not available here, so detection is.
+   *
+   * Idempotent on Telegram's own `telegram_payment_charge_id`. A bot that retries its
+   * forward, or receives the same update twice, must not credit twice.
+   */
+  async recordStarsPayment(
+    organizationId: string,
+    invoiceId: string,
+    input: {
+      readonly chargeId: string;
+      readonly amountStars: bigint;
+      readonly payload?: string | undefined;
+    },
+  ) {
+    const [invoice] = await this.db
+      .select({ invoice: invoices, assetKind: assets.kind })
+      .from(invoices)
+      .innerJoin(assets, eq(assets.id, invoices.assetId))
+      .where(and(eq(invoices.id, invoiceId), eq(invoices.organizationId, organizationId)))
+      .limit(1);
+    if (!invoice) throw new MerchantError('not_found', 'No such invoice.');
+
+    if (invoice.assetKind !== 'stars') {
+      throw new MerchantError(
+        'not_stars',
+        'That invoice is not denominated in Telegram Stars. A crypto invoice is paid on chain.',
+      );
+    }
+
+    /**
+     * The payload must match, when one was sent.
+     *
+     * Telegram echoes back whatever the bot put in `invoice_payload`, and ours is the
+     * invoice's own deposit column. Checking it catches a bot that reported the right
+     * payment against the wrong invoice — which is the mistake an integration makes when it
+     * keys its own order table differently from ours.
+     */
+    if (input.payload !== undefined && input.payload !== invoice.invoice.depositAddress) {
+      throw new MerchantError(
+        'payload_mismatch',
+        'That payment belongs to a different invoice: the Telegram payload does not match.',
+      );
+    }
+
+    /**
+     * Keyed on Telegram's charge id, in the column the chain path uses for a transaction
+     * hash. Same unique constraint, same protection — a retried forward is a duplicate
+     * insert rather than a second credit.
+     */
+    const txHash = `tg:${input.chargeId}`;
+    try {
+      await this.db.insert(payments).values({
+        invoiceId,
+        chain: invoice.invoice.chain,
+        txHash,
+        transferIndex: 0,
+        amount: input.amountStars.toString(),
+        blockNumber: 0,
+        creditedAt: new Date(),
+        /**
+         * The invoice's own fiat figure, not a rate applied now.
+         *
+         * The merchant priced this invoice when they created it; re-deriving a value here
+         * would let a rate change between creation and payment silently restate what the
+         * sale was worth.
+         */
+        valueUsdMicros: null,
+        valueSource: 'self_reported',
+      });
+    } catch (error) {
+      /**
+       * A duplicate has two causes, and they need different answers.
+       *
+       * The uniqueness is on (chain, txHash) across every invoice, not within one — so the
+       * lookup deliberately ignores the invoice id. If the existing row belongs to *this*
+       * invoice, a bot retried its forward and there is nothing to do. If it belongs to
+       * another, one Telegram charge has been reported against two invoices, which is a bug
+       * in the integration and not something a retry will fix.
+       *
+       * Reporting the second as "already recorded" would be worse than the 500 it replaces:
+       * the bot would mark an order paid against a payment that belongs elsewhere.
+       */
+      const [existing] = await this.db
+        .select({ invoiceId: payments.invoiceId })
+        .from(payments)
+        .where(and(eq(payments.chain, invoice.invoice.chain), eq(payments.txHash, txHash)))
+        .limit(1);
+      if (!existing) throw error;
+
+      if (existing.invoiceId !== invoiceId) {
+        throw new MerchantError(
+          'charge_reused',
+          'That Telegram charge is already recorded against a different invoice.',
+        );
+      }
+      return { invoiceId, status: invoice.invoice.status, alreadyRecorded: true } as const;
+    }
+
+    const total = await this.db
+      .select({ sum: sql<string>`coalesce(sum(${payments.amount}), 0)::text` })
+      .from(payments)
+      .where(and(eq(payments.invoiceId, invoiceId), isNull(payments.reversedAt)));
+    const amountPaid = BigInt(total[0]?.sum ?? '0');
+
+    const due = BigInt(invoice.invoice.amountDue);
+    const tolerance = (due * BigInt(invoice.invoice.toleranceBps)) / 10_000n;
+    const status =
+      amountPaid < due - tolerance ? 'underpaid' : amountPaid > due + tolerance ? 'overpaid' : 'paid';
+
+    await this.db
+      .update(invoices)
+      .set({
+        amountPaid: amountPaid.toString(),
+        status,
+        paidAt: status === 'paid' ? new Date() : invoice.invoice.paidAt,
+      })
+      .where(eq(invoices.id, invoiceId));
+
+    return { invoiceId, status, amountPaid: amountPaid.toString(), alreadyRecorded: false } as const;
   }
 
   // ── webhooks ────────────────────────────────────────────────────────────────

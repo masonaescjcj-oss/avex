@@ -1,7 +1,10 @@
 import {
+  DEFAULT_MAX_ROUNDING_BPS,
   DEFAULT_QUOTE_TTL_MS,
   QuoteInputError,
   createQuote,
+  fiatToTokenAmount,
+  tokenAmountToFiat,
   type Asset,
   type FeeSplit,
   type PriceSymbol,
@@ -106,6 +109,16 @@ export interface RateProvider {
   requireRate(symbol: PriceSymbol): Promise<Rate>;
 }
 
+/**
+ * The rail Telegram Stars ride on, in the `chain` column.
+ *
+ * Not a chain, and deliberately not in `SUPPORTED_CHAINS`. Stars paid to a bot land in
+ * that bot's own Telegram balance: there is no address to derive, no transfer to watch and
+ * nothing for us to sweep. Anything that treats this string as a chain will fail to find a
+ * registry entry, which is the right failure.
+ */
+export const TELEGRAM_RAIL = 'telegram';
+
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const MIN_TTL_MS = 60 * 1000;
 
@@ -150,9 +163,17 @@ export class InvoiceCreationService {
     // 2. The asset, and this merchant's configuration for it.
     const config = await this.resolveAsset(organizationId, request.assetId);
 
-    // 3. Where the money ends up. Captured now, so a later payout-address change
-    //    cannot retarget an invoice a payer is already looking at.
-    const payoutAddress = await this.resolvePayoutAddress(organizationId, config.asset.chain);
+    /**
+     * 3. Where the money ends up.
+     *
+     * Captured now, so a later payout-address change cannot retarget an invoice a payer is
+     * already looking at. Stars are the exception and it is structural: the customer pays
+     * the merchant's own bot, so the funds are already where they are going and there is no
+     * address for us to hold. The column records the rail rather than pretending otherwise.
+     */
+    const payoutAddress = config.stars
+      ? 'telegram:bot'
+      : await this.resolvePayoutAddress(organizationId, config.asset.chain);
 
     // 4. The rate, and from it the amount. `createQuote` is pure, so every rounding
     //    decision it makes is testable without a network.
@@ -162,7 +183,16 @@ export class InvoiceCreationService {
      * 5. The commission, decided before the address exists because it feeds the
      *    address. Zero and undefined both mean the merchant keeps everything.
      */
-    const fee = await this.subscriptions.feeFor(organizationId, config.asset.chain);
+    /**
+     * No commission on Stars, and this is a limit rather than a policy.
+     *
+     * A percentage is collectable because the forwarder splits it on the way out. Stars
+     * never pass through anything we control, so there is nothing to split — charging for
+     * them would mean invoicing the merchant separately for money we never touched.
+     */
+    const fee = config.stars
+      ? undefined
+      : await this.subscriptions.feeFor(organizationId, config.asset.chain);
 
     // 6. Write the quote, then derive the address from the id it was given, then the
     //    invoice. The id has to exist before the address can be derived from it.
@@ -172,7 +202,8 @@ export class InvoiceCreationService {
         organizationId,
         chain: config.asset.chain,
         assetSymbol: config.asset.symbol,
-        assetContract: config.asset.contract ?? null,
+        // Stars have no contract, and no chain to have one on.
+        assetContract: 'contract' in config.asset ? config.asset.contract ?? null : null,
         assetDecimals: String(config.asset.decimals),
         mode: config.pricingMode,
         amountDue: quote.amountDue.toString(),
@@ -188,20 +219,33 @@ export class InvoiceCreationService {
 
     const invoiceId = crypto.randomUUID();
     const mode = request.mode ?? 'live';
+
+    /**
+     * Stars carry a payload, not an address.
+     *
+     * The merchant's bot puts this string in `invoice_payload` when it calls Telegram's
+     * `createInvoiceLink`, and sends it back when the payment succeeds. It is how a Stars
+     * payment finds its invoice, doing the job a deposit address does everywhere else —
+     * which is why it goes in the same column rather than a new one.
+     */
     let target;
-    try {
-      target = this.deriver.derive({
-        invoiceId,
-        chain: config.asset.chain,
-        payoutAddress,
-        fee,
-        mode,
-      });
-    } catch (error) {
-      if (error instanceof DepositAddressError) {
-        throw new InvoiceCreationError(error.code, error.message);
+    if (config.stars) {
+      target = { address: `${TELEGRAM_RAIL}:${invoiceId}`, memo: undefined };
+    } else {
+      try {
+        target = this.deriver.derive({
+          invoiceId,
+          chain: config.asset.chain,
+          payoutAddress,
+          fee,
+          mode,
+        });
+      } catch (error) {
+        if (error instanceof DepositAddressError) {
+          throw new InvoiceCreationError(error.code, error.message);
+        }
+        throw error;
       }
-      throw error;
     }
 
     const [created] = await this.db
@@ -321,11 +365,42 @@ export class InvoiceCreationService {
       );
     }
 
+    /**
+     * Telegram Stars are not a chain asset, and the type says so.
+     *
+     * `Asset.chain` is a `ChainId`, so widening it to hold `telegram` would put Stars in
+     * front of every chain adapter, the settlement queue and the gas model — none of which
+     * can do anything with them. The cast below is narrowed by this check rather than by
+     * hope: a Stars asset never reaches this line.
+     *
+     * `kind` is what identifies the rail rather than `chain`, because a merchant could in
+     * principle name the chain column anything and the kind comes from our own vetting.
+     */
+    const isStars = row.asset.kind === 'stars';
+    if (isStars) {
+      return {
+        asset: {
+          id: row.asset.id,
+          chain: TELEGRAM_RAIL,
+          symbol: row.asset.symbol,
+          decimals: row.asset.decimals,
+          kind: 'stars' as const,
+        },
+        pricingMode: row.config.pricingMode as PricingMode,
+        spreadBps: row.config.spreadBps,
+        toleranceBps: row.config.toleranceBps,
+        fixedRateScaled: row.config.fixedRateScaled,
+        fixedRateValidUntil: row.config.fixedRateValidUntil,
+        requiresFixedRate: row.asset.requiresFixedRate,
+        stars: true as const,
+      };
+    }
+
     const asset: Asset = {
       chain: row.asset.chain as Asset['chain'],
       symbol: row.asset.symbol,
       decimals: row.asset.decimals,
-      kind: row.asset.kind,
+      kind: row.asset.kind as Asset['kind'],
       ...(row.asset.contract === null ? {} : { contract: row.asset.contract }),
     };
 
@@ -337,6 +412,7 @@ export class InvoiceCreationService {
       fixedRateScaled: row.config.fixedRateScaled,
       fixedRateValidUntil: row.config.fixedRateValidUntil,
       requiresFixedRate: row.asset.requiresFixedRate,
+      stars: false as const,
     };
   }
 
@@ -424,10 +500,76 @@ export class InvoiceCreationService {
       sources = ['merchant_rate'];
     }
 
+    /**
+     * Stars are priced here rather than through `createQuote`.
+     *
+     * Not a shortcut — `createQuote` takes a chain `Asset`, and Stars are not one. The
+     * arithmetic it would apply is the same call this makes directly, so the two agree by
+     * using the same function rather than by two implementations happening to match.
+     *
+     * `fixed_rate` is the only mode Stars can use, because nothing prices them. The rate
+     * is the merchant's own, so it takes no spread — the same rule as any other
+     * merchant-set rate.
+     */
+    if (config.stars) {
+      if (request.amountFiatMicros === undefined) {
+        throw new InvoiceCreationError(
+          'amount_invalid',
+          'Telegram Stars are priced in fiat. Send amountFiatMicros.',
+        );
+      }
+      /**
+       * A missing rate is already refused above, by the `fixed_rate` branch that runs
+       * before this one. No second check here: dead code that claims to handle a case is
+       * worse than no code, because a reader trusts it.
+       */
+      if (rate === undefined) {
+        throw new InvoiceCreationError('fixed_rate_required', 'No Stars rate is configured.');
+      }
+
+      const amountDue = fiatToTokenAmount(request.amountFiatMicros, rate, config.asset.decimals);
+
+      /**
+       * The rounding guard `createQuote` applies, applied here too.
+       *
+       * Stars are whole units, and conversion rounds up so a merchant is never left short.
+       * On an asset this coarse that is a real hazard rather than a rounding artefact: at
+       * $0.015 a Star, a one-cent invoice rounds up to one Star and the payer is charged
+       * 50% more than they owe. My first version guarded `amountDue <= 0n`, which can never
+       * fire precisely *because* the conversion rounds up — it was the wrong end of the
+       * problem.
+       */
+      const overhead =
+        tokenAmountToFiat(amountDue, rate, config.asset.decimals) - request.amountFiatMicros;
+      const allowed = (request.amountFiatMicros * BigInt(DEFAULT_MAX_ROUNDING_BPS)) / 10_000n;
+      if (amountDue <= 0n || overhead > allowed) {
+        throw new InvoiceCreationError(
+          'amount_invalid',
+          `Stars are too coarse to price $${(Number(request.amountFiatMicros) / 1e6).toFixed(2)} ` +
+            'at your rate: rounding up to a whole Star would overcharge the payer. Invoice a ' +
+            'larger amount, or lower your Stars rate.',
+        );
+      }
+
+      return {
+        id: crypto.randomUUID(),
+        asset: config.asset,
+        mode: 'fixed_rate' as const,
+        amountDue,
+        marketRate: null,
+        effectiveRate: rate,
+        spreadBps: 0,
+        amountFiatMicros: request.amountFiatMicros,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + ttlMs,
+        sources,
+      };
+    }
+
     try {
       const quote = createQuote({
         id: crypto.randomUUID(),
-        asset: config.asset,
+        asset: config.asset as Asset,
         mode: config.pricingMode,
         spreadBps: config.spreadBps,
         ttlMs,

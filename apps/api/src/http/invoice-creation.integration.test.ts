@@ -114,7 +114,15 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     });
 
     subscriptions = new SubscriptionService(db, audit, {
-      feeCollectors: { bsc: FEE_COLLECTOR, ethereum: FEE_COLLECTOR },
+      /**
+       * A `telegram` collector is configured on purpose, even though Stars can never be
+       * split.
+       *
+       * Without it, a Stars invoice carries no commission because no collector exists —
+       * which is the right outcome for the wrong reason, and a mutation removing the
+       * Stars guard passed. With it configured, only the guard keeps the fee off.
+       */
+      feeCollectors: { bsc: FEE_COLLECTOR, ethereum: FEE_COLLECTOR, telegram: FEE_COLLECTOR },
     });
 
     const deriver = new DepositAddressDeriver(
@@ -1208,5 +1216,338 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     assert.equal(payload.amountDue, invoice.amountDue);
     assert.equal(payload.amountPaid, invoice.amountDue);
     assert.equal(payload.chain, 'bsc');
+  });
+
+  // ── Telegram Stars ─────────────────────────────────────────────────────────
+  //
+  // What AVEX can offer for Stars is narrower than for crypto, and the narrowness is
+  // structural: Stars paid to a bot land in that bot's own Telegram balance, so there is
+  // no chain to read, no address to watch and nothing to sweep. We are the record rather
+  // than the custodian — one order model and one webhook stream across both rails.
+
+  /**
+   * The Stars asset, priced by the merchant because nothing else prices Stars.
+   *
+   * Find-or-create, because `assets_chain_native_key` allows one contract-less asset per
+   * chain — which is the schema being right: there is exactly one Stars asset in the world,
+   * and per-merchant configuration is what differs. Passing `null` leaves the merchant
+   * with no rate, which is the case a Stars invoice must refuse.
+   */
+  async function enableStars(rateUsdMicrosPerStar: bigint | null = 15_000n): Promise<string> {
+    const [existing] = await db
+      .select({ id: schema.assets.id })
+      .from(schema.assets)
+      .where(and(eq(schema.assets.chain, 'telegram'), eq(schema.assets.kind, 'stars')))
+      .limit(1);
+
+    const assetId =
+      existing?.id ??
+      (
+        await db
+          .insert(schema.assets)
+          .values({
+            chain: 'telegram',
+            symbol: 'XTR',
+            contract: null,
+            // Whole units. A fraction of a Star does not exist.
+            decimals: 0,
+            kind: 'stars',
+            verdict: 'approved',
+            requiresFixedRate: true,
+            probedAt: new Date(),
+          })
+          .returning({ id: schema.assets.id })
+      )[0]!.id;
+
+    // RATE_SCALE is 1e18, so $0.015 a Star is 15e15.
+    const scaled = rateUsdMicrosPerStar === null ? null : (rateUsdMicrosPerStar * 10n ** 12n).toString();
+
+    await db
+      .insert(schema.merchantAssets)
+      .values({
+        organizationId: orgId,
+        assetId,
+        enabled: true,
+        pricingMode: 'fixed_rate',
+        fixedRateScaled: scaled,
+        fixedRateValidUntil: rateUsdMicrosPerStar === null ? null : new Date(Date.now() + 86_400_000),
+      })
+      .onConflictDoUpdate({
+        target: [schema.merchantAssets.organizationId, schema.merchantAssets.assetId],
+        set: {
+          enabled: true,
+          pricingMode: 'fixed_rate',
+          fixedRateScaled: scaled,
+          fixedRateValidUntil: rateUsdMicrosPerStar === null ? null : new Date(Date.now() + 86_400_000),
+        },
+      });
+
+    return assetId;
+  }
+
+  test('a Stars invoice needs no payout address and no deposit address', async () => {
+    /**
+     * Both absences are structural. The customer pays the merchant's own bot, so the funds
+     * are already where they are going — there is nothing for us to hold and nowhere for a
+     * payer to send.
+     */
+    const assetId = await enableStars();
+    const response = await open({ assetId, amountFiatMicros: '3000000' });
+    assert.equal(response.statusCode, 201, response.body);
+
+    const invoice = response.json();
+    assert.equal(invoice.chain, 'telegram');
+    // $3.00 at $0.015 a Star is 200 Stars, in whole units.
+    assert.equal(invoice.amountDue, '200');
+    // A payload, not an address: it is what the bot puts in `invoice_payload`.
+    assert.match(invoice.depositAddress, /^telegram:[0-9a-f-]{36}$/);
+    assert.equal(invoice.memo, null);
+  });
+
+  test('no commission is taken on Stars, because none is collectable', async () => {
+    /**
+     * A limit rather than a policy. A percentage is collectable because the forwarder
+     * splits it on the way out; Stars never pass through anything we control, so charging
+     * for them would mean invoicing the merchant separately for money we never touched.
+     */
+    const assetId = await enableStars();
+    const response = await open({ assetId, amountFiatMicros: '3000000' });
+    assert.equal(response.json().feeBps, 0);
+  });
+
+  test('a Stars invoice with no rate is refused, because nothing prices Stars', async () => {
+    const assetId = await enableStars(null);
+    const response = await open({ assetId, amountFiatMicros: '3000000' });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.json().error, 'fixed_rate_required');
+    assert.match(response.json().message, /no rate is configured/i);
+
+    // Restored, so the tests after this one see a priced rail.
+    await enableStars();
+  });
+
+  test('an amount too small to price in whole Stars is refused', async () => {
+    /**
+     * Stars are whole units and conversion rounds up, so the hazard is an overcharge rather
+     * than a zero. At $0.015 a Star a one-cent invoice rounds up to one Star — 50% more
+     * than owed. My first guard checked for zero, which can never happen precisely because
+     * the conversion rounds up; this checks the overhead, which is what `createQuote` does
+     * for every other asset.
+     */
+    const assetId = await enableStars();
+    const response = await open({ assetId, amountFiatMicros: '10000' });
+    assert.equal(response.statusCode, 422, response.body);
+    assert.match(response.json().message, /too coarse/);
+  });
+
+  test('an amount that divides cleanly into Stars is accepted', async () => {
+    // The other side of the same boundary: $3.00 is exactly 200 Stars, so there is no
+    // rounding to overcharge with.
+    const assetId = await enableStars();
+    const response = await open({ assetId, amountFiatMicros: '3000000' });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(response.json().amountDue, '200');
+  });
+
+  const reportStars = (invoiceId: string, body: Record<string, unknown>) =>
+    app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/invoices/${invoiceId}/telegram-payment`,
+      headers: auth(),
+      payload: body,
+    });
+
+  test('a reported Stars payment credits the invoice', async () => {
+    const assetId = await enableStars();
+    const invoice = (await open({ assetId, amountFiatMicros: '3000000' })).json();
+
+    const response = await reportStars(invoice.id, {
+      chargeId: `tg_ok_${unique}`,
+      amountStars: '200',
+      payload: invoice.depositAddress,
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().status, 'paid');
+    assert.equal(response.json().amountPaid, '200');
+    assert.equal(response.json().alreadyRecorded, false);
+  });
+
+  test('the same charge id reported twice credits once', async () => {
+    /**
+     * Telegram does not promise an update arrives exactly once, and a bot forwarding one
+     * may retry. Keyed on Telegram's own charge id, in the column the chain path uses for a
+     * transaction hash — same unique constraint, same protection.
+     */
+    const assetId = await enableStars();
+    const invoice = (await open({ assetId, amountFiatMicros: '3000000' })).json();
+    const body = { chargeId: `tg_dup_${unique}`, amountStars: '200', payload: invoice.depositAddress };
+
+    const first = await reportStars(invoice.id, body);
+    const second = await reportStars(invoice.id, body);
+
+    assert.equal(first.json().alreadyRecorded, false);
+    assert.equal(second.statusCode, 200, second.body);
+    assert.equal(second.json().alreadyRecorded, true);
+
+    const read = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/invoices/${invoice.id}`,
+      headers: auth(),
+    });
+    assert.equal(read.json().amountPaid, '200', 'a retried forward must not double the credit');
+  });
+
+  test('a payment reported against the wrong invoice is refused', async () => {
+    /**
+     * The mistake an integration makes when its own order table is keyed differently from
+     * ours. 422 rather than 409: the request is wrong and retrying it unchanged will not
+     * help.
+     */
+    const assetId = await enableStars();
+    const first = (await open({ assetId, amountFiatMicros: '3000000', reference: `s1-${unique}` })).json();
+    const second = (await open({ assetId, amountFiatMicros: '3000000', reference: `s2-${unique}` })).json();
+
+    const response = await reportStars(second.id, {
+      chargeId: `tg_wrong_${unique}`,
+      amountStars: '200',
+      // The other invoice's payload.
+      payload: first.depositAddress,
+    });
+    assert.equal(response.statusCode, 422, response.body);
+    assert.equal(response.json().error, 'payload_mismatch');
+  });
+
+  test('one Telegram charge cannot be reported against two invoices', async () => {
+    /**
+     * A bug in an integration rather than a retry, and the two must not be confused.
+     * Reporting this as "already recorded" would let the bot mark a second order paid
+     * against a payment that belongs to the first.
+     */
+    const assetId = await enableStars();
+    const first = (await open({ assetId, amountFiatMicros: '3000000', reference: `r1-${unique}` })).json();
+    const second = (await open({ assetId, amountFiatMicros: '3000000', reference: `r2-${unique}` })).json();
+    const chargeId = `tg_reuse_${unique}`;
+
+    const ok = await reportStars(first.id, { chargeId, amountStars: '200', payload: first.depositAddress });
+    assert.equal(ok.statusCode, 200, ok.body);
+
+    const reused = await reportStars(second.id, {
+      chargeId,
+      amountStars: '200',
+      payload: second.depositAddress,
+    });
+    assert.equal(reused.statusCode, 422, reused.body);
+    assert.equal(reused.json().error, 'charge_reused');
+
+    // And the second invoice was not credited.
+    const read = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/invoices/${second.id}`,
+      headers: auth(),
+    });
+    assert.equal(read.json().amountPaid, '0');
+  });
+
+  test('a partial Stars payment underpays', async () => {
+    const assetId = await enableStars();
+    const invoice = (await open({ assetId, amountFiatMicros: '3000000' })).json();
+
+    const response = await reportStars(invoice.id, {
+      chargeId: `tg_short_${unique}`,
+      amountStars: '100',
+      payload: invoice.depositAddress,
+    });
+    assert.equal(response.json().status, 'underpaid');
+  });
+
+  test('a crypto invoice cannot be paid with a Stars report', async () => {
+    // The mirror of `simulate-payment` refusing a live invoice: a rail's payment method is
+    // not a way in to another rail.
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+    const invoice = (await open({ assetId, amountFiatMicros: '1000000' })).json();
+
+    const response = await reportStars(invoice.id, { chargeId: `tg_x_${unique}`, amountStars: '10' });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.json().error, 'not_stars');
+    assert.match(response.json().message, /paid on chain/);
+  });
+
+  test("one merchant cannot report a payment on another merchant's Stars invoice", async () => {
+    const assetId = await enableStars();
+    const invoice = (await open({ assetId, amountFiatMicros: '3000000' })).json();
+
+    const other = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: {
+        email: `tg-${unique}@example.com`,
+        password,
+        organizationName: `TG ${unique}`,
+      },
+    });
+    const otherOrg = other.json().organizationId as string;
+    const login = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { email: `tg-${unique}@example.com`, password },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${otherOrg}/invoices/${invoice.id}/telegram-payment`,
+      headers: { authorization: `Bearer ${login.json().token as string}` },
+      payload: { chargeId: `tg_theft_${unique}`, amountStars: '200' },
+    });
+    assert.equal(response.statusCode, 404, response.body);
+  });
+
+  test('Stars volume is recorded as self-reported, and counts as nothing priced', async () => {
+    /**
+     * The honest position. The evidence for a Stars payment is the merchant's API key and
+     * nothing more — they could report Stars that never arrived. It would only inflate
+     * their own volume, which raises their bill, except in the one direction that matters:
+     * more volume reaches a cheaper commission tier.
+     *
+     * So it is recorded with its provenance and contributes no priced dollars, the same
+     * trade already made for merchant-set rates. Prevention is not available here.
+     */
+    const window = {
+      from: new Date(Date.now() - 86_400_000),
+      to: new Date(Date.now() + 60_000),
+    };
+    // A delta, not an absolute: earlier tests in this suite gave this merchant genuine
+    // verified volume, and asserting zero would be asserting the order tests run in.
+    const before = await subscriptions.assessedVolume(orgId, window);
+
+    const assetId = await enableStars();
+    const invoice = (await open({ assetId, amountFiatMicros: '3000000' })).json();
+    await reportStars(invoice.id, {
+      chargeId: `tg_prov_${unique}`,
+      amountStars: '200',
+      payload: invoice.depositAddress,
+    });
+
+    const [row] = await db
+      .select({ source: schema.payments.valueSource, value: schema.payments.valueUsdMicros })
+      .from(schema.payments)
+      .where(eq(schema.payments.invoiceId, invoice.id))
+      .limit(1);
+    assert.equal(row!.source, 'self_reported');
+    assert.equal(row!.value, null);
+
+    const after = await subscriptions.assessedVolume(orgId, window);
+    assert.equal(
+      after.verifiedUsdMicros,
+      before.verifiedUsdMicros,
+      'a self-reported payment must not become verified volume',
+    );
+    assert.equal(
+      after.declaredUsdMicros,
+      before.declaredUsdMicros,
+      'nor declared volume, which a merchant-set rate would be',
+    );
+    // It is counted as a payment we could not price, which is what it is.
+    assert.equal(after.unpricedPayments, before.unpricedPayments + 1);
   });
 });

@@ -242,6 +242,59 @@ export function registerMerchantRoutes(app: FastifyInstance, context: AppContext
     return reply.send(result);
   });
 
+  /**
+   * A Telegram Stars payment, reported by the merchant's own bot.
+   *
+   * `invoice:create` rather than a read permission: this writes a payment. The same key an
+   * integration uses to open invoices reports their payment, which keeps a Telegram bot to
+   * one credential.
+   */
+  app.post('/v1/organizations/:orgId/invoices/:invoiceId/telegram-payment', async (request, reply) => {
+    const params = orgParams.extend({ invoiceId: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        /**
+         * Telegram's own `telegram_payment_charge_id`, from `successful_payment`.
+         *
+         * Required, and the idempotency key. A bot that receives the same update twice —
+         * which Telegram does not promise never happens — must not credit twice.
+         */
+        chargeId: z.string().trim().min(1).max(200),
+        /** `total_amount` from the same object. Stars are whole units. */
+        amountStars: z.coerce.bigint().positive(),
+        /** `invoice_payload`, checked against the invoice when sent. */
+        payload: z.string().trim().max(300).optional(),
+      })
+      .parse(request.body);
+    const granted = await access(request);
+    requirePermission(granted, 'invoice:create');
+
+    const result = await context.merchant.recordStarsPayment(granted.organizationId, params.invoiceId, {
+      chargeId: body.chargeId,
+      amountStars: body.amountStars,
+      payload: body.payload,
+    });
+
+    await context.audit.record({
+      organizationId: granted.organizationId,
+      userId: granted.principal.kind === 'session' ? granted.principal.session.userId : null,
+      apiKeyId: granted.principal.kind === 'api_key' ? granted.principal.apiKeyId : null,
+      action: 'invoice.stars_reported',
+      targetType: 'invoice',
+      targetId: params.invoiceId,
+      // The charge id is recorded because it is the only thing tying our row back to
+      // Telegram's, and a merchant disputing a figure will be asked for it.
+      metadata: {
+        chargeId: body.chargeId,
+        amountStars: body.amountStars.toString(),
+        alreadyRecorded: result.alreadyRecorded,
+      },
+      ip: request.ip,
+    });
+
+    return reply.send(result);
+  });
+
   // ── reporting ─────────────────────────────────────────────────────────────
 
   app.get('/v1/organizations/:orgId/reports/volume', async (request, reply) => {
@@ -444,8 +497,18 @@ export function merchantErrorResponse(error: MerchantError): {
     case 'not_found':
       return { status: 404, body: { error: 'not_found', message: error.message } };
     case 'not_test_mode':
+    case 'not_stars':
       // 409 rather than 403: the credential was fine, the object was not.
-      return { status: 409, body: { error: 'not_test_mode', message: error.message } };
+      return { status: 409, body: { error: error.code, message: error.message } };
+    case 'charge_reused':
+    case 'payload_mismatch':
+      /**
+       * 422, not 409.
+       *
+       * The request itself is wrong — a genuine payment reported against the wrong
+       * invoice — and the bot must not retry it unchanged.
+       */
+      return { status: 422, body: { error: error.code, message: error.message } };
   }
 }
 

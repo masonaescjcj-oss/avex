@@ -426,7 +426,22 @@ export const quotes = pgTable(
  */
 
 export const assetVerdictEnum = pgEnum('asset_verdict', ['blocked', 'review', 'approved']);
-export const assetKindEnum = pgEnum('asset_kind', ['native', 'erc20', 'trc20', 'spl', 'jetton']);
+export const assetKindEnum = pgEnum('asset_kind', [
+  'native',
+  'erc20',
+  'trc20',
+  'spl',
+  'jetton',
+  /**
+   * Telegram Stars, which are not a token on any chain.
+   *
+   * Included because merchants selling inside Telegram want one set of orders and one
+   * webhook stream, not two. What AVEX can honestly offer for Stars is narrower than for
+   * crypto, and the narrowness is structural rather than a gap to fill later — see
+   * `telegram_payments` below.
+   */
+  'stars',
+]);
 
 export const assets = pgTable(
   'assets',
@@ -718,6 +733,18 @@ export const paymentValueSourceEnum = pgEnum('payment_value_source', [
   'merchant_rate',
   /** No price was available at all. Counts as nothing, and is visible as such. */
   'unknown',
+  /**
+   * Reported by the merchant's own server, with nothing of ours confirming it.
+   *
+   * Telegram Stars are the case. The payment happens between the customer and the
+   * merchant's bot, so there is no chain to read and no address to watch — the merchant
+   * tells us, authenticated with their API key, and that is the whole of the evidence.
+   *
+   * Kept distinct from `quote` and `oracle` because a merchant reporting their own volume
+   * can shift themselves into a cheaper commission tier. Counting it while labelling it is
+   * the same trade as `merchant_rate`: prevention is not available, so detection is.
+   */
+  'self_reported',
 ]);
 
 export const payments = pgTable(
