@@ -1,0 +1,15 @@
+{
+  "name": "@avex/site",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "avex.pay — the public site and documentation",
+  "scripts": {
+    "build": "tsc -b && node build-page.mjs",
+    "typecheck": "tsc -b --dry",
+    "test": "npm run build && node --test \"dist/**/*.test.js\" \"test/*.test.mjs\""
+  },
+  "dependencies": {
+    "@avex/core": "*"
+  }
+}

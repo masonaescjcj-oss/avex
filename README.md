@@ -11,11 +11,31 @@ twelve-phase build plan.
 ## Layout
 
 ```
-packages/core     chain adapters, fee policy, settlement, invoice domain
-apps/api          platform: identity, organisations, credentials, audit
-apps/checkout     the payer-facing page, and its QR encoder
-contracts         Forwarder.sol, and its verification on a real EVM
+packages/core       chain adapters, fee policy, settlement, invoice domain
+packages/ui-format  money and time formatting, shared by every panel
+apps/api            platform: identity, organisations, credentials, audit
+apps/checkout       the payer-facing page and receipt, and the QR encoder
+apps/merchant       the merchant dashboard
+apps/admin          the staff panel
+apps/site           the public site and its documentation
+contracts           Forwarder.sol, and its verification on a real EVM
+integrations        the WooCommerce plugin
 ```
+
+### The site states facts it does not own
+
+`apps/site` is the one surface nobody would think to test against reality, which makes it
+the one where a claim quietly stops being true. So it holds no numbers of its own: the
+chain table is built from `CURATED_ASSETS`, the commission ladder is compared against
+`FEE_TIERS` in the API by a test, the on-chain ceiling comes from `Forwarder.sol`, and the
+webhook window comes from the plugin that enforces it. Reprice the commission and the site
+fails its own suite rather than quoting last month's rate.
+
+The hero derives a real CREATE2 address in the browser using the same `keccak256` and
+`predictForwarder` the gateway calls. That is not a flourish: the page's central claim is
+that a deposit address commits to the merchant's wallet, and demonstrating it beside a
+hardcoded address would have been asserting it in the one medium where it could silently
+become false.
 
 ## Supported chains
 
