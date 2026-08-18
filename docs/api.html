@@ -1,0 +1,988 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AVEX Pay API</title>
+<style>
+  /**
+   * AVEX Pay — full roadmap.
+   *
+   * Styled in the AVEX product's own language: pure black ground, acid lime for
+   * the one thing that matters per block, dark cards at a 14-20px radius, and
+   * monospace for every number and identifier. Single dark theme, because AVEX
+   * has none other.
+   */
+  :root {
+    --void: #000000;
+    --card: #121212;
+    --card-2: #1A1A1A;
+    --card-3: #242424;
+    --line: #262626;
+    --line-2: #333333;
+
+    --ink: #FFFFFF;
+    --muted: #8B8B8B;
+    --faint: #5A5A5A;
+
+    --lime: #C6F73F;
+    --lime-ink: #0A0A0A;
+    --lime-wash: rgba(198, 247, 63, 0.10);
+    --lime-edge: rgba(198, 247, 63, 0.28);
+
+    --teal: #2ED3A0;
+    --teal-wash: rgba(46, 211, 160, 0.12);
+    --teal-edge: rgba(46, 211, 160, 0.28);
+    --amber: #F5A623;
+    --amber-wash: rgba(245, 166, 35, 0.12);
+    --coral: #FF5A4E;
+    --coral-wash: rgba(255, 90, 78, 0.12);
+
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+    --r-lg: 20px;
+    --r-md: 14px;
+    --r-sm: 10px;
+    --pill: 999px;
+
+    --s-2: 0.6875rem;
+    --s-1: 0.8125rem;
+    --s0: 0.9375rem;
+    --s1: 1.0625rem;
+    --s2: 1.375rem;
+    --s3: 1.875rem;
+    --s5: 3rem;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--void);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: var(--s0);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 74rem;
+    margin: 0 auto;
+    padding: clamp(1.5rem, 4vw, 3rem) clamp(1rem, 4vw, 2rem) 4rem;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(2rem, 5vw, 3.25rem);
+  }
+
+  /* ── masthead ───────────────────────────────────────────────────────── */
+
+  .masthead { display: flex; flex-direction: column; gap: 0.875rem; }
+
+  .tag {
+    align-self: flex-start;
+    font-family: var(--mono);
+    font-size: var(--s-2);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--lime);
+    background: var(--lime-wash);
+    border: 1px solid var(--lime-edge);
+    border-radius: var(--pill);
+    padding: 0.25rem 0.75rem;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 6vw, var(--s5));
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    margin: 0;
+  }
+  .lede { font-size: var(--s1); color: var(--muted); max-width: 64ch; margin: 0; }
+
+  .meta-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+  .meta-cell {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 0.875rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .meta-value {
+    font-family: var(--mono);
+    font-size: var(--s2);
+    font-weight: 700;
+    color: var(--lime);
+    font-variant-numeric: tabular-nums;
+  }
+  .meta-label { font-size: var(--s-2); color: var(--muted); }
+
+  /* ── sections ───────────────────────────────────────────────────────── */
+
+  section { display: flex; flex-direction: column; gap: 1.125rem; }
+
+  .sec-head { display: flex; align-items: baseline; gap: 0.75rem; }
+  .sec-num {
+    font-family: var(--mono);
+    font-size: var(--s-1);
+    color: var(--lime);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  h2 { font-size: var(--s3); font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+  h3 { font-size: var(--s1); font-weight: 700; margin: 0; }
+
+  .prose { display: flex; flex-direction: column; gap: 0.75rem; max-width: 72ch; }
+  .prose p { margin: 0; color: var(--muted); }
+  .prose strong { color: var(--ink); }
+
+  code, .mono {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    font-variant-numeric: tabular-nums;
+  }
+  code {
+    background: var(--card-3);
+    border-radius: 5px;
+    padding: 0.08em 0.35em;
+    color: var(--lime);
+  }
+
+  /* ── tables ─────────────────────────────────────────────────────────── */
+
+  .table-wrap {
+    overflow-x: auto;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: var(--s-1); min-width: 34rem; }
+  th, td {
+    text-align: left;
+    padding: 0.7rem 0.9rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    color: var(--muted);
+  }
+  th {
+    font-size: var(--s-2);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none; }
+  td strong { color: var(--ink); }
+  td.mono, th.mono { font-family: var(--mono); color: var(--ink); white-space: nowrap; }
+
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: var(--s-2);
+    padding: 0.1rem 0.55rem;
+    border-radius: var(--pill);
+    white-space: nowrap;
+  }
+  .pill-done { background: var(--teal-wash); color: var(--teal); }
+  .pill-warn { background: var(--amber-wash); color: var(--amber); }
+  .pill-idle { background: var(--card-3); color: var(--muted); }
+
+  /* ── decision blocks ────────────────────────────────────────────────── */
+
+  .decision {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-inline-start: 3px solid var(--teal);
+    border-radius: var(--r-md);
+    padding: 1.125rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+  .decision.is-open { border-inline-start-color: var(--amber); }
+  .decision-q { font-size: var(--s1); font-weight: 700; margin: 0; }
+  .decision p { margin: 0; color: var(--muted); }
+  .decision strong { color: var(--ink); }
+
+  .rec {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    background: var(--card-2);
+    border-radius: var(--r-sm);
+    padding: 0.75rem 0.875rem;
+    font-size: var(--s-1);
+  }
+  .rec-tag {
+    font-family: var(--mono);
+    font-size: var(--s-2);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--teal);
+    font-weight: 700;
+  }
+  .decision.is-open .rec-tag { color: var(--amber); }
+  .rec span:last-child { color: var(--muted); }
+  .rec strong { color: var(--ink); }
+
+  /* ── card grid ──────────────────────────────────────────────────────── */
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 0.625rem;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 1.125rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .card p { margin: 0; color: var(--muted); font-size: var(--s-1); }
+
+  /* ── flow strip ─────────────────────────────────────────────────────── */
+
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+    font-family: var(--mono);
+    font-size: var(--s-1);
+  }
+  .flow-node {
+    padding: 0.35rem 0.65rem;
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--pill);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .flow-node:last-child { border-color: var(--lime-edge); color: var(--lime); background: var(--lime-wash); }
+  .flow-arrow { color: var(--faint); }
+
+  /* ── phases ─────────────────────────────────────────────────────────── */
+
+  .phases { display: flex; flex-direction: column; gap: 0.75rem; }
+  .phase {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    display: grid;
+    grid-template-columns: 5rem minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .phase-rail {
+    background: var(--card-2);
+    border-inline-end: 1px solid var(--line);
+    padding: 1.125rem 0.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    text-align: center;
+  }
+  .phase-id {
+    font-family: var(--mono);
+    font-size: var(--s2);
+    font-weight: 700;
+    color: var(--lime);
+    font-variant-numeric: tabular-nums;
+  }
+  .phase-weeks { font-family: var(--mono); font-size: var(--s-2); color: var(--faint); line-height: 1.3; }
+  .phase-body { padding: 1.125rem 1.25rem; display: flex; flex-direction: column; gap: 0.6rem; }
+  .phase-title-row { display: flex; align-items: center; gap: 0.625rem; flex-wrap: wrap; }
+  .phase-goal { margin: 0; color: var(--muted); font-size: var(--s-1); }
+
+  .deliverables {
+    margin: 0;
+    padding-inline-start: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    color: var(--muted);
+    font-size: var(--s-1);
+  }
+  .deliverables::marker { color: var(--lime); }
+  .deliverables strong { color: var(--ink); }
+
+  .exit {
+    font-size: var(--s-1);
+    padding: 0.7rem 0.875rem;
+    background: var(--card-2);
+    border-radius: var(--r-sm);
+    border-inline-start: 2px solid var(--lime);
+    color: var(--muted);
+    margin: 0;
+  }
+  .exit-label {
+    font-family: var(--mono);
+    font-size: var(--s-2);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--lime);
+    font-weight: 700;
+    display: block;
+    margin-bottom: 0.15rem;
+  }
+
+  .phase.is-done { border-color: var(--teal-edge); }
+  .phase.is-done .phase-rail { background: var(--teal-wash); border-inline-end-color: var(--teal-edge); }
+  .phase.is-done .phase-id, .phase.is-done .phase-weeks { color: var(--teal); }
+  .phase.is-done .exit { border-inline-start-color: var(--teal); }
+  .phase.is-done .exit-label { color: var(--teal); }
+  .phase.is-done .deliverables::marker { color: var(--teal); }
+
+  .phase.is-milestone { border-color: var(--lime-edge); }
+  .phase.is-milestone .phase-rail { background: var(--lime-wash); border-inline-end-color: var(--lime-edge); }
+
+  /* ── callout ────────────────────────────────────────────────────────── */
+
+  .callout {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-inline-start: 3px solid var(--amber);
+    border-radius: var(--r-md);
+    padding: 1.125rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .callout h3 { color: var(--amber); }
+  .callout p { margin: 0; color: var(--muted); }
+  .callout strong { color: var(--ink); }
+
+  ul.plain {
+    margin: 0;
+    padding-inline-start: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    color: var(--muted);
+  }
+  ul.plain::marker { color: var(--lime); }
+  ul.plain strong { color: var(--ink); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 1.25rem;
+    color: var(--faint);
+    font-size: var(--s-1);
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  footer p { margin: 0; }
+
+  @media (max-width: 34rem) {
+    .phase { grid-template-columns: minmax(0, 1fr); }
+    .phase-rail {
+      flex-direction: row;
+      justify-content: flex-start;
+      gap: 0.75rem;
+      border-inline-end: none;
+      border-bottom: 1px solid var(--line);
+      padding: 0.75rem 1rem;
+    }
+  }
+</style>
+<style>
+  /* ── API reference additions ─────────────────────────────────────────── */
+
+  .endpoint {
+    background: var(--card);
+    border-radius: var(--r-md);
+    padding: 1rem 1.125rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    margin: 0.5rem 0;
+  }
+
+  .route {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: var(--s0);
+  }
+
+  .verb {
+    font-weight: 700;
+    font-size: var(--s-2);
+    letter-spacing: 0.06em;
+    padding: 0.15rem 0.5rem;
+    border-radius: var(--pill);
+    background: var(--card-3);
+    color: var(--muted);
+    flex: none;
+  }
+  .verb[data-verb="POST"] { background: var(--lime-wash); color: var(--lime); }
+  .verb[data-verb="GET"] { background: var(--teal-wash); color: var(--teal); }
+  .verb[data-verb="DELETE"] { background: var(--coral-wash); color: var(--coral); }
+  .verb[data-verb="PUT"] { background: var(--amber-wash); color: var(--amber); }
+
+  .path { color: var(--ink); word-break: break-all; }
+  .path em { color: var(--lime); font-style: normal; }
+
+  .tag {
+    font-size: var(--s-2);
+    font-family: var(--sans);
+    padding: 0.1rem 0.5rem;
+    border-radius: var(--pill);
+    border: 1px solid var(--line-2);
+    color: var(--muted);
+  }
+  .tag[data-tag="public"] { border-color: var(--teal-edge); color: var(--teal); }
+  .tag[data-tag="test-only"] { border-color: var(--amber-wash); color: var(--amber); }
+
+  pre {
+    margin: 0;
+    padding: 0.875rem 1rem;
+    background: var(--void);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: var(--s-1);
+    line-height: 1.7;
+    color: var(--ink);
+  }
+  pre .c { color: var(--faint); }
+  pre .k { color: var(--lime); }
+  pre .s { color: var(--teal); }
+
+  .params { display: flex; flex-direction: column; gap: 0.375rem; }
+  .param {
+    display: grid;
+    grid-template-columns: minmax(8rem, auto) 1fr;
+    gap: 0.75rem;
+    font-size: var(--s-1);
+    padding: 0.375rem 0;
+    border-top: 1px solid var(--line);
+  }
+  .param:first-child { border-top: 0; }
+  .param code { font-family: var(--mono); color: var(--lime); }
+  .param span { color: var(--muted); }
+  .param .req { color: var(--coral); font-size: var(--s-2); }
+
+  .codes { display: flex; flex-direction: column; gap: 0.25rem; }
+  .code-row {
+    display: grid;
+    grid-template-columns: 3.5rem minmax(9rem, auto) 1fr;
+    gap: 0.75rem;
+    font-size: var(--s-1);
+    padding: 0.3rem 0;
+    border-top: 1px solid var(--line);
+  }
+  .code-row:first-child { border-top: 0; }
+  .code-row b { font-family: var(--mono); color: var(--ink); }
+  .code-row code { font-family: var(--mono); color: var(--amber); }
+  .code-row span { color: var(--muted); }
+
+  .toc { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+  .toc a {
+    font-size: var(--s-1);
+    padding: 0.3rem 0.7rem;
+    border-radius: var(--pill);
+    background: var(--card-2);
+    color: var(--muted);
+    text-decoration: none;
+    border: 1px solid var(--line);
+  }
+  .toc a:hover { color: var(--ink); border-color: var(--line-2); }
+</style>
+
+<div class="page">
+  <header class="masthead">
+    <div class="brand"><span class="brand-mark">A</span>AVEX <span class="brand-pay">Pay</span></div>
+    <div class="invoice-ref">API reference <code>v1</code></div>
+  </header>
+
+  <section class="panel">
+    <div class="panel-head"><h1>Accept crypto in about twenty lines</h1></div>
+    <div class="body">
+      <p class="lead">
+        Two ways in. Open a <strong>checkout</strong> and send the customer a link — we
+        handle the currency choice, the address, the QR and the waiting. Or open an
+        <strong>invoice</strong> yourself if you already know which coin they are paying
+        in and want to render the payment page inside your own app.
+      </p>
+      <p class="note">
+        Everything below is the same API in test and live mode. Start with a test key,
+        drive your own webhook handler end to end with
+        <code>simulate-payment</code>, then swap the key. Nothing else changes.
+      </p>
+      <nav class="toc">
+        <a href="#auth">Authentication</a>
+        <a href="#modes">Test and live</a>
+        <a href="#money">Amounts</a>
+        <a href="#checkouts">Checkouts</a>
+        <a href="#invoices">Invoices</a>
+        <a href="#payer">Payer endpoints</a>
+        <a href="#webhooks">Webhooks</a>
+        <a href="#config">Configuration</a>
+        <a href="#errors">Errors</a>
+      </nav>
+    </div>
+  </section>
+
+  <!-- ── authentication ───────────────────────────────────────────────── -->
+  <section class="panel" id="auth">
+    <div class="panel-head"><h2>🔑 Authentication</h2></div>
+    <div class="body">
+      <p>
+        A bearer token on every request. Two kinds exist and they are not
+        interchangeable: an <strong>API key</strong> for your server, and a
+        <strong>session</strong> for a human in the dashboard.
+      </p>
+      <pre><span class="c"># Your server. The key carries its own mode and its own permissions.</span>
+curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
+  -H <span class="s">"Authorization: Bearer ak_live_…"</span></pre>
+      <p class="note">
+        Keys are shown once, at creation, and stored only as a hash — we cannot recover
+        one for you. Scope each key to what it needs: a key that opens invoices does not
+        need <code>settings:write</code>, and an integration that only reads should not
+        be able to move your payout address.
+      </p>
+      <p class="note">
+        Never put a key in a browser, a mobile app or anything a customer can read.
+        Nothing in this API needs one client-side — the payer endpoints below take no
+        credentials at all, which is exactly why.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── modes ────────────────────────────────────────────────────────── -->
+  <section class="panel" id="modes">
+    <div class="panel-head"><h2>🧪 Test and live</h2></div>
+    <div class="body">
+      <p>
+        A key's prefix is its mode: <code>ak_test_…</code> or <code>ak_live_…</code>.
+        Every invoice and checkout carries the mode it was created in, and echoes it back
+        so your logs can never be ambiguous about which one you are looking at.
+      </p>
+      <div class="params">
+        <div class="param"><code>ak_test_…</code><span>Only ever creates test objects. Asking for <code>mode: "live"</code> in the body changes nothing.</span></div>
+        <div class="param"><code>ak_live_…</code><span>Only ever creates live objects, for the same reason in reverse.</span></div>
+        <div class="param"><code>session</code><span>May pass <code>mode</code> explicitly. Defaults to live.</span></div>
+      </div>
+      <p class="note">
+        That rule is one-directional on purpose. A key you paste into staging, CI or a
+        third-party integration must not be able to take real money even if something
+        asks it to — and a live key must not be able to quietly stop charging your
+        customers.
+      </p>
+      <p>
+        A test invoice gets a deposit address that is <strong>not valid on any
+        chain</strong>, so nothing can be sent to it by accident. Pay it with
+        <code>simulate-payment</code> instead. Test volume never appears in your reports
+        and never counts towards your bill.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── money ────────────────────────────────────────────────────────── -->
+  <section class="panel" id="money">
+    <div class="panel-head"><h2>💱 Amounts, and why they are strings</h2></div>
+    <div class="body">
+      <p>
+        Every amount in this API is an integer in a string. Fiat is
+        <strong>micro-dollars</strong> — <code>"20000000"</code> is $20.00. Crypto is the
+        asset's <strong>smallest unit</strong> — <code>"20100502512562814071"</code> is
+        20.1005… USDT at eighteen decimals.
+      </p>
+      <p class="note">
+        Not a style choice. Eighteen decimals does not fit in a double, and a gateway that
+        rounded a balance would misreport what you are owed. Parse these with a big-integer
+        type, never with <code>parseFloat</code>.
+      </p>
+      <p>
+        Amounts owed always round <strong>up</strong> to the asset's precision, so you are
+        never left a fraction short of the figure you asked for. Valuations round down.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── checkouts ────────────────────────────────────────────────────── -->
+  <section class="panel" id="checkouts">
+    <div class="panel-head"><h2>🧾 Checkouts — the shortest path</h2></div>
+    <div class="body">
+      <p>
+        You know the amount; only your customer knows which coin they hold. A checkout
+        holds the amount and lets them choose, which is why you do not have to pick an
+        asset up front.
+      </p>
+
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/checkouts">
+        <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/checkouts</span></div>
+        <div class="params">
+          <div class="param"><code>amountFiatMicros</code><span><span class="req">required</span> — micro-dollars. <code>"25000000"</code> is $25.00.</span></div>
+          <div class="param"><code>reference</code><span>Your order id. Also the idempotency key — see below.</span></div>
+          <div class="param"><code>description</code><span>Shown to the customer above the amount.</span></div>
+          <div class="param"><code>successUrl</code><span>Where to send them once the payment is final.</span></div>
+          <div class="param"><code>cancelUrl</code><span>Where to send them if they give up.</span></div>
+          <div class="param"><code>ttlMs</code><span>How long they have to choose. One minute to one day; one hour by default.</span></div>
+          <div class="param"><code>mode</code><span>Session credentials only. An API key's mode always wins.</span></div>
+        </div>
+        <pre>curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/checkouts \
+  -H <span class="s">"Authorization: Bearer ak_test_…"</span> \
+  -H <span class="s">"Content-Type: application/json"</span> \
+  -d <span class="s">'{"amountFiatMicros":"25000000","reference":"order-1042","description":"Order 1042"}'</span>
+
+<span class="c"># 201 Created</span>
+{
+  <span class="k">"id"</span>: <span class="s">"9c1f…"</span>,
+  <span class="k">"url"</span>: <span class="s">"https://pay.avex.example/pay/9c1f…"</span>,
+  <span class="k">"status"</span>: <span class="s">"open"</span>,
+  <span class="k">"mode"</span>: <span class="s">"test"</span>,
+  <span class="k">"amountFiatMicros"</span>: <span class="s">"25000000"</span>,
+  <span class="k">"expiresAt"</span>: <span class="s">"2026-08-18T10:04:00.000Z"</span>
+}</pre>
+        <p class="note">
+          Send the customer to <code>url</code>. Retrying with the same
+          <code>reference</code> returns the same checkout and a <strong>200</strong>
+          instead of a 201 — so a dropped response never becomes two payment links for
+          one order, only one of which will ever be marked paid.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="GET /v1/organizations/:orgId/checkouts/:sessionId">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/checkouts/<em>:sessionId</em></span></div>
+        <p>
+          The checkout as you see it, including <code>invoiceId</code> once the customer
+          has chosen. Poll this, or take the webhook — the webhook is better.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/checkouts/:sessionId/cancel">
+        <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/checkouts/<em>:sessionId</em>/cancel</span></div>
+        <p>
+          Withdraw a checkout before it is paid. A paid checkout cannot be cancelled: the
+          money has arrived, and pretending otherwise would leave your customer looking at
+          a cancelled page having paid.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── invoices ─────────────────────────────────────────────────────── -->
+  <section class="panel" id="invoices">
+    <div class="panel-head"><h2>📥 Invoices — when you already know the asset</h2></div>
+    <div class="body">
+      <p>
+        Use these if you are rendering the payment page yourself, or the customer has
+        already chosen elsewhere. You need an <code>assetId</code> you have enabled and a
+        payout address on its chain.
+      </p>
+
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/invoices">
+        <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/invoices</span></div>
+        <div class="params">
+          <div class="param"><code>assetId</code><span><span class="req">required</span> — from your asset list.</span></div>
+          <div class="param"><code>amountFiatMicros</code><span>For <code>fiat</code> and <code>fixed_rate</code> pricing.</span></div>
+          <div class="param"><code>amountToken</code><span>For <code>token</code> pricing. Exactly one of the two.</span></div>
+          <div class="param"><code>reference</code><span>Your order id, and the idempotency key.</span></div>
+          <div class="param"><code>ttlMs</code><span>How long the payer has. Fifteen minutes by default.</span></div>
+          <div class="param"><code>mode</code><span>Session credentials only.</span></div>
+        </div>
+        <pre>curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
+  -H <span class="s">"Authorization: Bearer ak_test_…"</span> \
+  -H <span class="s">"Content-Type: application/json"</span> \
+  -d <span class="s">'{"assetId":"…","amountFiatMicros":"20000000","reference":"order-1042"}'</span>
+
+<span class="c"># 201 Created</span>
+{
+  <span class="k">"id"</span>: <span class="s">"4d2a…"</span>,
+  <span class="k">"mode"</span>: <span class="s">"test"</span>,
+  <span class="k">"chain"</span>: <span class="s">"bsc"</span>,
+  <span class="k">"status"</span>: <span class="s">"pending"</span>,
+  <span class="k">"amountDue"</span>: <span class="s">"20100502512562814071"</span>,
+  <span class="k">"amountPaid"</span>: <span class="s">"0"</span>,
+  <span class="k">"depositAddress"</span>: <span class="s">"AVEXTEST-BSC-…"</span>,
+  <span class="k">"memo"</span>: <span class="k">null</span>,
+  <span class="k">"feeBps"</span>: <span class="s">50</span>,
+  <span class="k">"toleranceBps"</span>: <span class="s">50</span>,
+  <span class="k">"expiresAt"</span>: <span class="s">"2026-08-18T09:19:00.000Z"</span>
+}</pre>
+        <p class="note">
+          <strong>Send only that asset, on that chain, to that address.</strong> The
+          address belongs to this invoice alone and can only ever pay your own wallet —
+          but a different token, or the right token on the wrong chain, is not
+          recoverable by us or by anyone.
+        </p>
+        <p class="note">
+          <code>memo</code> is non-null on shared-address chains such as TON, and there it
+          is what identifies the payment. A transfer without it cannot be matched
+          automatically.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="GET /v1/organizations/:orgId/invoices">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/invoices</span></div>
+        <div class="params">
+          <div class="param"><code>status</code><span><code>pending</code>, <code>confirming</code>, <code>paid</code>, <code>underpaid</code>, <code>overpaid</code>, <code>expired</code>.</span></div>
+          <div class="param"><code>chain</code><span>One chain.</span></div>
+          <div class="param"><code>reference</code><span>Exact match on your own order id.</span></div>
+          <div class="param"><code>from</code>, <code>to</code><span>ISO timestamps.</span></div>
+          <div class="param"><code>limit</code><span>1–200. Fifty by default.</span></div>
+          <div class="param"><code>cursor</code><span>From <code>nextCursor</code>. Keyspace paging, not offset — this list grows while you read it, and an offset would silently skip rows.</span></div>
+        </div>
+      </div>
+
+      <div class="endpoint" data-route="GET /v1/organizations/:orgId/invoices/:invoiceId">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/invoices/<em>:invoiceId</em></span></div>
+        <p>
+          One invoice with its payments and its settlement. Reversed payments are included
+          and marked, rather than hidden — a payment you saw yesterday vanishing today
+          would look like we lost it.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/invoices/:invoiceId/simulate-payment">
+        <div class="route">
+          <span class="verb" data-verb="POST">POST</span>
+          <span class="path">/v1/organizations/<em>:orgId</em>/invoices/<em>:invoiceId</em>/simulate-payment</span>
+          <span class="tag" data-tag="test-only">test mode only</span>
+        </div>
+        <div class="params">
+          <div class="param"><code>amount</code><span>Smallest units. Defaults to the full amount; pass less to produce an underpayment.</span></div>
+        </div>
+        <p>
+          Credits a test invoice as though a payment arrived, firing the same webhooks the
+          real path fires. This is how you test your handler without a faucet.
+        </p>
+        <p class="note">
+          Refused with <code>409 not_test_mode</code> on a live invoice, always. A live
+          invoice is paid on chain or not at all.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── payer endpoints ──────────────────────────────────────────────── -->
+  <section class="panel" id="payer">
+    <div class="panel-head"><h2>🌐 Payer endpoints <span class="tag" data-tag="public">no credentials</span></h2></div>
+    <div class="body">
+      <p>
+        The hosted checkout page uses these, and you can too if you are building your own.
+        They take <strong>no authentication</strong> — the session id in the URL is the
+        whole authorisation, so treat that link as a secret and send it only to the
+        customer it belongs to.
+      </p>
+      <p class="note">
+        Nothing here reveals your payout address, your commission or your other orders.
+        Browser access is allowed only from origins you register with us.
+      </p>
+
+      <div class="endpoint" data-route="GET /pay/:sessionId/state">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/pay/<em>:sessionId</em>/state</span><span class="tag" data-tag="public">public</span></div>
+        <p>
+          The amount, your business name, the status, and — once a currency is chosen —
+          the address to pay. Poll this to follow the payment.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="GET /pay/:sessionId/options">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/pay/<em>:sessionId</em>/options</span><span class="tag" data-tag="public">public</span></div>
+        <p>
+          Every currency and chain you can be paid in, with the exact amount for each at a
+          rate we will honour. An asset we cannot price right now comes back
+          <code>available: false</code> with a reason rather than disappearing.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="POST /pay/:sessionId/select">
+        <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/pay/<em>:sessionId</em>/select</span><span class="tag" data-tag="public">public</span></div>
+        <div class="params">
+          <div class="param"><code>assetId</code><span><span class="req">required</span> — from <code>/options</code>.</span></div>
+        </div>
+        <p>
+          Creates the invoice and returns the address. Picking the same asset twice is a
+          no-op. Switching before anything is sent gives a new address; switching after
+          money is on its way is refused with <code>409 locked</code>.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── webhooks ─────────────────────────────────────────────────────── -->
+  <section class="panel" id="webhooks">
+    <div class="panel-head"><h2>🔔 Webhooks</h2></div>
+    <div class="body">
+      <p>
+        Take the webhook rather than polling. Every delivery is signed; the secret is
+        shown once when you create the endpoint.
+      </p>
+
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/webhook-endpoints">
+        <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/webhook-endpoints</span></div>
+        <div class="params">
+          <div class="param"><code>url</code><span><span class="req">required</span> — HTTPS.</span></div>
+          <div class="param"><code>events</code><span><span class="req">required</span> — at least one. An endpoint subscribed to nothing receives nothing, which looks exactly like a broken integration.</span></div>
+        </div>
+        <pre><span class="c"># 201 Created — store the secret now, it is shown once.</span>
+{ <span class="k">"id"</span>: <span class="s">"…"</span>, <span class="k">"secret"</span>: <span class="s">"whsec_…"</span> }</pre>
+      </div>
+
+      <div class="endpoint" data-route="GET /v1/organizations/:orgId/webhook-endpoints">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/webhook-endpoints</span></div>
+        <p>Your endpoints with pending and failed delivery counts. Never the secret.</p>
+      </div>
+
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/webhook-endpoints/:endpointId/disable">
+        <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/webhook-endpoints/<em>:endpointId</em>/disable</span></div>
+        <p>Stop delivering, without deleting the history.</p>
+      </div>
+
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/webhook-endpoints/:endpointId/enable">
+        <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/webhook-endpoints/<em>:endpointId</em>/enable</span></div>
+        <p>Resume.</p>
+      </div>
+
+      <div class="endpoint" data-route="GET /v1/organizations/:orgId/webhook-deliveries">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/webhook-deliveries</span></div>
+        <p>
+          Recent attempts with the last error, so you can see why your endpoint is not
+          receiving instead of guessing.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/webhook-deliveries/:deliveryId/replay">
+        <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/webhook-deliveries/<em>:deliveryId</em>/replay</span></div>
+        <p>Queue one delivery again after you have fixed your end.</p>
+      </div>
+
+      <h3>Verifying a delivery</h3>
+      <p class="note">
+        Compare in constant time, and check the timestamp. A signature check that leaks
+        timing, or that accepts an hour-old payload, is not a signature check.
+      </p>
+      <pre><span class="c"># Node</span>
+<span class="k">const</span> expected = crypto
+  .createHmac(<span class="s">'sha256'</span>, secret)
+  .update(<span class="s">`${timestamp}.${rawBody}`</span>)
+  .digest(<span class="s">'hex'</span>);
+
+<span class="k">if</span> (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) reject();
+<span class="k">if</span> (Math.abs(Date.now() / <span class="s">1000</span> - timestamp) &gt; <span class="s">300</span>) reject();</pre>
+      <p class="note">
+        Deliveries retry, so your handler must be <strong>idempotent</strong> — key on the
+        invoice id and the status, not on having received the request. And read the
+        amount, not just the status: an <code>underpaid</code> invoice has real money
+        against it.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── configuration ────────────────────────────────────────────────── -->
+  <section class="panel" id="config">
+    <div class="panel-head"><h2>⚙️ Before your first live payment</h2></div>
+    <div class="body">
+      <p>Three things, or invoices will be refused with a reason saying which.</p>
+
+      <div class="endpoint" data-route="GET /v1/organizations/:orgId/assets">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/assets</span></div>
+        <p>
+          Everything you could accept, with whether you have enabled it, its pricing mode
+          and its review verdict. Only <code>approved</code> assets can be invoiced in.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="GET /v1/organizations/:orgId/payout-addresses">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/payout-addresses</span></div>
+        <p>
+          Where your money goes, per chain. You need one on every chain you accept —
+          funds can only ever move to an address you configured.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="POST /v1/organizations/:orgId/payout-addresses">
+        <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/payout-addresses</span></div>
+        <p class="note">
+          A change here is scheduled rather than immediate, and we email you. That delay is
+          the difference between a stolen session costing you one order and costing you
+          everything after it.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="GET /v1/organizations/:orgId/subscription">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/subscription</span></div>
+        <p>
+          What you pay, what you have processed this period, and how much of the free
+          allowance is left. Below $1,500 in a month the period costs nothing.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="GET /v1/organizations/:orgId/reports/volume">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/reports/volume</span></div>
+        <p>
+          Live volume by chain and asset, counted from credited unreversed payments rather
+          than from invoices marked paid. The two differ after a reorg, and this is the
+          one you should reconcile against.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="GET /v1/prices">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/prices</span></div>
+        <p>
+          The rates we are willing to quote, and which sources back them. A rate we cannot
+          corroborate across sources is not returned at all.
+        </p>
+      </div>
+
+      <div class="endpoint" data-route="GET /health">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/health</span><span class="tag" data-tag="public">public</span></div>
+        <p>For your monitoring. No credentials.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── errors ───────────────────────────────────────────────────────── -->
+  <section class="panel" id="errors">
+    <div class="panel-head"><h2>🚦 Errors</h2></div>
+    <div class="body">
+      <p>
+        Every failure is <code>{ "error": "code", "message": "…" }</code>. Branch on
+        <code>error</code>; show <code>message</code> to a human. The status tells you
+        which of you has to act.
+      </p>
+      <div class="codes">
+        <div class="code-row"><b>400</b><code>invalid_request</code><span>The body did not parse. <code>fields</code> says which.</span></div>
+        <div class="code-row"><b>401</b><code>unauthenticated</code><span>No credential, or not a valid one.</span></div>
+        <div class="code-row"><b>402</b><code>billing_blocked</code><span>Your subscription is overdue past grace. Pay, and this same request works. Invoices already issued still complete.</span></div>
+        <div class="code-row"><b>403</b><code>forbidden</code><span>The credential is real but lacks the permission.</span></div>
+        <div class="code-row"><b>404</b><code>not_found</code><span>Also what you get for something belonging to another merchant — confirming it exists would leak the id space.</span></div>
+        <div class="code-row"><b>409</b><code>asset_disabled</code><span>Enable it first.</span></div>
+        <div class="code-row"><b>409</b><code>asset_unapproved</code><span>Still in review, or blocked.</span></div>
+        <div class="code-row"><b>409</b><code>no_payout_address</code><span>Add one for that chain.</span></div>
+        <div class="code-row"><b>409</b><code>fixed_rate_expired</code><span>Your own rate lapsed. Set a current one.</span></div>
+        <div class="code-row"><b>409</b><code>not_test_mode</code><span>That only works on a test invoice.</span></div>
+        <div class="code-row"><b>409</b><code>locked</code><span>A payment is already on its way; the currency cannot change.</span></div>
+        <div class="code-row"><b>410</b><code>expired</code><span>The checkout link was real and is now gone. Issue a new one.</span></div>
+        <div class="code-row"><b>422</b><code>amount_invalid</code><span>Zero, negative, both amounts at once, or an asset too coarse to express it.</span></div>
+        <div class="code-row"><b>429</b><code>rate_limited</code><span><code>retry-after</code> says how long.</span></div>
+        <div class="code-row"><b>503</b><code>price_unavailable</code><span>No rate we trust right now. Retryable — <code>retryAfterSeconds</code> is a hint. We would rather refuse than misprice your invoice.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <p>
+      AVEX Pay is non-custodial. Every deposit address is derived so that it can only pay
+      the payout address you configured, and that binding is in the address itself rather
+      than in a promise — we could not redirect your funds if we wanted to.
+    </p>
+  </footer>
+</div>
