@@ -152,6 +152,85 @@ describe('staff panel', { skip: playwright ? false : 'playwright is not installe
     await context.close();
   });
 
+  test('the currency catalogue separates approved from offered, and says why', async () => {
+    /**
+     * The distinction the whole section turns on. Every operator who opens this will be
+     * about to conflate the two columns, because "approved" and "offered" sound like the
+     * same thing until somebody explains that they are not.
+     */
+    const { page, context } = await open();
+    const body = await section(page, 'Currencies');
+
+    assert.match(body, /Approved is not the same as offered/);
+    assert.match(body, /watcher and price feed/);
+    // Grouped by chain, because that is the unit of the decision.
+    assert.match(body, /solana/);
+    assert.match(body, /offered to merchants/);
+    await context.close();
+  });
+
+  test('a vetted currency we are not offering shows as approved and closed', async () => {
+    // The state the section exists for: a contract we trust on a chain we are not ready for.
+    const { page, context } = await open();
+    await section(page, 'Currencies');
+
+    const rows = await page.$$eval('#view tbody tr', (nodes) =>
+      nodes.map((node) => node.textContent.replace(/\s+/g, ' ').trim()),
+    );
+    const solana = rows.find((row) => /USDC/.test(row) && /no/.test(row));
+    assert.ok(solana, rows.join(' || '));
+    assert.match(solana, /approved/);
+    // And the control offered is to open it, not to re-approve it.
+    assert.ok(await page.$('#view button:has-text("Open")'));
+    await context.close();
+  });
+
+  test('a currency nothing can price is marked as needing the merchant rate', async () => {
+    /**
+     * It decides what a merchant has to do next, and it is worth knowing before offering a
+     * currency rather than after the first support message.
+     */
+    const { page, context } = await open();
+    const body = await section(page, 'Currencies');
+    assert.match(body, /merchant sets rate/);
+    assert.match(body, /quoted/);
+    await context.close();
+  });
+
+  test('closing a currency states how many merchants it affects', async () => {
+    /**
+     * The size of the act. "Close USDT on BSC" and "close USDT on BSC, which two merchants
+     * are accepting" are different decisions, and the dialog has to be the second one.
+     */
+    const { page, context } = await open();
+    await section(page, 'Currencies');
+    await page.click('#view button:has-text("Close")');
+    await page.waitForTimeout(200);
+
+    const modal = await text(page, '.modal');
+    assert.match(modal, /merchant\(s\) are accepting this right now/);
+    assert.match(modal, /Invoices already open still complete/);
+    await context.close();
+  });
+
+  test('adding a currency warns that it bypasses the probe', async () => {
+    /**
+     * The most damaging action in the panel. It adds an already-approved asset without
+     * probing, so a mistyped address becomes an approved currency for every merchant at
+     * once — and the whole defence against a token calling itself USDT is knowing where the
+     * real one lives.
+     */
+    const { page, context } = await open();
+    await section(page, 'Currencies');
+    await page.click('#view button:has-text("Add a currency")');
+    await page.waitForTimeout(200);
+
+    const modal = await text(page, '.modal');
+    assert.match(modal, /without probing the contract/);
+    assert.match(modal, /issuer/);
+    await context.close();
+  });
+
   test('a merchant can be opened from the list, with its commission on the page', async () => {
     /**
      * The regression this guards: whoever can change an account's rate has to see it first,

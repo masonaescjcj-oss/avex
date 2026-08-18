@@ -68,10 +68,10 @@ const FIXTURE = {
     invoicesByStatus: { paid: 3, underpaid: 1, pending: 2 },
   },
   assets: {
-    assets: [
-      { id: 'a1', symbol: 'USDT', chain: 'bsc', decimals: 18, verdict: 'approved', enabled: true, pricingMode: 'fiat' },
-      { id: 'a2', symbol: 'USDT', chain: 'ton', decimals: 6, verdict: 'approved', enabled: true, pricingMode: 'fiat' },
-      { id: 'a3', symbol: 'MINE', chain: 'bsc', decimals: 18, verdict: 'review', enabled: true, pricingMode: 'fixed_rate' },
+    data: [
+      { id: 'a1', symbol: 'USDT', chain: 'bsc', contract: '0x55d3', decimals: 18, kind: 'erc20', curated: true, verdict: 'approved', listed: true, requiresFixedRate: false, enabled: true, pricingMode: 'fiat', fixedRateValidUntil: null },
+      { id: 'a2', symbol: 'USDT', chain: 'ton', contract: 'EQCx', decimals: 6, kind: 'jetton', curated: true, verdict: 'approved', listed: true, requiresFixedRate: false, enabled: true, pricingMode: 'fiat', fixedRateValidUntil: null },
+      { id: 'a3', symbol: 'MINE', chain: 'bsc', contract: '0x9f2c', decimals: 18, kind: 'erc20', curated: false, verdict: 'review', listed: true, requiresFixedRate: true, enabled: false, pricingMode: null, fixedRateValidUntil: null },
     ],
   },
   payouts: { addresses: [{ chain: 'bsc', address: '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52', activeFrom: '2026-08-01T00:00:00.000Z', supersededAt: null }] },
@@ -142,8 +142,23 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         return route.fulfill(json({ organizations: [{ id: ORG, name: 'Example Store' }] }));
       }
 
+      if (method === 'PUT') {
+        posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
+        return route.fulfill({ status: 204, body: '' });
+      }
+
       if (method === 'POST') {
         posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
+        if (/\/assets$/.test(path)) {
+          return route.fulfill(json({
+            assetId: 'new-asset',
+            verdict: 'review',
+            symbol: 'NEW',
+            decimals: 18,
+            findings: [{ name: 'Contract has code', result: 'pass', detail: '4,912 bytes' }],
+            message: 'Submitted for review. You will be notified when it is decided.',
+          }, 202));
+        }
         if (path.endsWith('/checkouts')) {
           if (overrides.checkoutFails) {
             return route.fulfill(json({ error: 'no_assets', message: 'No currency is payable yet.' }, 409));
@@ -410,15 +425,91 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   // ── currencies and payouts ────────────────────────────────────────────────
 
-  test('each currency says whether its chain has a payout address', async () => {
-    // The table a merchant looks at when an invoice was refused, so the answer belongs
-    // here rather than only in the checklist.
+  test('each chain says whether it has a payout address', async () => {
+    /**
+     * The page a merchant opens when an invoice was refused, so the answer belongs here
+     * rather than only in the checklist — and per chain, because that is what a payout
+     * address is per.
+     */
     const { page, context } = await open();
     await page.click('nav.tabs button:has-text("Currencies")');
-    await page.waitForTimeout(150);
-    const body = await text(page, '#asset-table');
-    assert.match(body, /missing/);
-    assert.match(body, /set/);
+    await page.waitForTimeout(200);
+    const body = await text(page, '#asset-groups');
+    assert.match(body, /payout address set/);
+    assert.match(body, /no payout address/);
+    await context.close();
+  });
+
+  test('a currency on a chain with no address says invoices are refused', async () => {
+    /**
+     * The state a merchant is most likely to be in without knowing: they turned TON on,
+     * they believe they are accepting it, and every invoice is being refused.
+     */
+    const { page, context } = await open();
+    await page.click('nav.tabs button:has-text("Currencies")');
+    await page.waitForTimeout(200);
+
+    const row = await page.$eval('.asset-row[data-state="needs_payout"]', (node) =>
+      node.textContent.replace(/\s+/g, ' ').trim(),
+    );
+    assert.match(row, /Needs a payout address/);
+    assert.match(row, /refused/);
+    await context.close();
+  });
+
+  test('a currency can be turned on from the list', async () => {
+    // The whole point of the tab. It was read-only before, so a merchant had no way to say
+    // which currencies they accept.
+    const { page, context, posts } = await open();
+    await page.click('nav.tabs button:has-text("Currencies")');
+    await page.waitForTimeout(200);
+
+    await page.click('.asset-row[data-state="accepting"] button:has-text("Turn off")');
+    await page.waitForTimeout(250);
+
+    const write = posts.find((entry) => entry.path.includes('/assets/'));
+    assert.ok(write, 'turning a currency off should write to the API');
+    assert.equal(write.body.enabled, false);
+    // The pricing mode travels with it: `PUT` carries the whole configuration, and omitting
+    // it would have the API refuse the write over a rate the merchant never touched.
+    assert.equal(write.body.pricingMode, 'fiat');
+    await context.close();
+  });
+
+  test('a currency in review offers no switch, because none would help', async () => {
+    /**
+     * A control that silently does nothing reads as a broken page rather than as a refusal.
+     * The row still explains itself.
+     */
+    const { page, context } = await open();
+    await page.click('nav.tabs button:has-text("Currencies")');
+    await page.waitForTimeout(200);
+
+    const row = await page.$('.asset-row[data-state="in_review"]');
+    assert.ok(row);
+    assert.equal(await row.$('button'), null, 'no switch on a row a switch cannot fix');
+    assert.match(
+      (await row.textContent()).replace(/\s+/g, ' '),
+      /checking the contract/i,
+    );
+    await context.close();
+  });
+
+  test('a merchant can submit their own token for review', async () => {
+    // Approval is neither automatic nor instant, and the response says so rather than
+    // reading as "ready".
+    const { page, context, posts } = await open();
+    await page.click('nav.tabs button:has-text("Currencies")');
+    await page.waitForTimeout(200);
+
+    await page.fill('#submit-contract', '0x1234567890abcdef1234567890abcdef12345678');
+    await page.click('#submit-asset');
+    await page.waitForTimeout(250);
+
+    const submitted = posts.find((entry) => entry.path.endsWith('/assets'));
+    assert.ok(submitted);
+    assert.equal(submitted.body.chain, 'bsc');
+    assert.equal(submitted.body.contract, '0x1234567890abcdef1234567890abcdef12345678');
     await context.close();
   });
 
@@ -595,6 +686,41 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       assert.equal(await shown(page, '#flash'), false, `${label} flashed an error`);
     }
     assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('preview mode shows every state a currency can be in', async () => {
+    /**
+     * The tab exists because "off" has six causes and five are not the merchant's to fix. A
+     * preview that showed only approved rows would show one of them, so the fixture carries
+     * the lot — and this is what keeps it that way.
+     */
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const page = await context.newPage();
+    await page.route(`${PAGE}*`, (route) =>
+      route.fulfill({ path: pageFile, contentType: 'text/html' }),
+    );
+    await page.goto(`${PAGE}?preview=1`);
+    await page
+      .waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 6000 })
+      .catch(() => {});
+
+    await page.click('nav.tabs button:has-text("Currencies")');
+    await page.waitForTimeout(250);
+
+    const states = await page.$$eval('.asset-row', (rows) =>
+      rows.map((row) => row.dataset.state),
+    );
+    for (const state of ['accepting', 'off', 'needs_payout', 'in_review', 'withdrawn']) {
+      assert.ok(states.includes(state), `${state} is missing from the preview: ${states.join(', ')}`);
+    }
+
+    // The withdrawn row says it is us, not them — a merchant told only "unavailable" goes
+    // looking at their own configuration, and there is nothing there to find.
+    const withdrawn = await page.$eval('.asset-row[data-state="withdrawn"]', (node) =>
+      node.textContent.replace(/\s+/g, ' '),
+    );
+    assert.match(withdrawn, /AVEX is not accepting/);
     await context.close();
   });
 

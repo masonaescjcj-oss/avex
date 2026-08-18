@@ -1152,6 +1152,7 @@ curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices/
         <div class="code-row"><b>404</b><code>not_found</code><span>Also what you get for something belonging to another merchant — confirming it exists would leak the id space.</span></div>
         <div class="code-row"><b>409</b><code>asset_disabled</code><span>Enable it first.</span></div>
         <div class="code-row"><b>409</b><code>asset_unapproved</code><span>Still in review, or blocked.</span></div>
+        <div class="code-row"><b>409</b><code>asset_unlisted</code><span>We have stopped accepting that currency — our side, not yours. Invoices already open still complete.</span></div>
         <div class="code-row"><b>409</b><code>no_payout_address</code><span>Add one for that chain.</span></div>
         <div class="code-row"><b>409</b><code>fixed_rate_expired</code><span>Your own rate lapsed. Set a current one.</span></div>
         <div class="code-row"><b>409</b><code>not_test_mode</code><span>That only works on a test invoice.</span></div>

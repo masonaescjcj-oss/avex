@@ -50,6 +50,8 @@ export const STAFF_PERMISSIONS = [
   'staff:read',
   /** Create, disable, and re-role other staff. */
   'staff:write',
+  /** See the platform's asset catalogue and which merchants use each entry. */
+  'asset_list:read',
   /** Add to or flag the global curated asset list — affects every merchant. */
   'asset_list:write',
   /** Open or close a chain or asset by hand, outside the automatic breakers. */
@@ -65,6 +67,14 @@ const SUPPORT: readonly StaffPermission[] = [
   'health:read',
   'audit:read',
   'staff:read',
+  /**
+   * Reading the catalogue is a support action.
+   *
+   * "Why can't I enable USDC on Solana" is a question support gets, and the answer is on
+   * this list. Withholding it would mean escalating a question whose answer is one screen
+   * away, while the write that actually matters stays superadmin-only.
+   */
+  'asset_list:read',
 ];
 
 const OPERATOR: readonly StaffPermission[] = [

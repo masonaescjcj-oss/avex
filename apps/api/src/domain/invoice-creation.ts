@@ -43,6 +43,7 @@ export class InvoiceCreationError extends Error {
       | 'asset_unknown'
       | 'asset_disabled'
       | 'asset_unapproved'
+      | 'asset_unlisted'
       | 'fixed_rate_required'
       | 'fixed_rate_expired'
       | 'no_payout_address'
@@ -398,6 +399,24 @@ export class InvoiceCreationService {
       throw new InvoiceCreationError(
         'asset_unapproved',
         `This asset is ${row.asset.verdict} and cannot be invoiced in yet.`,
+      );
+    }
+
+    /**
+     * We have stopped offering it, and the reason given is that rather than a verdict.
+     *
+     * A separate refusal from `asset_unapproved` because the cause is ours, not the
+     * merchant's: nothing about their configuration or the contract has changed, so telling
+     * them the asset is unapproved would send them to look in the wrong place.
+     *
+     * Only new invoices are refused. Anything already open keeps working — its deposit
+     * address is committed and a payer may be mid-transfer.
+     */
+    if (!row.asset.listed) {
+      throw new InvoiceCreationError(
+        'asset_unlisted',
+        `AVEX is not currently accepting ${row.asset.symbol} on ${row.asset.chain}. ` +
+          'Invoices already open will still complete.',
       );
     }
 

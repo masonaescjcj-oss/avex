@@ -20,6 +20,7 @@ const SUPPORT = [
   'health:read',
   'audit:read',
   'staff:read',
+  'asset_list:read',
 ];
 const OPERATOR = [
   ...SUPPORT,
@@ -33,7 +34,7 @@ const SUPERADMIN = [...OPERATOR, 'staff:write', 'asset_list:write'];
 
 test('a support user sees every read-only section', () => {
   const ids = visibleNav(SUPPORT).map((item) => item.id);
-  assert.deepEqual(ids, ['health', 'merchants', 'revenue', 'unmatched', 'review', 'settlements', 'audit']);
+  assert.deepEqual(ids, ['health', 'merchants', 'revenue', 'catalogue', 'unmatched', 'review', 'settlements', 'audit']);
 });
 
 test('a permission list missing a read hides that section', () => {

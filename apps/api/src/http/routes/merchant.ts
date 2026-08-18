@@ -487,6 +487,7 @@ export function invoiceCreationErrorResponse(error: InvoiceCreationError): {
       return { status: 404, body: { error: error.code, message: error.message } };
     case 'asset_disabled':
     case 'asset_unapproved':
+    case 'asset_unlisted':
     case 'fixed_rate_required':
     case 'fixed_rate_expired':
     case 'no_payout_address':

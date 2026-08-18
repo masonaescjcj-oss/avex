@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import {
+  assetStance,
+  assetUrgency,
+  type AssetState,
   commissionLabel,
   commissionParts,
   feePayerChoices,
+  groupAssetsByChain,
   ladderRows,
   keyMode,
   setupSteps,
@@ -290,6 +294,196 @@ describe('the published ladder', () => {
      */
     const rows = ladderRows(LADDER, 45, true);
     assert.ok(rows.every((row) => !row.current));
+  });
+});
+
+describe('what a merchant can do about a currency', () => {
+  const approved = {
+    verdict: 'approved',
+    listed: true,
+    enabled: true,
+    requiresFixedRate: false,
+    pricingMode: 'fiat',
+    fixedRateValidUntil: null,
+  };
+
+  test('everything in place reads as accepting', () => {
+    const stance = assetStance(approved, true);
+    assert.equal(stance.state, 'accepting');
+    assert.equal(stance.tone, 'good');
+    assert.equal(stance.canToggle, true);
+  });
+
+  test('an available currency they have not turned on is theirs to act on', () => {
+    const stance = assetStance({ ...approved, enabled: false }, true);
+    assert.equal(stance.state, 'off');
+    assert.equal(stance.canToggle, true);
+    assert.match(stance.hint, /Turn it on/);
+  });
+
+  test('on with no payout address says invoices are refused', () => {
+    /**
+     * The state a merchant is most likely to be in without knowing: they enabled a
+     * currency, they believe they are accepting it, and every invoice is being refused.
+     */
+    const stance = assetStance(approved, false);
+    assert.equal(stance.state, 'needs_payout');
+    assert.equal(stance.tone, 'warn');
+    assert.match(stance.hint, /refused/);
+  });
+
+  test('a missing payout address beats a missing rate', () => {
+    /**
+     * Both refuse an invoice, but only one means the money would have nowhere to go. Naming
+     * the rate first would have somebody set a rate and still be refused.
+     */
+    const stance = assetStance(
+      { ...approved, requiresFixedRate: true, pricingMode: null },
+      false,
+    );
+    assert.equal(stance.state, 'needs_payout');
+  });
+
+  test('a token nothing prices asks for the merchant own rate', () => {
+    const stance = assetStance(
+      { ...approved, requiresFixedRate: true, pricingMode: null },
+      true,
+    );
+    assert.equal(stance.state, 'needs_rate');
+    // The reason is unusual and merchants do not expect it, so it is spelled out.
+    assert.match(stance.hint, /nothing on the market prices/i);
+  });
+
+  test('a lapsed rate is distinguished from an absent one', () => {
+    /**
+     * Different actions: one is "set a rate", the other is "renew the rate you set". A
+     * merchant told the second when the first is true goes looking for a field they already
+     * filled in.
+     */
+    const lapsed = assetStance(
+      {
+        ...approved,
+        requiresFixedRate: true,
+        pricingMode: 'fixed_rate',
+        fixedRateValidUntil: '2020-01-01T00:00:00.000Z',
+      },
+      true,
+    );
+    assert.equal(lapsed.state, 'needs_rate');
+    assert.match(lapsed.label, /lapsed/i);
+
+    const current = assetStance(
+      {
+        ...approved,
+        requiresFixedRate: true,
+        pricingMode: 'fixed_rate',
+        fixedRateValidUntil: '2030-01-01T00:00:00.000Z',
+      },
+      true,
+    );
+    assert.equal(current.state, 'accepting');
+  });
+
+  test('a rate that lapses on a priced asset is still a lapsed rate', () => {
+    // A merchant may choose their own rate for an asset the market does price. If that rate
+    // expires, invoices stop — so `requiresFixedRate` being false must not hide it.
+    const stance = assetStance(
+      {
+        ...approved,
+        requiresFixedRate: false,
+        pricingMode: 'fixed_rate',
+        fixedRateValidUntil: '2020-01-01T00:00:00.000Z',
+      },
+      true,
+    );
+    assert.equal(stance.state, 'needs_rate');
+  });
+
+  test('a contract in review is not something a switch can fix', () => {
+    const stance = assetStance({ ...approved, verdict: 'review', enabled: false }, true);
+    assert.equal(stance.state, 'in_review');
+    assert.equal(stance.canToggle, false, 'a switch that cannot help reads as a broken page');
+  });
+
+  test('a currency we have stopped offering says it is us, not them', () => {
+    /**
+     * The state this whole function exists for. A merchant told only "unavailable" goes
+     * looking at their own configuration, and there is nothing there to find.
+     */
+    const stance = assetStance({ ...approved, listed: false }, true);
+    assert.equal(stance.state, 'withdrawn');
+    assert.equal(stance.canToggle, false);
+    assert.match(stance.hint, /AVEX is not accepting/);
+    assert.match(stance.hint, /already open still complete/);
+  });
+
+  test('withdrawn outranks anything the merchant could change', () => {
+    // Enabled, no payout address, and we have withdrawn it: telling them about the address
+    // would send them to fix something that would not help.
+    const stance = assetStance({ ...approved, listed: false }, false);
+    assert.equal(stance.state, 'withdrawn');
+  });
+
+  test('a refused contract outranks everything, including our own withdrawal', () => {
+    const stance = assetStance({ ...approved, verdict: 'blocked', listed: false }, false);
+    assert.equal(stance.state, 'blocked');
+  });
+
+  test('an asset with no listed field is treated as offered', () => {
+    // Absent, not false: an older API response that does not carry the field must not read
+    // as every currency having been withdrawn.
+    const { listed, ...withoutListed } = approved;
+    void listed;
+    assert.equal(assetStance(withoutListed, true).state, 'accepting');
+  });
+});
+
+describe('ordering the currency list', () => {
+  test('anything on but refusing invoices comes first', () => {
+    /**
+     * The only genuinely urgent case: the merchant believes they are accepting that
+     * currency and they are not.
+     */
+    const order: AssetState[] = ['accepting', 'off', 'needs_payout', 'in_review', 'withdrawn', 'blocked'];
+    const sorted = [...order].sort((left, right) => assetUrgency(left) - assetUrgency(right));
+    assert.equal(sorted[0], 'needs_payout');
+    assert.equal(sorted.at(-1), 'blocked');
+  });
+
+  test('currencies group by chain, and chains sort by name', () => {
+    // By chain because that is how the decisions cluster: a payout address is per chain,
+    // and so is our own readiness.
+    const grouped = groupAssetsByChain(
+      [
+        { chain: 'ton', symbol: 'USDT' },
+        { chain: 'bsc', symbol: 'USDT' },
+        { chain: 'bsc', symbol: 'BNB' },
+      ],
+      () => 0,
+    );
+    assert.deepEqual(
+      grouped.map((group) => group.chain),
+      ['bsc', 'ton'],
+    );
+    // Within a chain, equal urgency falls back to the symbol so the order is stable.
+    assert.deepEqual(
+      grouped[0]!.assets.map((asset) => asset.symbol),
+      ['BNB', 'USDT'],
+    );
+  });
+
+  test('urgency wins over the alphabet inside a chain', () => {
+    const grouped = groupAssetsByChain(
+      [
+        { chain: 'bsc', symbol: 'AAAA' },
+        { chain: 'bsc', symbol: 'ZZZZ' },
+      ],
+      (asset) => (asset.symbol === 'ZZZZ' ? 0 : 1),
+    );
+    assert.deepEqual(
+      grouped[0]!.assets.map((asset) => asset.symbol),
+      ['ZZZZ', 'AAAA'],
+    );
   });
 });
 

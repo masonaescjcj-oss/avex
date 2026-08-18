@@ -10,7 +10,7 @@ import {
   WebhookDispatcher,
 } from '@avex/core';
 import type { PriceSource } from '@avex/core';
-import { count, eq, inArray, like } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, like } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 
 import { hashToken } from '../auth/tokens.js';
@@ -2423,6 +2423,271 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     assert.equal(response.statusCode, 403, response.body);
   });
 
+  // ── the asset catalogue ────────────────────────────────────────────────────
+  //
+  // The distinction these turn on: `verdict` is about the contract — is this the real
+  // USDT — and `listed` is about us — is our watcher for that chain running today. They
+  // are separate columns because collapsing them would make one of the two answers a lie,
+  // and the lie would be shown to a merchant as the reason their invoices stopped.
+
+  test('the catalogue lists what the platform knows and who is using it', async () => {
+    /**
+     * The usage count is what makes a listing decision a decision. Unlisting an asset
+     * fourteen merchants have enabled is a different act from unlisting one nobody has
+     * touched, and an operator about to do it should not have to go and find out.
+     */
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/assets',
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const listed = response.json().assets as {
+      symbol: string;
+      chain: string;
+      listed: boolean;
+      verdict: string;
+      priced: boolean;
+      enabledByMerchants: number;
+    }[];
+    assert.ok(listed.length > 0, 'the curated list is seeded');
+    // Everything arrives offered: the column defaults to true so nothing changed for the
+    // assets that already existed when it was added.
+    assert.ok(listed.every((asset) => typeof asset.listed === 'boolean'));
+    assert.ok(listed.every((asset) => asset.enabledByMerchants >= 0));
+    // USDT on BSC is curated and quoted, which is the shape an operator reads as "fine".
+    const usdt = listed.find((asset) => asset.symbol === 'USDT' && asset.chain === 'bsc');
+    assert.ok(usdt);
+    assert.equal(usdt!.verdict, 'approved');
+    assert.equal(usdt!.priced, true);
+  });
+
+  test('the usage count is merchants accepting it, not merchants who configured it once', async () => {
+    /**
+     * The count drives how an operator reads a closure, so counting a merchant who turned the
+     * currency *off* would overstate the blast radius — and the whole point of showing it is
+     * to say how big the act is.
+     */
+    const org = await freshMerchant('usage');
+    const [asset] = await db
+      .insert(schema.assets)
+      .values({
+        chain: 'bsc',
+        symbol: `USE${randomBytes(2).toString('hex').toUpperCase()}`,
+        contract: `0x${randomBytes(20).toString('hex')}`,
+        decimals: 18,
+        kind: 'erc20',
+        verdict: 'approved',
+      })
+      .returning({ id: schema.assets.id });
+
+    const count0 = async () =>
+      (
+        (
+          await app.inject({ method: 'GET', url: '/admin/assets', headers: asStaff(supportToken) })
+        ).json().assets as { id: string; enabledByMerchants: number }[]
+      ).find((entry) => entry.id === asset!.id)?.enabledByMerchants;
+
+    assert.equal(await count0(), 0, 'nobody has touched it');
+
+    // Configured but switched off: a row exists, and it must not count.
+    await db
+      .insert(schema.merchantAssets)
+      .values({ organizationId: org, assetId: asset!.id, enabled: false, pricingMode: 'fiat' });
+    assert.equal(await count0(), 0, 'a merchant who turned it off is not accepting it');
+
+    await db
+      .update(schema.merchantAssets)
+      .set({ enabled: true })
+      .where(eq(schema.merchantAssets.assetId, asset!.id));
+    assert.equal(await count0(), 1);
+  });
+
+  test('closing an asset stops new invoices without touching the verdict', async () => {
+    /**
+     * The whole reason `listed` is its own column. Solana's USDC mint is a good contract
+     * whether or not our Solana watcher is running, and recording `blocked` for an
+     * operational pause would put a judgement about Circle in our own audit trail — and
+     * show a merchant a reason that is not the real one.
+     */
+    /**
+     * A throwaway asset, not one of the curated rows.
+     *
+     * This suite shares a database with every other one, and flipping a real USDT entry
+     * would leave the whole catalogue in whatever state a failure interrupted — which is
+     * how one bad run breaks a dozen unrelated tests.
+     */
+    const asset = await disposableAsset('CLOSE');
+
+    await reauth();
+    const closed = await app.inject({
+      method: 'POST',
+      url: `/admin/assets/${asset!.id}/listing`,
+      headers: asStaff(superadminToken),
+      payload: { listed: false, note: 'Solana watcher not deployed yet; closing until it is.' },
+    });
+    assert.equal(closed.statusCode, 200, closed.body);
+    // The message has to say what stopped and what did not.
+    assert.match(closed.json().message, /Invoices already open still complete/);
+
+    try {
+      const [after] = await db
+        .select({ verdict: schema.assets.verdict, listed: schema.assets.listed })
+        .from(schema.assets)
+        .where(eq(schema.assets.id, asset!.id));
+      assert.equal(after!.listed, false);
+      // The verdict is a fact about the contract, and closing the currency is a fact about
+      // us. Rewriting the first to express the second would record a judgement we do not
+      // hold — and show a merchant a reason that is not the real one.
+      assert.equal(after!.verdict, 'approved');
+
+      // And it is on the catalogue as closed rather than gone.
+      const catalogue = (
+        await app.inject({ method: 'GET', url: '/admin/assets', headers: asStaff(supportToken) })
+      ).json().assets as { id: string; listed: boolean }[];
+      assert.equal(catalogue.find((entry) => entry.id === asset!.id)?.listed, false);
+    } finally {
+      await db
+        .update(schema.assets)
+        .set({ listed: true, verdict: 'approved' })
+        .where(eq(schema.assets.id, asset!.id));
+    }
+  });
+
+  test('the audit trail records how many merchants a closure affected', async () => {
+    /**
+     * "Unlisted USDT on TRON" and "unlisted USDT on TRON, which 41 merchants were
+     * accepting" are different events, and only one of them explains the support queue the
+     * following morning.
+     */
+    const before = await countAudit('asset.unlisted');
+    const asset = await disposableAsset('AUDIT');
+
+    await reauth();
+    await app.inject({
+      method: 'POST',
+      url: `/admin/assets/${asset!.id}/listing`,
+      headers: asStaff(superadminToken),
+      payload: { listed: false, note: 'Testing that the count is recorded with the reason.' },
+    });
+
+    try {
+      assert.equal(await countAudit('asset.unlisted'), before + 1);
+      const [row] = await db
+        .select({ metadata: schema.auditLog.metadata })
+        .from(schema.auditLog)
+        .where(eq(schema.auditLog.action, 'asset.unlisted'))
+        .orderBy(desc(schema.auditLog.createdAt))
+        .limit(1);
+      const metadata = row!.metadata as Record<string, unknown>;
+      assert.equal(typeof metadata.enabledByMerchants, 'number');
+      assert.match(String(metadata.note), /Testing that the count/);
+    } finally {
+      await db
+        .update(schema.assets)
+        .set({ listed: true, verdict: 'approved' })
+        .where(eq(schema.assets.id, asset!.id));
+    }
+  });
+
+  test('support cannot open or close an asset', async () => {
+    // It applies to every merchant at once, which is the line between operator and
+    // superadmin in this panel — so support cannot do it either.
+    const asset = await disposableAsset('PERM');
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/assets/${asset!.id}/listing`,
+      headers: asStaff(supportToken),
+      payload: { listed: false, note: 'Trying it on from a support session.' },
+    });
+    assert.equal(response.statusCode, 403, response.body);
+  });
+
+  test('closing an asset needs a fresh second factor', async () => {
+    // Quiet, durable and platform-wide: exactly the shape a stolen session is worth holding.
+    const asset = await disposableAsset('ELEV');
+    await db
+      .update(schema.staffSessions)
+      .set({ mfaSatisfiedAt: new Date(Date.now() - 10 * 60 * 1000) })
+      .where(eq(schema.staffSessions.tokenHash, hashToken(superadminToken)));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/assets/${asset!.id}/listing`,
+      headers: asStaff(superadminToken),
+      payload: { listed: false, note: 'Attempting without a fresh code.' },
+    });
+    assert.equal(response.statusCode, 403);
+    assert.equal(response.json().error, 'elevation_required');
+  });
+
+  test('an asset can be added by hand, approved, and audited', async () => {
+    const symbol = `TST${randomBytes(2).toString('hex').toUpperCase()}`;
+    const before = await countAudit('asset.added');
+
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/assets',
+      headers: asStaff(superadminToken),
+      payload: {
+        chain: 'bsc',
+        symbol,
+        contract: `0x${randomBytes(20).toString('hex')}`,
+        decimals: 18,
+        kind: 'erc20',
+        note: 'Verified against the issuer documentation on 18 August.',
+      },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(await countAudit('asset.added'), before + 1);
+
+    const [added] = await db
+      .select()
+      .from(schema.assets)
+      .where(eq(schema.assets.id, response.json().assetId));
+    assert.equal(added!.verdict, 'approved');
+    assert.equal(added!.listed, true);
+    /**
+     * Not curated, and that is not a detail. `curated` means "on the list compiled in code
+     * and checked against the issuer's documentation" — marking a hand-added row as curated
+     * would make the codebase's own list look longer than it is.
+     */
+    assert.equal(added!.curated, false);
+    // Nothing prices a token we invented, so it needs the merchant's own rate.
+    assert.equal(added!.requiresFixedRate, true);
+  });
+
+  test('adding an asset that already exists is refused, not duplicated', async () => {
+    /**
+     * Two rows for one contract would mean two ids for one token, and a merchant could
+     * enable the one nobody is watching.
+     */
+    const [existing] = await db
+      .select({ chain: schema.assets.chain, contract: schema.assets.contract })
+      .from(schema.assets)
+      .where(and(eq(schema.assets.symbol, 'USDT'), eq(schema.assets.chain, 'bsc')))
+      .limit(1);
+
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/assets',
+      headers: asStaff(superadminToken),
+      payload: {
+        chain: existing!.chain,
+        symbol: 'USDT',
+        contract: existing!.contract,
+        decimals: 18,
+        kind: 'erc20',
+        note: 'Attempting to add a contract that is already in the catalogue.',
+      },
+    });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.json().error, 'already_exists');
+  });
+
   // ── what the company owner sees ────────────────────────────────────────────
   //
   // There are two roles in this product: the staff who run AVEX, and the account holder
@@ -2600,6 +2865,28 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     });
     assert.equal(response.statusCode, 401, response.body);
   });
+
+  /**
+   * An approved asset nobody else is looking at, for tests that change its listing.
+   *
+   * This suite shares a database with every other one. Flipping a curated USDT row would
+   * leave the catalogue in whatever state an interrupted run left it, and the failure would
+   * surface somewhere unrelated — which is exactly what happened once.
+   */
+  async function disposableAsset(label: string): Promise<{ readonly id: string }> {
+    const [asset] = await db
+      .insert(schema.assets)
+      .values({
+        chain: 'bsc',
+        symbol: `${label}${randomBytes(2).toString('hex').toUpperCase()}`,
+        contract: `0x${randomBytes(20).toString('hex')}`,
+        decimals: 18,
+        kind: 'erc20',
+        verdict: 'approved',
+      })
+      .returning({ id: schema.assets.id });
+    return asset!;
+  }
 
   /** Move a plan's period, to put a merchant either side of a close. */
   async function agePeriod(orgId: string, start: Date, end: Date): Promise<void> {

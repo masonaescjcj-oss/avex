@@ -32,6 +32,7 @@ export const NAV: readonly NavItem[] = [
   { id: 'health', label: 'Health', marker: '💚', requires: 'health:read' },
   { id: 'merchants', label: 'Merchants', marker: '🏪', requires: 'merchant:read' },
   { id: 'revenue', label: 'Revenue', marker: '💰', requires: 'merchant:read' },
+  { id: 'catalogue', label: 'Currencies', marker: '🪙', requires: 'asset_list:read' },
   { id: 'unmatched', label: 'Unmatched', marker: '🧩', requires: 'payment:read' },
   { id: 'review', label: 'Contracts', marker: '🔍', requires: 'contract:read' },
   { id: 'settlements', label: 'Settlements', marker: '⛽', requires: 'settlement:read' },

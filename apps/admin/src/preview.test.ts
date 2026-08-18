@@ -25,6 +25,7 @@ describe('the preview fixtures', () => {
       health: '/admin/health',
       merchants: '/admin/merchants?filter=all&limit=25',
       revenue: '/admin/commission/revenue',
+      catalogue: '/admin/assets',
       unmatched: '/admin/unmatched?resolution=pending&limit=100',
       review: '/admin/contracts/review?limit=100',
       settlements: '/admin/settlements?limit=60',
@@ -77,6 +78,22 @@ describe('the preview fixtures', () => {
     assert.ok(health.chains.some((chain) => chain.lastError !== null));
     assert.ok(health.reconciliation.pending > 0);
     assert.ok(health.review.waiting > 0);
+  });
+
+  test('the catalogue has a vetted asset we are not offering', () => {
+    /**
+     * The state the whole section exists for, and the one a fixture of a healthy catalogue
+     * would not show: a contract we trust on a chain we are not ready for. Listing and
+     * verdict are separate columns precisely so that state can be represented honestly.
+     */
+    const catalogue = matchPreview('GET', '/admin/assets', routes)?.body as {
+      assets: { verdict: string; listed: boolean; symbol: string; chain: string }[];
+    };
+    const held = catalogue.assets.find((asset) => asset.verdict === 'approved' && !asset.listed);
+    assert.ok(held, 'a vetted-but-unlisted asset should be in the fixture');
+    assert.equal(held!.chain, 'solana');
+    // And one waiting on review, so both non-accepting states appear.
+    assert.ok(catalogue.assets.some((asset) => asset.verdict === 'review'));
   });
 
   test('the revenue book has a negotiated account in it', () => {

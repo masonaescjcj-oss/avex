@@ -604,6 +604,86 @@
     ]);
   }
 
+  function setListing(asset) {
+    const opening = !asset.listed;
+    prompt({
+      title: (opening ? 'Open ' : 'Close ') + asset.symbol + ' on ' + asset.chain,
+      note: opening
+        ? 'Every merchant will be able to enable it. Nobody starts accepting it until they ' +
+          'do, so this opens a door rather than changing anyone\'s configuration.'
+        : asset.enabledByMerchants +
+          ' merchant(s) are accepting this right now and will stop being able to open new ' +
+          'invoices in it. Invoices already open still complete — their deposit addresses ' +
+          'are committed and a payer may be mid-transfer.',
+      permission: 'asset_list:write',
+      danger: !opening,
+      fields: [
+        {
+          name: 'note',
+          label: 'Why (recorded)',
+          type: 'textarea',
+          placeholder: opening
+            ? 'e.g. Solana watcher deployed and caught up; price feed corroborating.'
+            : 'e.g. Solana RPC unreliable since 14:00; closing until it settles.',
+        },
+      ],
+      confirmLabel: opening ? 'Open it' : 'Close it',
+      onConfirm: async (values) => {
+        await api('/admin/assets/' + asset.id + '/listing', {
+          method: 'POST',
+          body: { listed: opening, note: values.note },
+        });
+        await refresh();
+      },
+    });
+  }
+
+  function addAsset() {
+    prompt({
+      title: 'Add a currency',
+      /**
+       * The warning is the point of this dialog. It bypasses the automatic probe, so it is
+       * the one place in the panel where a mistyped address becomes an approved asset for
+       * every merchant at once.
+       */
+      note:
+        'This adds the currency already approved, without probing the contract. Check the ' +
+        'address against the issuer\'s own documentation before you paste it — the whole ' +
+        'defence against a token calling itself USDT is knowing where the real one lives. ' +
+        'Leave the contract blank for a chain\'s native asset.',
+      permission: 'asset_list:write',
+      fields: [
+        { name: 'chain', label: 'Chain (bsc, ethereum, polygon, ton, tron, solana)' },
+        { name: 'symbol', label: 'Symbol', mono: true },
+        { name: 'contract', label: 'Contract or mint address (blank for native)', mono: true },
+        { name: 'decimals', label: 'Decimals', mono: true },
+        { name: 'kind', label: 'Kind (native, erc20, trc20, spl, jetton)' },
+        {
+          name: 'note',
+          label: 'Where you verified it (recorded)',
+          type: 'textarea',
+          placeholder: 'e.g. Address published at tether.to/en/transparency, checked 18 Aug.',
+        },
+      ],
+      confirmLabel: 'Add it',
+      onConfirm: async (values) => {
+        await api('/admin/assets', {
+          method: 'POST',
+          body: {
+            chain: values.chain,
+            symbol: values.symbol,
+            // Blank means native, and an empty string is not an address.
+            contract: values.contract === '' ? null : values.contract,
+            decimals: Number(values.decimals),
+            kind: values.kind,
+            note: values.note,
+          },
+        });
+        await refresh();
+      },
+    });
+  }
+
   function changeRate(org, plan) {
     prompt({
       title: 'Change ' + org.name + "'s commission",
@@ -1052,6 +1132,110 @@
             ]),
           ),
         ),
+      );
+    },
+
+    async catalogue() {
+      const data = await api('/admin/assets');
+      const mayList = can(me.permissions, 'asset_list:write');
+
+      /**
+       * Grouped by chain, because that is the unit of the decision.
+       *
+       * Turning Solana on is one act covering every Solana asset, and a flat list sorted by
+       * symbol would scatter those rows among five other chains.
+       */
+      const chains = [...new Set(data.assets.map((asset) => asset.chain))].sort();
+
+      render(view(),
+        pageHead(
+          'Currencies',
+          'What the platform offers, and what it merely trusts.',
+          mayList
+            ? [
+                h('button', { class: 'btn primary', type: 'button', text: 'Add a currency', onclick: () => addAsset() }),
+                h('button', { class: 'btn', type: 'button', text: 'Refresh', onclick: () => void refresh() }),
+              ]
+            : [h('button', { class: 'btn', type: 'button', text: 'Refresh', onclick: () => void refresh() })],
+        ),
+
+        /**
+         * The distinction the whole section turns on, said once at the top.
+         *
+         * Every operator who opens this will be about to conflate the two columns, because
+         * "approved" and "offered" sound like the same thing until somebody explains that
+         * they are not.
+         */
+        h('div', { class: 'notice info', style: 'margin-bottom:1rem' }, [
+          h('span', {}, [
+            h('strong', { text: 'Approved is not the same as offered. ' }),
+            'Approved means we have checked the contract is what it claims to be. Offered ' +
+              'means we are taking it today — which depends on our own watcher and price ' +
+              'feed for that chain, not on the contract. Closing a currency stops new ' +
+              'invoices only; anything already open still completes.',
+          ]),
+        ]),
+
+        ...chains.flatMap((chain) => {
+          const rows = data.assets.filter((asset) => asset.chain === chain);
+          const offered = rows.filter((asset) => asset.listed && asset.verdict === 'approved').length;
+
+          return [
+            h('div', { class: 'head', style: 'margin:1.25rem 0 .5rem' }, [
+              h('div', {}, [
+                h('h2', { text: chain }),
+                h('p', { class: 'sub', text: `${offered} of ${rows.length} offered to merchants` }),
+              ]),
+            ]),
+            table(
+              ['Currency', 'Contract', 'Decimals', 'Verdict', 'Offered', 'Price feed', 'In use', ''],
+              rows.map((asset) =>
+                h('tr', {}, [
+                  h('td', {}, [
+                    h('div', { class: 'm', text: asset.symbol }),
+                    asset.curated
+                      ? h('div', { class: 'faint', style: 'font-size:var(--s-2)', text: 'curated' })
+                      : asset.submittedByOrganizationId
+                        ? h('div', { class: 'faint', style: 'font-size:var(--s-2)', text: 'merchant-submitted' })
+                        : h('div', { class: 'faint', style: 'font-size:var(--s-2)', text: 'added by staff' }),
+                  ]),
+                  h('td', { class: 'm' }, [
+                    asset.contract
+                      ? h('span', { title: asset.contract, text: shortenAddress(asset.contract, 10, 6) })
+                      : h('span', { class: 'faint', text: 'native' }),
+                  ]),
+                  td(String(asset.decimals), 'num'),
+                  h('td', {}, [
+                    tag(asset.verdict, asset.verdict === 'approved' ? 'ok' : asset.verdict === 'blocked' ? 'bad' : 'warn'),
+                  ]),
+                  h('td', {}, [tag(asset.listed ? 'yes' : 'no', asset.listed ? 'ok' : 'bad')]),
+                  h('td', {}, [
+                    /**
+                     * Shown because it decides what a merchant has to do next. An asset
+                     * nothing can price is usable only with a rate the merchant sets
+                     * themselves, and that is worth knowing before offering it rather than
+                     * after the first support message.
+                     */
+                    asset.priced
+                      ? tag('quoted', 'ok')
+                      : tag('merchant sets rate', 'warn'),
+                  ]),
+                  td(String(asset.enabledByMerchants), 'num'),
+                  h('td', {}, [
+                    mayList
+                      ? h('button', {
+                          class: `btn sm ${asset.listed ? 'danger' : 'primary'}`,
+                          type: 'button',
+                          text: asset.listed ? 'Close' : 'Open',
+                          onclick: () => setListing(asset),
+                        })
+                      : null,
+                  ]),
+                ]),
+              ),
+            ),
+          ];
+        }),
       );
     },
 

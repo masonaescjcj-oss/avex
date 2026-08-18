@@ -507,6 +507,101 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
     );
   });
 
+  // ── the asset catalogue ───────────────────────────────────────────────────
+
+  app.get('/admin/assets', async (request, reply) => {
+    // A read, and a support-level one: "why can't I enable USDC on Solana" is a question
+    // support gets, and the answer is on this list.
+    await requireStaffPermission(context.audit, request.staff, 'asset_list:read');
+    return reply.send({ assets: await context.assets.catalogue() });
+  });
+
+  app.post('/admin/assets/:assetId/listing', async (request, reply) => {
+    const params = z.object({ assetId: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        listed: z.boolean(),
+        note: z.string().trim().min(10).max(500),
+      })
+      .parse(request.body);
+    /**
+     * `asset_list:write`, which is superadmin-only and elevation-gated.
+     *
+     * This applies to every merchant at once. Opening an asset makes it available to all of
+     * them; closing one stops all of them invoicing in it. Neither is a per-merchant
+     * intervention, which is the line between operator and superadmin in this panel.
+     */
+    const staff = await requireStaffPermission(context.audit, request.staff, 'asset_list:write', {
+      targetType: 'asset',
+      targetId: params.assetId,
+      context: requestContext(request),
+    });
+
+    const result = await context.assets.setListing(staff, params.assetId, body.listed, body.note);
+    return reply.send({
+      status: body.listed ? 'listed' : 'unlisted',
+      symbol: result.symbol,
+      chain: result.chain,
+      /** How many merchants this just changed things for. The size of the act. */
+      enabledByMerchants: result.affected,
+      message: body.listed
+        ? `${result.symbol} on ${result.chain} is available to every merchant from now on.`
+        : `${result.symbol} on ${result.chain} will not accept new invoices. ` +
+          'Invoices already open still complete — their deposit addresses are committed and ' +
+          'a payer may be mid-transfer.',
+    });
+  });
+
+  app.post('/admin/assets', async (request, reply) => {
+    const body = z
+      .object({
+        chain: z.enum(SUPPORTED_CHAINS as unknown as [string, ...string[]]),
+        symbol: z.string().trim().min(1).max(20).toUpperCase(),
+        /**
+         * Null for a chain's native asset, and not validated by shape here.
+         *
+         * Address formats differ per chain — an EVM 0x-address, a TRON base58 string, a
+         * Solana mint, a TON jetton master — and a regex that accepted all four would
+         * accept nothing useful. The uniqueness index and the note are what stand behind
+         * this, along with it being superadmin-only.
+         */
+        contract: z.string().trim().min(1).max(200).nullable().default(null),
+        decimals: z.coerce.number().int().min(0).max(36),
+        kind: z.enum(['native', 'erc20', 'trc20', 'spl', 'jetton']),
+        note: z.string().trim().min(10).max(500),
+        listed: z.boolean().default(true),
+      })
+      .parse(request.body);
+    /**
+     * The most damaging action in this panel, and the reason it is gated hardest.
+     *
+     * It adds an already-approved asset without the probe, so approving a counterfeit here
+     * approves it for every merchant at once. The whole defence against a token calling
+     * itself USDT is knowing which address the real one lives at, and that knowledge is in
+     * the head of whoever fills this in.
+     */
+    const staff = await requireStaffPermission(context.audit, request.staff, 'asset_list:write', {
+      context: requestContext(request),
+    });
+
+    const created = await context.assets.addToCatalogue(staff, {
+      chain: body.chain as (typeof SUPPORTED_CHAINS)[number],
+      symbol: body.symbol,
+      contract: body.contract,
+      decimals: body.decimals,
+      kind: body.kind,
+      note: body.note,
+      listed: body.listed,
+    });
+
+    return reply.status(201).send({
+      assetId: created.assetId,
+      message:
+        'Added and approved. Merchants can now enable it; nobody is accepting it until ' +
+        'they do.',
+    });
+  });
+
   // ── commission ────────────────────────────────────────────────────────────
 
   app.get('/admin/commission/revenue', async (request, reply) => {

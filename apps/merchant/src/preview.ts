@@ -142,12 +142,104 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
       }),
     ],
     [
+      /**
+       * Every state the currency list can be in, in one response.
+       *
+       * The point of the Currencies tab is that "off" has six causes and five are not the
+       * merchant's to fix. A fixture with three approved rows would show one of them.
+       */
       'GET /assets',
       ok({
-        assets: [
-          { id: 'a1', symbol: 'USDT', chain: 'bsc', decimals: 18, verdict: 'approved', enabled: true, pricingMode: 'fiat' },
-          { id: 'a2', symbol: 'TON', chain: 'ton', decimals: 9, verdict: 'approved', enabled: true, pricingMode: 'fiat' },
-          { id: 'a3', symbol: 'KIAN', chain: 'bsc', decimals: 18, verdict: 'review', enabled: true, pricingMode: 'fixed_rate' },
+        data: [
+          {
+            id: 'a1',
+            symbol: 'USDT',
+            chain: 'bsc',
+            contract: '0x55d398326f99059fF775485246999027B3197955',
+            decimals: 18,
+            kind: 'erc20',
+            curated: true,
+            verdict: 'approved',
+            listed: true,
+            requiresFixedRate: false,
+            enabled: true,
+            pricingMode: 'fiat',
+            fixedRateValidUntil: null,
+            spreadBps: 50,
+            toleranceBps: 50,
+          },
+          {
+            /** Available and untouched: the row the merchant can actually act on. */
+            id: 'a2',
+            symbol: 'USDC',
+            chain: 'bsc',
+            contract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+            decimals: 18,
+            kind: 'erc20',
+            curated: true,
+            verdict: 'approved',
+            listed: true,
+            requiresFixedRate: false,
+            enabled: false,
+            pricingMode: null,
+            fixedRateValidUntil: null,
+            spreadBps: null,
+            toleranceBps: null,
+          },
+          {
+            /** On, but no payout address on TON — so every invoice is being refused. */
+            id: 'a3',
+            symbol: 'TON',
+            chain: 'ton',
+            contract: null,
+            decimals: 9,
+            kind: 'native',
+            curated: true,
+            verdict: 'approved',
+            listed: true,
+            requiresFixedRate: false,
+            enabled: true,
+            pricingMode: 'fiat',
+            fixedRateValidUntil: null,
+            spreadBps: 50,
+            toleranceBps: 50,
+          },
+          {
+            /** Their own token, still in the review queue. */
+            id: 'a4',
+            symbol: 'KIAN',
+            chain: 'bsc',
+            contract: '0x9f2c41ab77e05d63c8b1a2049e6d3b8c41ab77e0',
+            decimals: 18,
+            kind: 'erc20',
+            curated: false,
+            verdict: 'review',
+            listed: true,
+            requiresFixedRate: true,
+            enabled: false,
+            pricingMode: null,
+            fixedRateValidUntil: null,
+            spreadBps: null,
+            toleranceBps: null,
+          },
+          {
+            /** Vetted, but we have stopped offering it. Nothing the merchant does helps. */
+            id: 'a5',
+            symbol: 'USDC',
+            chain: 'solana',
+            contract: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+            decimals: 6,
+            kind: 'spl',
+            curated: true,
+            verdict: 'approved',
+            listed: false,
+            requiresFixedRate: false,
+            enabled: false,
+            pricingMode: null,
+            fixedRateValidUntil: null,
+            spreadBps: null,
+            toleranceBps: null,
+          },
         ],
       }),
     ],
@@ -199,6 +291,26 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
         },
       },
     ],
+    [
+      'PUT /assets',
+      {
+        status: 409,
+        body: {
+          error: 'preview',
+          message: 'This is a preview with canned data — nothing here can be changed.',
+        },
+      },
+    ],
+    [
+      'POST /assets',
+      {
+        status: 409,
+        body: {
+          error: 'preview',
+          message: 'This is a preview with canned data — nothing here can be changed.',
+        },
+      },
+    ],
     /**
      * Refused, on purpose.
      *
@@ -231,7 +343,16 @@ export function matchPreview(
   url: string,
   routes: ReadonlyMap<string, PreviewRoute> = previewRoutes(),
 ): PreviewRoute | null {
-  const path = url.split('?')[0] ?? '';
+  /**
+   * A trailing id is dropped before matching.
+   *
+   * `PUT /v1/organizations/x/assets/a1` is a write against the assets collection, and a
+   * fixture per asset id would be a fixture per row. Only the last segment, and only when it
+   * looks like an id rather than a path word — `/commission/fee-payer` must keep its tail.
+   */
+  const path = (url.split('?')[0] ?? '').replace(/\/[0-9a-fA-F-]{2,}$/, (tail) =>
+    /^\/[a-z-]+$/.test(tail) ? tail : '',
+  );
 
   let best: { key: string; route: PreviewRoute } | null = null;
   for (const [key, route] of routes) {

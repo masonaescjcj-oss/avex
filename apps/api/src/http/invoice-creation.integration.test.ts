@@ -466,6 +466,57 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       .where(eq(schema.feePlans.organizationId, orgId));
   });
 
+  test('an asset the platform has stopped offering is refused with its own reason', async () => {
+    /**
+     * A separate refusal from `asset_unapproved` because the cause is ours, not theirs.
+     * Nothing about the merchant's configuration or the contract has changed, so telling
+     * them the asset is unapproved would send them looking in the wrong place.
+     *
+     * The 409 rather than a 500 matters too: this is a state the merchant can wait out, and
+     * the message says what still works.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+
+    await db.update(schema.assets).set({ listed: false }).where(eq(schema.assets.id, assetId));
+    try {
+      const response = await open({ assetId, amountFiatMicros: '1000000' });
+      assert.equal(response.statusCode, 409, response.body);
+      assert.equal(response.json().error, 'asset_unlisted');
+      assert.match(response.json().message, /not currently accepting/);
+      assert.match(response.json().message, /already open will still complete/);
+    } finally {
+      await db.update(schema.assets).set({ listed: true }).where(eq(schema.assets.id, assetId));
+    }
+  });
+
+  test('an invoice already open survives the asset being withdrawn', async () => {
+    /**
+     * The property that makes unlisting safe to do in the middle of a working day. The
+     * deposit address is committed and a payer may be mid-transfer, so pulling the asset out
+     * from under them would strand real money.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+    const reference = `unlisted-${unique}`;
+    const opened = await open({ assetId, amountFiatMicros: '1000000', reference });
+    assert.equal(opened.statusCode, 201, opened.body);
+
+    await db.update(schema.assets).set({ listed: false }).where(eq(schema.assets.id, assetId));
+    try {
+      const reread = await app.inject({
+        method: 'GET',
+        url: `/v1/organizations/${orgId}/invoices/${opened.json().id}`,
+        headers: auth(),
+      });
+      assert.equal(reread.statusCode, 200, reread.body);
+      assert.equal(reread.json().depositAddress, opened.json().depositAddress);
+      assert.equal(reread.json().amountDue, opened.json().amountDue);
+    } finally {
+      await db.update(schema.assets).set({ listed: true }).where(eq(schema.assets.id, assetId));
+    }
+  });
+
   // ── who pays the commission ────────────────────────────────────────────────
   //
   // The forwarder always takes its cut out of what arrives, so "the payer pays it"

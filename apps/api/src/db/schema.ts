@@ -469,6 +469,25 @@ export const assets = pgTable(
     /** On the hand-verified global list; the only route to automatic approval. */
     curated: boolean('curated').notNull().default(false),
     verdict: assetVerdictEnum('verdict').notNull(),
+
+    /**
+     * Whether the platform is offering this asset right now.
+     *
+     * Deliberately separate from `verdict`, because the two answer different questions and
+     * collapsing them would make one of the answers a lie. `verdict` is about the contract:
+     * is this the real USDT, does it behave like a token, can it be trusted. `listed` is
+     * about us: is our adapter for that chain deployed, is the price feed healthy, do we
+     * want to be taking this today.
+     *
+     * Solana's USDC mint is a perfectly good contract whether or not our Solana watcher is
+     * running. Turning it off by setting `verdict` to `blocked` would record a judgement
+     * about Circle that we do not hold, and would show a merchant a reason that is not the
+     * real one.
+     *
+     * Unlisting stops new invoices. It does not touch invoices already open: their deposit
+     * addresses are already committed and a payer may be mid-transfer.
+     */
+    listed: boolean('listed').notNull().default(true),
     /** No price source can quote this, so the merchant must supply a rate. */
     requiresFixedRate: boolean('requires_fixed_rate').notNull().default(false),
 

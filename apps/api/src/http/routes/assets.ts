@@ -121,7 +121,18 @@ export function assetErrorResponse(error: AssetConfigError): {
   status: number;
   body: Record<string, unknown>;
 } {
+  /**
+   * 409 for anything that already exists, 404 for anything that does not, 400 otherwise.
+   *
+   * `already_exists` is listed beside `asset_exists` rather than replacing it: the older
+   * code is still thrown by contract submission, and collapsing the two would change the
+   * status a merchant's integration already branches on.
+   */
   const status =
-    error.code === 'not_found' ? 404 : error.code === 'asset_exists' ? 409 : 400;
+    error.code === 'not_found'
+      ? 404
+      : error.code === 'asset_exists' || error.code === 'already_exists'
+        ? 409
+        : 400;
   return { status, body: { error: error.code, message: error.message } };
 }

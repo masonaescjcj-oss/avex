@@ -164,6 +164,217 @@ export function setupSteps(input: SetupInput): readonly SetupStep[] {
   ];
 }
 
+/**
+ * What a merchant can do about one currency, and what is stopping them.
+ *
+ * Six states rather than a checkbox, because "off" has six different causes and five of
+ * them are not the merchant's to fix. A row that showed only on/off would leave somebody
+ * toggling a switch that cannot help — the contract is in review, or we have stopped
+ * offering the chain — and the natural reading of a switch that does nothing is that the
+ * product is broken.
+ */
+export type AssetState =
+  /** Everything is in place. Invoices in this currency will open. */
+  | 'accepting'
+  /** Available, and they have simply not turned it on. The one they can act on. */
+  | 'off'
+  /** Enabled, but nowhere to settle it: invoices on this chain are refused. */
+  | 'needs_payout'
+  /** Enabled, but nothing prices it and they have set no rate — or it lapsed. */
+  | 'needs_rate'
+  /** We are still checking the contract. */
+  | 'in_review'
+  /** We refused the contract. */
+  | 'blocked'
+  /** We have stopped offering it. Nothing the merchant does changes that. */
+  | 'withdrawn';
+
+export interface AssetStance {
+  readonly state: AssetState;
+  readonly label: string;
+  readonly tone: 'good' | 'wait' | 'warn' | 'bad' | 'dead';
+  readonly hint: string;
+  /** False when toggling it could not help, so the control is not offered. */
+  readonly canToggle: boolean;
+}
+
+export function assetStance(
+  asset: {
+    readonly verdict: string;
+    readonly listed?: boolean;
+    readonly enabled: boolean;
+    readonly requiresFixedRate?: boolean;
+    readonly pricingMode?: string | null;
+    readonly fixedRateValidUntil?: string | null;
+  },
+  hasPayoutAddress: boolean,
+  now: number = Date.now(),
+): AssetStance {
+  /**
+   * Ordered by who can act, hardest first.
+   *
+   * A merchant reading this row wants one sentence telling them whether it is their move.
+   * So anything we have decided comes before anything they have decided: there is no point
+   * telling somebody their payout address is missing for a currency we have blocked.
+   */
+  if (asset.verdict === 'blocked') {
+    return {
+      state: 'blocked',
+      label: 'Refused',
+      tone: 'bad',
+      hint: 'We could not accept this contract. Nothing here will change that.',
+      canToggle: false,
+    };
+  }
+
+  if (asset.listed === false) {
+    return {
+      state: 'withdrawn',
+      label: 'Not offered',
+      tone: 'dead',
+      /**
+       * Explicitly ours, not theirs, and explicitly about the chain rather than the token.
+       * A merchant told only "unavailable" will go looking at their own configuration.
+       */
+      hint:
+        'AVEX is not accepting this currency at the moment — usually because the chain ' +
+        'itself is paused on our side. Invoices already open still complete.',
+      canToggle: false,
+    };
+  }
+
+  if (asset.verdict !== 'approved') {
+    return {
+      state: 'in_review',
+      label: 'In review',
+      tone: 'wait',
+      hint: 'We are checking the contract. You will be told when it is decided.',
+      canToggle: false,
+    };
+  }
+
+  if (!asset.enabled) {
+    return {
+      state: 'off',
+      label: 'Off',
+      tone: 'dead',
+      hint: 'Available. Turn it on to accept it.',
+      canToggle: true,
+    };
+  }
+
+  /**
+   * A missing payout address beats a missing rate.
+   *
+   * Both refuse an invoice, but only one of them means the money would have nowhere to go.
+   * Naming the rate first would have somebody set a rate and still be refused.
+   */
+  if (!hasPayoutAddress) {
+    return {
+      state: 'needs_payout',
+      label: 'Needs a payout address',
+      tone: 'warn',
+      hint: 'On. Invoices are refused until you add an address for this chain.',
+      canToggle: true,
+    };
+  }
+
+  const rateLapsed =
+    asset.pricingMode === 'fixed_rate' &&
+    asset.fixedRateValidUntil !== null &&
+    asset.fixedRateValidUntil !== undefined &&
+    Date.parse(asset.fixedRateValidUntil) <= now;
+
+  if (asset.requiresFixedRate === true && (asset.pricingMode !== 'fixed_rate' || rateLapsed)) {
+    return {
+      state: 'needs_rate',
+      label: rateLapsed ? 'Your rate has lapsed' : 'Needs your rate',
+      tone: 'warn',
+      /**
+       * Said plainly because the reason is unusual and merchants do not expect it: no
+       * market quotes this token, so there is no price for us to use and refusing to guess
+       * one is deliberate.
+       */
+      hint:
+        'On, but nothing on the market prices this currency, so the rate has to be yours. ' +
+        'Invoices are refused until you set one.',
+      canToggle: true,
+    };
+  }
+
+  if (rateLapsed) {
+    return {
+      state: 'needs_rate',
+      label: 'Your rate has lapsed',
+      tone: 'warn',
+      hint: 'On, but the rate you set has expired. Invoices are refused until you renew it.',
+      canToggle: true,
+    };
+  }
+
+  return {
+    state: 'accepting',
+    label: 'Accepting',
+    tone: 'good',
+    hint: 'On, priced, and settling to your address.',
+    canToggle: true,
+  };
+}
+
+/**
+ * Currencies grouped by chain, in the order a merchant reads them.
+ *
+ * By chain because that is how the decisions cluster — a payout address is per chain, and
+ * so is our own readiness — and within a chain by whether it needs attention, so a lapsed
+ * rate is not three rows below an untouched one nobody cares about.
+ */
+export function groupAssetsByChain<
+  T extends { readonly chain: string; readonly symbol: string },
+>(
+  assets: readonly T[],
+  rank: (asset: T) => number,
+): readonly { readonly chain: string; readonly assets: readonly T[] }[] {
+  const byChain = new Map<string, T[]>();
+  for (const asset of assets) {
+    const bucket = byChain.get(asset.chain);
+    if (bucket) bucket.push(asset);
+    else byChain.set(asset.chain, [asset]);
+  }
+
+  return [...byChain.entries()]
+    .map(([chain, group]) => ({
+      chain,
+      assets: [...group].sort(
+        (left, right) => rank(left) - rank(right) || left.symbol.localeCompare(right.symbol),
+      ),
+    }))
+    .sort((left, right) => left.chain.localeCompare(right.chain));
+}
+
+/**
+ * How urgently a row wants looking at. Lower sorts first.
+ *
+ * Something on but refusing invoices is the only genuinely urgent case: the merchant
+ * believes they are accepting that currency and they are not.
+ */
+export function assetUrgency(state: AssetState): number {
+  switch (state) {
+    case 'needs_payout':
+    case 'needs_rate':
+      return 0;
+    case 'accepting':
+      return 1;
+    case 'off':
+      return 2;
+    case 'in_review':
+      return 3;
+    case 'withdrawn':
+      return 4;
+    case 'blocked':
+      return 5;
+  }
+}
+
 /** How close a merchant is to the next rung of the commission ladder. */
 export interface TierProgressView {
   readonly processedUsd: string;

@@ -217,6 +217,45 @@
   .banner[data-kind="ok"] { background: var(--teal-wash); border-color: var(--teal); color: var(--ink); }
   .banner[data-kind="warn"] { background: var(--amber-wash); border-color: var(--amber); color: var(--ink); }
   .banner[hidden] { display: none; }
+  #submit-result { white-space: pre-wrap; }
+
+  .group-head {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 1.1rem 0 0.5rem;
+  }
+  .group-chain {
+    font-family: var(--mono);
+    font-size: var(--s-2);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  .asset-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--card-2);
+  }
+  .asset-row + .asset-row { margin-top: 0.4rem; }
+  /* Something on but refusing invoices is the only genuinely urgent row. */
+  .asset-row[data-state="needs_payout"], .asset-row[data-state="needs_rate"] {
+    border-color: var(--amber);
+  }
+  .asset-row[data-state="accepting"] { border-color: var(--lime-edge); }
+  .asset-main { flex: 1 1 16rem; min-width: 0; }
+  .asset-title { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+  .asset-symbol { font-weight: 700; }
+  .asset-hint { margin: 0.3rem 0 0; }
+  .asset-contract { margin: 0.2rem 0 0; overflow-wrap: anywhere; font-size: var(--s-2); }
+  .asset-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 
   /* The who-pays pair. Two buttons rather than a toggle, so neither state is unstated. */
   .choice {
@@ -401,13 +440,43 @@
     <!-- currencies -->
     <section class="view" id="view-assets" hidden>
       <div class="panel">
-        <div class="panel-head"><h2>💰 Currencies</h2></div>
+        <div class="panel-head"><h2>💰 What you accept</h2></div>
         <div class="panel-body">
           <p class="note">
-            Only approved currencies can be invoiced in, and each needs a payout address on
-            its chain.
+            Turn on the currencies you want to take. Each one needs a payout address on its
+            chain — the money goes straight to your own wallet, so without an address there is
+            nowhere for it to go and invoices are refused.
           </p>
-          <div class="scroll"><table id="asset-table"></table></div>
+          <div id="asset-groups"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>➕ Your own token</h2></div>
+        <div class="panel-body">
+          <p class="note">
+            Issued your own token? Submit its contract and we will check it. Approval is not
+            automatic and not instant: the whole defence against a token calling itself USDT
+            is that somebody looks.
+          </p>
+          <form id="submit-form">
+            <div class="row">
+              <label>Chain
+                <select id="submit-chain">
+                  <option value="bsc">bsc</option>
+                  <option value="ethereum">ethereum</option>
+                  <option value="polygon">polygon</option>
+                </select>
+              </label>
+              <label>Contract address<input class="mono" id="submit-contract" placeholder="0x…" required></label>
+            </div>
+            <p class="note">
+              Only EVM chains for now — TON, TRON and Solana contracts need a different probe,
+              and submitting one we cannot read would tell you nothing.
+            </p>
+            <div class="row"><button class="primary" type="submit" id="submit-asset">Submit for review</button></div>
+          </form>
+          <div class="banner" id="submit-result" data-kind="warn" hidden></div>
         </div>
       </div>
     </section>
@@ -794,6 +863,152 @@ function setupSteps(input) {
         },
     ];
 }
+function assetStance(asset, hasPayoutAddress, now = Date.now()) {
+    /**
+     * Ordered by who can act, hardest first.
+     *
+     * A merchant reading this row wants one sentence telling them whether it is their move.
+     * So anything we have decided comes before anything they have decided: there is no point
+     * telling somebody their payout address is missing for a currency we have blocked.
+     */
+    if (asset.verdict === 'blocked') {
+        return {
+            state: 'blocked',
+            label: 'Refused',
+            tone: 'bad',
+            hint: 'We could not accept this contract. Nothing here will change that.',
+            canToggle: false,
+        };
+    }
+    if (asset.listed === false) {
+        return {
+            state: 'withdrawn',
+            label: 'Not offered',
+            tone: 'dead',
+            /**
+             * Explicitly ours, not theirs, and explicitly about the chain rather than the token.
+             * A merchant told only "unavailable" will go looking at their own configuration.
+             */
+            hint: 'AVEX is not accepting this currency at the moment — usually because the chain ' +
+                'itself is paused on our side. Invoices already open still complete.',
+            canToggle: false,
+        };
+    }
+    if (asset.verdict !== 'approved') {
+        return {
+            state: 'in_review',
+            label: 'In review',
+            tone: 'wait',
+            hint: 'We are checking the contract. You will be told when it is decided.',
+            canToggle: false,
+        };
+    }
+    if (!asset.enabled) {
+        return {
+            state: 'off',
+            label: 'Off',
+            tone: 'dead',
+            hint: 'Available. Turn it on to accept it.',
+            canToggle: true,
+        };
+    }
+    /**
+     * A missing payout address beats a missing rate.
+     *
+     * Both refuse an invoice, but only one of them means the money would have nowhere to go.
+     * Naming the rate first would have somebody set a rate and still be refused.
+     */
+    if (!hasPayoutAddress) {
+        return {
+            state: 'needs_payout',
+            label: 'Needs a payout address',
+            tone: 'warn',
+            hint: 'On. Invoices are refused until you add an address for this chain.',
+            canToggle: true,
+        };
+    }
+    const rateLapsed = asset.pricingMode === 'fixed_rate' &&
+        asset.fixedRateValidUntil !== null &&
+        asset.fixedRateValidUntil !== undefined &&
+        Date.parse(asset.fixedRateValidUntil) <= now;
+    if (asset.requiresFixedRate === true && (asset.pricingMode !== 'fixed_rate' || rateLapsed)) {
+        return {
+            state: 'needs_rate',
+            label: rateLapsed ? 'Your rate has lapsed' : 'Needs your rate',
+            tone: 'warn',
+            /**
+             * Said plainly because the reason is unusual and merchants do not expect it: no
+             * market quotes this token, so there is no price for us to use and refusing to guess
+             * one is deliberate.
+             */
+            hint: 'On, but nothing on the market prices this currency, so the rate has to be yours. ' +
+                'Invoices are refused until you set one.',
+            canToggle: true,
+        };
+    }
+    if (rateLapsed) {
+        return {
+            state: 'needs_rate',
+            label: 'Your rate has lapsed',
+            tone: 'warn',
+            hint: 'On, but the rate you set has expired. Invoices are refused until you renew it.',
+            canToggle: true,
+        };
+    }
+    return {
+        state: 'accepting',
+        label: 'Accepting',
+        tone: 'good',
+        hint: 'On, priced, and settling to your address.',
+        canToggle: true,
+    };
+}
+/**
+ * Currencies grouped by chain, in the order a merchant reads them.
+ *
+ * By chain because that is how the decisions cluster — a payout address is per chain, and
+ * so is our own readiness — and within a chain by whether it needs attention, so a lapsed
+ * rate is not three rows below an untouched one nobody cares about.
+ */
+function groupAssetsByChain(assets, rank) {
+    const byChain = new Map();
+    for (const asset of assets) {
+        const bucket = byChain.get(asset.chain);
+        if (bucket)
+            bucket.push(asset);
+        else
+            byChain.set(asset.chain, [asset]);
+    }
+    return [...byChain.entries()]
+        .map(([chain, group]) => ({
+        chain,
+        assets: [...group].sort((left, right) => rank(left) - rank(right) || left.symbol.localeCompare(right.symbol)),
+    }))
+        .sort((left, right) => left.chain.localeCompare(right.chain));
+}
+/**
+ * How urgently a row wants looking at. Lower sorts first.
+ *
+ * Something on but refusing invoices is the only genuinely urgent case: the merchant
+ * believes they are accepting that currency and they are not.
+ */
+function assetUrgency(state) {
+    switch (state) {
+        case 'needs_payout':
+        case 'needs_rate':
+            return 0;
+        case 'accepting':
+            return 1;
+        case 'off':
+            return 2;
+        case 'in_review':
+            return 3;
+        case 'withdrawn':
+            return 4;
+        case 'blocked':
+            return 5;
+    }
+}
 /**
  * The period's volume, as progress towards a cheaper rate.
  *
@@ -1097,12 +1312,104 @@ function previewRoutes() {
             }),
         ],
         [
+            /**
+             * Every state the currency list can be in, in one response.
+             *
+             * The point of the Currencies tab is that "off" has six causes and five are not the
+             * merchant's to fix. A fixture with three approved rows would show one of them.
+             */
             'GET /assets',
             ok({
-                assets: [
-                    { id: 'a1', symbol: 'USDT', chain: 'bsc', decimals: 18, verdict: 'approved', enabled: true, pricingMode: 'fiat' },
-                    { id: 'a2', symbol: 'TON', chain: 'ton', decimals: 9, verdict: 'approved', enabled: true, pricingMode: 'fiat' },
-                    { id: 'a3', symbol: 'KIAN', chain: 'bsc', decimals: 18, verdict: 'review', enabled: true, pricingMode: 'fixed_rate' },
+                data: [
+                    {
+                        id: 'a1',
+                        symbol: 'USDT',
+                        chain: 'bsc',
+                        contract: '0x55d398326f99059fF775485246999027B3197955',
+                        decimals: 18,
+                        kind: 'erc20',
+                        curated: true,
+                        verdict: 'approved',
+                        listed: true,
+                        requiresFixedRate: false,
+                        enabled: true,
+                        pricingMode: 'fiat',
+                        fixedRateValidUntil: null,
+                        spreadBps: 50,
+                        toleranceBps: 50,
+                    },
+                    {
+                        /** Available and untouched: the row the merchant can actually act on. */
+                        id: 'a2',
+                        symbol: 'USDC',
+                        chain: 'bsc',
+                        contract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+                        decimals: 18,
+                        kind: 'erc20',
+                        curated: true,
+                        verdict: 'approved',
+                        listed: true,
+                        requiresFixedRate: false,
+                        enabled: false,
+                        pricingMode: null,
+                        fixedRateValidUntil: null,
+                        spreadBps: null,
+                        toleranceBps: null,
+                    },
+                    {
+                        /** On, but no payout address on TON — so every invoice is being refused. */
+                        id: 'a3',
+                        symbol: 'TON',
+                        chain: 'ton',
+                        contract: null,
+                        decimals: 9,
+                        kind: 'native',
+                        curated: true,
+                        verdict: 'approved',
+                        listed: true,
+                        requiresFixedRate: false,
+                        enabled: true,
+                        pricingMode: 'fiat',
+                        fixedRateValidUntil: null,
+                        spreadBps: 50,
+                        toleranceBps: 50,
+                    },
+                    {
+                        /** Their own token, still in the review queue. */
+                        id: 'a4',
+                        symbol: 'KIAN',
+                        chain: 'bsc',
+                        contract: '0x9f2c41ab77e05d63c8b1a2049e6d3b8c41ab77e0',
+                        decimals: 18,
+                        kind: 'erc20',
+                        curated: false,
+                        verdict: 'review',
+                        listed: true,
+                        requiresFixedRate: true,
+                        enabled: false,
+                        pricingMode: null,
+                        fixedRateValidUntil: null,
+                        spreadBps: null,
+                        toleranceBps: null,
+                    },
+                    {
+                        /** Vetted, but we have stopped offering it. Nothing the merchant does helps. */
+                        id: 'a5',
+                        symbol: 'USDC',
+                        chain: 'solana',
+                        contract: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+                        decimals: 6,
+                        kind: 'spl',
+                        curated: true,
+                        verdict: 'approved',
+                        listed: false,
+                        requiresFixedRate: false,
+                        enabled: false,
+                        pricingMode: null,
+                        fixedRateValidUntil: null,
+                        spreadBps: null,
+                        toleranceBps: null,
+                    },
                 ],
             }),
         ],
@@ -1154,6 +1461,26 @@ function previewRoutes() {
                 },
             },
         ],
+        [
+            'PUT /assets',
+            {
+                status: 409,
+                body: {
+                    error: 'preview',
+                    message: 'This is a preview with canned data — nothing here can be changed.',
+                },
+            },
+        ],
+        [
+            'POST /assets',
+            {
+                status: 409,
+                body: {
+                    error: 'preview',
+                    message: 'This is a preview with canned data — nothing here can be changed.',
+                },
+            },
+        ],
         /**
          * Refused, on purpose.
          *
@@ -1181,7 +1508,14 @@ function previewRoutes() {
  * `/invoices?limit=50`, and a fixture per limit would be a fixture per caller.
  */
 function matchPreview(method, url, routes = previewRoutes()) {
-    const path = url.split('?')[0] ?? '';
+    /**
+     * A trailing id is dropped before matching.
+     *
+     * `PUT /v1/organizations/x/assets/a1` is a write against the assets collection, and a
+     * fixture per asset id would be a fixture per row. Only the last segment, and only when it
+     * looks like an id rather than a path word — `/commission/fee-payer` must keep its tail.
+     */
+    const path = (url.split('?')[0] ?? '').replace(/\/[0-9a-fA-F-]{2,}$/, (tail) => /^\/[a-z-]+$/.test(tail) ? tail : '');
     let best = null;
     for (const [key, route] of routes) {
         const [keyMethod, keyPath] = key.split(' ');
@@ -1593,33 +1927,219 @@ function matchPreview(method, url, routes = previewRoutes()) {
 
   function renderAssets() {
     const rows = cache.assets || [];
-    const payoutChains = new Set((cache.payouts || []).filter((row) => !row.supersededAt).map((row) => row.chain));
+    const payoutChains = new Set(
+      (cache.payouts || []).filter((row) => !row.supersededAt).map((row) => row.chain),
+    );
 
     if (rows.length === 0) {
-      fill(el('asset-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No currencies available yet.' })])])]);
+      fill(el('asset-groups'), [
+        h('p', { class: 'note', text: 'No currencies available yet.' }),
+      ]);
       return;
     }
 
-    fill(el('asset-table'), [
-      h('thead', {}, [h('tr', {}, ['Currency', 'Chain', 'Review', 'Enabled', 'Pricing', 'Payout address'].map((label) => h('th', { text: label })))]),
-      h('tbody', {}, rows.map((asset) => {
-        const tone = asset.verdict === 'approved' ? 'good' : asset.verdict === 'blocked' ? 'bad' : 'wait';
-        const hasPayout = payoutChains.has(asset.chain);
-        return h('tr', {}, [
-          h('td', { class: 'mono', text: asset.symbol }),
-          h('td', { class: 'mono', text: asset.chain }),
-          h('td', {}, [h('span', { class: 'pill', 'data-tone': tone, text: asset.verdict })]),
-          h('td', {}, [h('span', { class: 'pill', 'data-tone': asset.enabled ? 'good' : 'dead', text: asset.enabled ? 'on' : 'off' })]),
-          h('td', { text: asset.pricingMode || '—' }),
-          // Stated per currency rather than only in the checklist: this is the table a
-          // merchant looks at when an invoice was refused.
-          h('td', {}, [
-            h('span', { class: 'pill', 'data-tone': hasPayout ? 'good' : 'warn', text: hasPayout ? 'set' : 'missing' }),
+    /**
+     * Stance computed once per row and carried, not recomputed in three places.
+     *
+     * It decides the pill, the hint, whether the switch appears and where the row sorts —
+     * and a row whose pill disagreed with its own sort position would look like a bug.
+     */
+    const withStance = rows.map((asset) => ({
+      ...asset,
+      stance: assetStance(asset, payoutChains.has(asset.chain)),
+    }));
+
+    fill(
+      el('asset-groups'),
+      groupAssetsByChain(withStance, (asset) => assetUrgency(asset.stance.state)).flatMap(
+        (group) => [
+          h('div', { class: 'group-head' }, [
+            h('span', { class: 'group-chain', text: group.chain }),
+            payoutChains.has(group.chain)
+              ? h('span', { class: 'pill', 'data-tone': 'good', text: 'payout address set' })
+              : h('span', { class: 'pill', 'data-tone': 'warn', text: 'no payout address' }),
           ]),
-        ]);
-      })),
+          ...group.assets.map((asset) => assetRow(asset)),
+        ],
+      ),
+    );
+  }
+
+  /** One currency: what it is, what state it is in, and the one control that helps. */
+  function assetRow(asset) {
+    const stance = asset.stance;
+    const usesOwnRate = asset.requiresFixedRate || asset.pricingMode === 'fixed_rate';
+
+    return h('div', { class: 'asset-row', 'data-state': stance.state }, [
+      h('div', { class: 'asset-main' }, [
+        h('div', { class: 'asset-title' }, [
+          h('span', { class: 'mono asset-symbol', text: asset.symbol }),
+          h('span', { class: 'pill', 'data-tone': stance.tone, text: stance.label }),
+          asset.curated ? null : h('span', { class: 'pill', 'data-tone': 'dead', text: 'your token' }),
+        ]),
+        h('p', { class: 'note asset-hint', text: stance.hint }),
+        asset.contract
+          ? h('p', { class: 'note mono asset-contract', text: asset.contract })
+          : h('p', { class: 'note asset-contract', text: 'native asset' }),
+      ]),
+      h('div', { class: 'asset-actions' }, [
+        /**
+         * The switch appears only where flipping it could help.
+         *
+         * A currency in review or one we have withdrawn cannot be turned on, and a control
+         * that silently does nothing reads as a broken page rather than as a refusal.
+         */
+        stance.canToggle
+          ? h('button', {
+              type: 'button',
+              class: asset.enabled ? 'ghost' : 'primary',
+              text: asset.enabled ? 'Turn off' : 'Turn on',
+              onclick: () => void setAssetEnabled(asset, !asset.enabled),
+            })
+          : null,
+        usesOwnRate && stance.canToggle
+          ? h('button', {
+              type: 'button',
+              class: 'ghost',
+              text: asset.pricingMode === 'fixed_rate' ? 'Change your rate' : 'Set your rate',
+              onclick: () => openRate(asset),
+            })
+          : null,
+      ]),
     ]);
   }
+
+  /**
+   * Turn a currency on or off.
+   *
+   * `PUT` carries the whole configuration, so the pricing mode has to travel with it — and
+   * a currency nothing prices must keep `fixed_rate` or the API would refuse the write with
+   * a message about a rate the merchant was not trying to change.
+   */
+  async function setAssetEnabled(asset, enabled) {
+    const mode = asset.pricingMode || (asset.requiresFixedRate ? 'fixed_rate' : 'fiat');
+    if (enabled && mode === 'fixed_rate' && !asset.fixedRateValidUntil) {
+      // Nothing to send: the API needs a rate with the mode, and we do not have one.
+      openRate(asset);
+      return;
+    }
+
+    try {
+      await api('/v1/organizations/' + orgId + '/assets/' + asset.id, {
+        method: 'PUT',
+        body: JSON.stringify({ enabled, pricingMode: mode }),
+      });
+      flash(
+        enabled
+          ? asset.symbol + ' on ' + asset.chain + ' is on.'
+          : asset.symbol + ' on ' + asset.chain + ' is off. Invoices already open still complete.',
+        'ok',
+      );
+      await reloadAssets();
+    } catch (problem) {
+      flash(problem.message, 'error');
+    }
+  }
+
+  /**
+   * Set a rate for a currency the market does not price.
+   *
+   * The expiry is mandatory and that is deliberate rather than fussy: a rate with no end
+   * date is a price that goes stale silently, and the first anyone notices is a customer
+   * paying yesterday's number.
+   */
+  function openRate(asset) {
+    const rate = window.prompt(
+      'Your rate for 1 ' + asset.symbol + ', in US dollars.\n\n' +
+        'Nothing on the market prices this currency, so this is the number your invoices ' +
+        'will use. No spread is added — it is already the price you chose.',
+      '',
+    );
+    if (rate === null) return;
+
+    const days = window.prompt(
+      'How many days should this rate hold?\n\n' +
+        'An expiry is required. A rate with no end date goes stale silently, and the first ' +
+        'anyone notices is a customer paying yesterday\'s number.',
+      '30',
+    );
+    if (days === null) return;
+
+    void (async () => {
+      try {
+        const validUntil = new Date(Date.now() + Math.max(1, Number(days) || 0) * 86_400_000);
+        await api('/v1/organizations/' + orgId + '/assets/' + asset.id, {
+          method: 'PUT',
+          body: JSON.stringify({
+            enabled: true,
+            pricingMode: 'fixed_rate',
+            fixedRate: rate.trim(),
+            fixedRateValidUntil: validUntil.toISOString(),
+          }),
+        });
+        flash('Rate set for ' + asset.symbol + ', holding until ' + validUntil.toLocaleDateString() + '.', 'ok');
+        await reloadAssets();
+      } catch (problem) {
+        flash(problem.message, 'error');
+      }
+    })();
+  }
+
+  /**
+   * The assets out of a `/assets` response, read in one place.
+   *
+   * The API answers `{ data: [...] }`. Three views were unwrapping it themselves, which is
+   * how one of them ended up reading a key the others did not and rendering an empty list.
+   */
+  function assetList(response) {
+    return response?.data || response?.assets || response || [];
+  }
+
+  async function reloadAssets() {
+    const base = '/v1/organizations/' + orgId;
+    const [assets, payouts] = await Promise.all([
+      api(base + '/assets'),
+      api(base + '/payout-addresses'),
+    ]);
+    cache.assets = assetList(assets);
+    cache.payouts = payouts.addresses || payouts.payoutAddresses || payouts;
+    renderAssets();
+  }
+
+  el('submit-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = el('submit-asset');
+    button.disabled = true;
+    el('submit-result').hidden = true;
+
+    try {
+      const body = await api('/v1/organizations/' + orgId + '/assets', {
+        method: 'POST',
+        body: JSON.stringify({
+          chain: el('submit-chain').value,
+          contract: el('submit-contract').value.trim(),
+        }),
+      });
+
+      /**
+       * The findings are shown in full, including the ones that could not be run.
+       *
+       * A merchant is entitled to know what was checked about their own token — and if it
+       * comes back blocked, the findings are the only thing that tells them why.
+       */
+      const findings = (body.findings || [])
+        .map((finding) => '· ' + (finding.name ?? finding.check ?? '') + ': ' + (finding.detail ?? finding.result ?? ''))
+        .join('\n');
+      el('submit-result').textContent = body.message + (findings ? '\n\n' + findings : '');
+      el('submit-result').dataset.kind = body.verdict === 'blocked' ? 'error' : 'warn';
+      el('submit-result').hidden = false;
+      await reloadAssets();
+    } catch (problem) {
+      flash(problem.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   // ── payouts ───────────────────────────────────────────────────────────────
 
@@ -1940,7 +2460,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
           ...cache,
           commission,
           report,
-          assets: assets.assets || assets,
+          assets: assetList(assets),
           payouts: payouts.addresses || payouts.payoutAddresses || payouts,
           endpoints: endpoints.endpoints || [],
           keys: keys.keys || keys.apiKeys || [],
@@ -1950,13 +2470,10 @@ function matchPreview(method, url, routes = previewRoutes()) {
       } else if (view === 'invoices') {
         await loadInvoices();
       } else if (view === 'assets') {
-        const [assets, payouts] = await Promise.all([api(base + '/assets'), api(base + '/payout-addresses')]);
-        cache.assets = assets.assets || assets;
-        cache.payouts = payouts.addresses || payouts.payoutAddresses || payouts;
-        renderAssets();
+        await reloadAssets();
       } else if (view === 'payouts') {
         const [assets, payouts] = await Promise.all([api(base + '/assets'), api(base + '/payout-addresses')]);
-        cache.assets = assets.assets || assets;
+        cache.assets = assetList(assets);
         cache.payouts = payouts.addresses || payouts.payoutAddresses || payouts;
         renderPayouts();
       } else if (view === 'webhooks') {
