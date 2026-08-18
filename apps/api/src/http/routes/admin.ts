@@ -226,7 +226,31 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
       context: requestContext(request),
     });
 
-    return reply.send(await context.admin.getMerchant(orgId));
+    /**
+     * The fee plan travels with the merchant rather than in a second request.
+     *
+     * An operator with the authority to change an account's rate — the route below —
+     * needs to see the rate first. Two requests to answer "what do they pay and what have
+     * they paid us" is how a panel ends up showing one of the two.
+     */
+    const [merchant, commission, earned] = await Promise.all([
+      context.admin.getMerchant(orgId),
+      context.feePlans.forOrganization(orgId).catch(() => null),
+      context.feePlans.commissionEarned({ organizationId: orgId }),
+    ]);
+
+    return reply.send({
+      ...merchant,
+      /**
+       * Null for an account with no plan row, which is a gap in our own bookkeeping
+       * rather than a merchant problem — and one an operator should be able to see.
+       */
+      commission,
+      commissionEarned: {
+        creditedUsdMicros: earned.creditedUsdMicros.toString(),
+        settledUsdMicros: earned.settledUsdMicros.toString(),
+      },
+    });
   });
 
   app.post('/admin/merchants/:orgId/suspend', async (request, reply) => {
@@ -484,6 +508,13 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
   });
 
   // ── commission ────────────────────────────────────────────────────────────
+
+  app.get('/admin/commission/revenue', async (request, reply) => {
+    // `merchant:read`: this is every account's rate and what each has paid us, which is
+    // the same class of data as the merchant list rather than a settlement secret.
+    await requireStaffPermission(context.audit, request.staff, 'merchant:read');
+    return reply.send(await context.feePlans.book());
+  });
 
   app.post('/admin/commission/close-periods', async (request, reply) => {
     // A read-shaped name would be a lie: this writes rates. `merchant:read` is not

@@ -522,6 +522,101 @@
     ]);
   }
 
+  /**
+   * What this account pays us, and what it has paid us.
+   *
+   * On the merchant page rather than in a section of its own, because it is read in the
+   * same breath as everything else about an account — and because whoever can change the
+   * rate is looking at this page when they decide to.
+   */
+  function commissionBlock(org, data) {
+    const plan = data.commission;
+    const earned = data.commissionEarned ?? { creditedUsdMicros: '0', settledUsdMicros: '0' };
+
+    if (!plan) {
+      /**
+       * A gap in our own bookkeeping, said plainly.
+       *
+       * An account with no plan row is charged nothing at all — `feeFor` returns nothing
+       * rather than guessing — so this is revenue we are not collecting, not a display bug.
+       */
+      return h('div', { class: 'notice warn' }, [
+        h('span', {}, [
+          h('strong', { text: 'No fee plan. ' }),
+          'This account is being charged no commission at all. Every invoice it opens ' +
+            'carries a zero rate, which is our gap rather than theirs.',
+        ]),
+      ]);
+    }
+
+    const rate = (plan.commission.feeBps / 100).toFixed(2).replace(/\.?0+$/, '') + '%';
+    const actions = [];
+    if (can(me.permissions, 'staff:write')) {
+      actions.push(
+        h('button', { class: 'btn', type: 'button', text: 'Change rate', onclick: () => changeRate(org, plan) }),
+      );
+    }
+
+    return h('div', {}, [
+      h('div', { class: 'grid cols', style: 'margin-bottom:.75rem' }, [
+        metric('Rate', rate, plan.commission.negotiated ? 'warn' : null),
+        /**
+         * Two figures, not one. `credited` is commission the chain owes us and will
+         * deliver when the invoice is swept; `settled` is the part that has arrived. A
+         * single number would overstate what we hold.
+         */
+        metric('Earned', formatUsdMicros(earned.creditedUsdMicros)),
+        metric('Swept', formatUsdMicros(earned.settledUsdMicros)),
+        metric('This period', formatUsdMicros(plan.period.processedUsdMicros)),
+      ]),
+      h('p', { class: 'sub', style: 'margin:0 0 .5rem' }, [
+        plan.commission.negotiated
+          ? 'Negotiated, so the volume ladder leaves it alone. '
+          : 'From the published ladder. ' +
+            (plan.period.wouldEarnBps === plan.commission.feeBps
+              ? 'This period earns the same rate. '
+              : 'This period so far earns ' +
+                (plan.period.wouldEarnBps / 100).toFixed(2).replace(/\.?0+$/, '') + '%, from the next period. '),
+        /**
+         * Read-only, and worth saying why rather than leaving an operator hunting for the
+         * control. Who bears the commission changes what the merchant's own customers are
+         * asked to pay. That is their pricing decision — we receive the same either way —
+         * so staff changing it would be us setting a merchant's prices.
+         */
+        plan.commission.feePayer === 'payer'
+          ? 'Their customers pay the commission on top; they set that themselves.'
+          : 'They absorb the commission; they can pass it on themselves if they choose.',
+      ]),
+      actions.length > 0 ? h('div', { class: 'row' }, actions) : null,
+    ]);
+  }
+
+  function changeRate(org, plan) {
+    prompt({
+      title: 'Change ' + org.name + "'s commission",
+      note:
+        'In basis points: 50 is 0.5%. Applies to invoices opened from now on — invoices ' +
+        'already issued keep the rate they were quoted with, because their deposit ' +
+        'addresses commit to it. Setting a rate by hand marks the account as negotiated, ' +
+        'so the volume ladder will stop moving it.',
+      permission: 'staff:write',
+      fields: [
+        { name: 'feeBps', label: 'Basis points', value: String(plan.commission.feeBps), mono: true },
+        { name: 'note', label: 'Why (recorded)', type: 'textarea', placeholder: 'At least ten characters — the only record of why this account pays a different rate.' },
+      ],
+      confirmLabel: 'Set rate',
+      onConfirm: async (values) => {
+        await api('/admin/commission/' + org.id, {
+          method: 'POST',
+          body: { feeBps: Number(values.feeBps), note: values.note },
+        });
+        // Re-open the merchant rather than `refresh()`, which re-renders the *section* and
+        // would bounce the operator back to the list they came from.
+        await openMerchant(org.id);
+      },
+    });
+  }
+
   function pageHead(title, subtitle, actions = []) {
     return h('div', { class: 'head' }, [
       h('div', {}, [h('h1', { text: title }), subtitle ? h('p', { class: 'sub', text: subtitle }) : null]),
@@ -857,6 +952,67 @@
       );
     },
 
+    async revenue() {
+      const data = await api('/admin/commission/revenue');
+
+      render(view(),
+        pageHead(
+          'Revenue',
+          'What every account pays, and what each has paid us.',
+          [h('button', { class: 'btn', type: 'button', text: 'Refresh', onclick: () => void refresh() })],
+        ),
+
+        h('div', { class: 'grid cols', style: 'margin-bottom:1rem' }, [
+          /**
+           * Two headline figures, and the gap between them is the useful part. `Earned` is
+           * commission the chain owes us on payments we have credited; `Swept` is the part
+           * that has actually reached a collector wallet. One number would overstate what
+           * we hold, and it is the number an owner would take to the bank.
+           */
+          metric('Earned', formatUsdMicros(data.creditedUsdMicros)),
+          metric('Swept', formatUsdMicros(data.settledUsdMicros)),
+          metric('Awaiting sweep', formatUsdMicros(
+            (BigInt(data.creditedUsdMicros) - BigInt(data.settledUsdMicros)).toString(),
+          ), BigInt(data.creditedUsdMicros) - BigInt(data.settledUsdMicros) > 0n ? 'warn' : null),
+          metric('Accounts', String(data.accounts.length)),
+        ]),
+
+        h('p', { class: 'sub', style: 'margin:0 0 .75rem', text:
+          'Estimated from what each payment was worth when it was credited. The commission ' +
+          'itself is taken in token units on chain, so its dollar value moves afterwards — ' +
+          'this is not a substitute for reading the collector wallets.' }),
+
+        table(
+          ['Account', 'Rate', 'Who pays', 'Earned', 'This period', 'Reviewed'],
+          data.accounts.map((account) =>
+            h('tr', {}, [
+              h('td', { class: 'm' }, [
+                h('button', {
+                  class: 'btn ghost',
+                  type: 'button',
+                  text: shortenAddress(account.organizationId, 8, 4),
+                  title: account.organizationId,
+                  onclick: () => void openMerchant(account.organizationId),
+                }),
+              ]),
+              h('td', {}, [
+                tag(
+                  (account.feeBps / 100).toFixed(2).replace(/\.?0+$/, '') + '%',
+                  // Negotiated is worth marking: the ladder is not moving it, so nobody
+                  // will notice if the deal has gone stale.
+                  account.negotiated ? 'warn' : null,
+                ),
+              ]),
+              h('td', { class: 'dim', text: account.feePayer === 'payer' ? 'their customer' : 'they absorb it' }),
+              td(formatUsdMicros(account.commissionUsdMicros), 'num'),
+              td(formatUsdMicros(account.volumeUsdMicros), 'num'),
+              td(account.periodEnd ? formatAgo(account.periodEnd) : '—', 'm'),
+            ]),
+          ),
+        ),
+      );
+    },
+
     async unmatched() {
       const resolution = el('unmatched-filter')?.value ?? 'pending';
       const data = await api(`/admin/unmatched?resolution=${resolution}&limit=100`);
@@ -1031,6 +1187,9 @@
           : Object.entries(data.invoicesByStatus).map(([status, value]) =>
               metric(status, String(value), status === 'underpaid' || status === 'overpaid' ? 'warn' : null)),
       ),
+
+      h('h2', { text: 'Commission', style: 'margin:1.25rem 0 .5rem' }),
+      commissionBlock(org, data),
 
       h('h2', { text: 'Members', style: 'margin:1.25rem 0 .5rem' }),
       table(['Email', 'Role', 'Verified', 'Two-factor', 'Joined'], data.members.map((member) =>

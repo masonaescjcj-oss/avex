@@ -1,5 +1,5 @@
 import type { FeePayer } from '@avex/core';
-import { and, count, eq, gte, isNull, lt, lte, sql } from 'drizzle-orm';
+import { and, count, eq, gte, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
 import { feePlans, invoices, payments } from '../db/schema.js';
@@ -322,6 +322,125 @@ export class FeePlanService {
       declaredUsdMicros: declared,
       unpricedPayments: unpriced,
       totalUsdMicros: verified + declared,
+    };
+  }
+
+  /**
+   * What an account has actually paid us, in dollars.
+   *
+   * Two figures, because they answer different questions and conflating them would
+   * overstate the money we hold. `credited` is commission on payments we have seen and
+   * credited: it is owed to us by the chain and will reach the collector when the invoice
+   * is swept. `settled` is the part where that sweep has happened, so it is the figure
+   * that should agree with the collector wallet.
+   *
+   * Both are estimates from `payments.value_usd_micros`, which is what the payment was
+   * worth when it was credited. The commission itself is taken in token units on chain,
+   * so its dollar value moves with the market afterwards — nothing here is a substitute
+   * for reading the collector's own balance, and it is not presented as one.
+   */
+  async commissionEarned(
+    filter: { readonly organizationId?: string; readonly from?: Date; readonly to?: Date } = {},
+  ): Promise<{ readonly creditedUsdMicros: bigint; readonly settledUsdMicros: bigint }> {
+    /**
+     * Floored per payment, mirroring the contract.
+     *
+     * `Forwarder._feeOn` floors each invoice's cut individually, so summing first and
+     * flooring once would overstate the total by up to a unit per payment — which is
+     * exactly the kind of drift that makes a revenue figure impossible to reconcile
+     * against a wallet.
+     */
+    const cut = sql<string>`coalesce(sum(floor(${payments.valueUsdMicros} * ${invoices.feeBps} / 10000)), 0)::text`;
+
+    const conditions = [
+      eq(invoices.mode, 'live'),
+      isNull(payments.reversedAt),
+      ...(filter.organizationId ? [eq(invoices.organizationId, filter.organizationId)] : []),
+      ...(filter.from ? [gte(payments.creditedAt, filter.from)] : []),
+      ...(filter.to ? [lt(payments.creditedAt, filter.to)] : []),
+    ];
+
+    const [credited] = await this.db
+      .select({ total: cut })
+      .from(payments)
+      .innerJoin(invoices, eq(invoices.id, payments.invoiceId))
+      .where(and(...conditions));
+
+    const [settled] = await this.db
+      .select({ total: cut })
+      .from(payments)
+      .innerJoin(invoices, eq(invoices.id, payments.invoiceId))
+      .where(and(...conditions, isNotNull(invoices.settledAt)));
+
+    return {
+      creditedUsdMicros: BigInt(credited?.total ?? '0'),
+      settledUsdMicros: BigInt(settled?.total ?? '0'),
+    };
+  }
+
+  /**
+   * The whole book: what every account pays, and what each has paid us.
+   *
+   * The company owner's view, and the reason it is one query rather than a loop over
+   * accounts: "who are our biggest accounts and what are they on" is a single question,
+   * and answering it per-account would make the panel slower the more customers we have.
+   *
+   * Accounts with no live volume are included with zeros rather than omitted. A merchant
+   * who signed up and never traded is a fact about the business, and an owner scanning
+   * this list is as likely to be looking for those as for the busy ones.
+   */
+  async book(now: Date = new Date()): Promise<{
+    readonly creditedUsdMicros: string;
+    readonly settledUsdMicros: string;
+    readonly accounts: readonly {
+      readonly organizationId: string;
+      readonly feeBps: number;
+      readonly negotiated: boolean;
+      readonly feePayer: FeePayer;
+      readonly volumeUsdMicros: string;
+      readonly commissionUsdMicros: string;
+      readonly periodEnd: string | null;
+    }[];
+  }> {
+    const plans = await this.db.select().from(feePlans);
+
+    const accounts = [];
+    let credited = 0n;
+    let settled = 0n;
+
+    for (const plan of plans) {
+      const periodStart = plan.currentPeriodStart ?? plan.createdAt;
+      const volume = await this.assessedVolume(plan.organizationId, {
+        from: periodStart,
+        to: now,
+      });
+      // Lifetime, not this period: what an account has been worth is the figure an owner
+      // is comparing accounts on, and a period-to-date number would rank whoever
+      // happened to have a busy week.
+      const earned = await this.commissionEarned({ organizationId: plan.organizationId });
+      credited += earned.creditedUsdMicros;
+      settled += earned.settledUsdMicros;
+
+      accounts.push({
+        organizationId: plan.organizationId,
+        feeBps: plan.feeBps,
+        negotiated: plan.negotiatedFee,
+        feePayer: plan.feePayer,
+        volumeUsdMicros: volume.totalUsdMicros.toString(),
+        commissionUsdMicros: earned.creditedUsdMicros.toString(),
+        periodEnd: plan.currentPeriodEnd?.toISOString() ?? null,
+      });
+    }
+
+    // Biggest earner first: an owner opens this to see the top of the list.
+    accounts.sort((left, right) =>
+      BigInt(right.commissionUsdMicros) > BigInt(left.commissionUsdMicros) ? 1 : -1,
+    );
+
+    return {
+      creditedUsdMicros: credited.toString(),
+      settledUsdMicros: settled.toString(),
+      accounts,
     };
   }
 

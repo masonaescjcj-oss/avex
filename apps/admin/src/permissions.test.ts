@@ -33,12 +33,14 @@ const SUPERADMIN = [...OPERATOR, 'staff:write', 'asset_list:write'];
 
 test('a support user sees every read-only section', () => {
   const ids = visibleNav(SUPPORT).map((item) => item.id);
-  assert.deepEqual(ids, ['health', 'merchants', 'unmatched', 'review', 'settlements', 'audit']);
+  assert.deepEqual(ids, ['health', 'merchants', 'revenue', 'unmatched', 'review', 'settlements', 'audit']);
 });
 
 test('a permission list missing a read hides that section', () => {
   const narrow = visibleNav(['merchant:read']).map((item) => item.id);
-  assert.deepEqual(narrow, ['merchants']);
+  // Revenue rides on `merchant:read`: every account's rate and volume is the same class
+  // of data as the merchant list, so it is visible to exactly the same people.
+  assert.deepEqual(narrow, ['merchants', 'revenue']);
 });
 
 test('an empty permission list shows no sections and no default', () => {

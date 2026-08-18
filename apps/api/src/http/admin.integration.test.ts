@@ -438,8 +438,11 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     options: {
       readonly source?: 'quote' | 'oracle' | 'merchant_rate' | 'unknown';
       readonly reversed?: boolean;
+      readonly mode?: 'test' | 'live';
+      /** The rate the invoice carries, which is what our cut is computed from. */
+      readonly feeBps?: number;
     } = {},
-  ): Promise<void> {
+  ): Promise<string> {
     const assetId = await insertAsset('approved', `VOL${randomBytes(2).toString('hex')}`);
     const [invoice] = await db
       .insert(schema.invoices)
@@ -450,6 +453,11 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
         chain: 'bsc',
         depositAddress: `0x${randomBytes(20).toString('hex')}`,
         payoutAddress: `0x${randomBytes(20).toString('hex')}`,
+        mode: options.mode ?? 'live',
+        feeBps: options.feeBps ?? 50,
+        // Required by `invoices_fee_has_destination` whenever the rate is non-zero: a fee
+        // with nowhere to go is a fee the forwarder could not deliver.
+        ...(options.feeBps === 0 ? {} : { feeDestination: FEE_COLLECTOR_EVM }),
         expiresAt: new Date(Date.now() + 3600_000),
       })
       .returning({ id: schema.invoices.id });
@@ -471,6 +479,8 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
         ? { reversedAt: new Date(creditedAt.getTime() + 60_000), reversedReason: 'reorg' }
         : {}),
     });
+
+    return invoice!.id;
   }
 
   // ── credential separation ──────────────────────────────────────────────────
@@ -2411,6 +2421,184 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       headers: asStaff(supportToken),
     });
     assert.equal(response.statusCode, 403, response.body);
+  });
+
+  // ── what the company owner sees ────────────────────────────────────────────
+  //
+  // There are two roles in this product: the staff who run AVEX, and the account holder
+  // who takes payments. These are the staff side of the commission — the owner's view of
+  // what every account pays and what each has been worth.
+
+  test('a merchant detail carries the rate an operator is about to change', async () => {
+    /**
+     * The same request, not a second one. Whoever can change an account's rate — the
+     * route below — needs to see it first, and two requests to answer "what do they pay
+     * and what have they paid us" is how a panel ends up showing only one of the two.
+     */
+    const org = await freshMerchant('detail');
+    await feePlanService.ensureForOrganization(org);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/admin/merchants/${org}`,
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+
+    const body = response.json();
+    assert.equal(body.commission.commission.feeBps, 50);
+    assert.equal(body.commission.commission.feePayer, 'merchant');
+    assert.equal(body.commissionEarned.creditedUsdMicros, '0');
+  });
+
+  test('a merchant with no plan row is shown as such rather than failing the page', async () => {
+    /**
+     * Our own bookkeeping gap, and it must not take the whole detail view down with it.
+     * An operator investigating an account that somehow has no plan is exactly the person
+     * who needs to be able to open it.
+     */
+    const org = await freshMerchant('noplandetail');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/admin/merchants/${org}`,
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().commission, null);
+    assert.ok(response.json().organization, 'the rest of the page must still be there');
+  });
+
+  test('commission earned separates what is owed to us from what has reached us', async () => {
+    /**
+     * Two figures because they answer different questions, and conflating them would
+     * overstate the money we hold. A credited payment is commission the chain owes us and
+     * will deliver when the invoice is swept; only a settled one has actually arrived.
+     */
+    const org = await freshMerchant('earned');
+    await feePlanService.ensureForOrganization(org);
+    const invoiceId = await giveVolume(org, 10_000, daysAgo(1));
+
+    const beforeSettling = await feePlanService.commissionEarned({ organizationId: org });
+    // 0.5% of $10,000. The rate comes from the invoice, not from the plan, because the
+    // invoice is what the deposit address committed to.
+    assert.equal(beforeSettling.creditedUsdMicros, 50_000_000n);
+    assert.equal(beforeSettling.settledUsdMicros, 0n, 'nothing has been swept yet');
+
+    await db
+      .update(schema.invoices)
+      .set({ settledAt: new Date() })
+      .where(eq(schema.invoices.id, invoiceId));
+
+    const afterSettling = await feePlanService.commissionEarned({ organizationId: org });
+    assert.equal(afterSettling.creditedUsdMicros, 50_000_000n);
+    assert.equal(afterSettling.settledUsdMicros, 50_000_000n);
+  });
+
+  test('a reversed payment earns us nothing', async () => {
+    // A reorg took the payment back, so there is no cut of it to have taken. Counting it
+    // would put revenue on the books that no wallet will ever hold.
+    const org = await freshMerchant('earnedreversed');
+    await feePlanService.ensureForOrganization(org);
+    await giveVolume(org, 10_000, daysAgo(1), { reversed: true });
+
+    assert.equal(
+      (await feePlanService.commissionEarned({ organizationId: org })).creditedUsdMicros,
+      0n,
+    );
+  });
+
+  test('test volume earns us nothing either', async () => {
+    // Otherwise our own revenue figure would include rehearsals, and the first thing an
+    // owner does with a revenue figure is compare it against a wallet.
+    const org = await freshMerchant('earnedtest');
+    await feePlanService.ensureForOrganization(org);
+    await giveVolume(org, 10_000, daysAgo(1), { mode: 'test' });
+
+    assert.equal(
+      (await feePlanService.commissionEarned({ organizationId: org })).creditedUsdMicros,
+      0n,
+    );
+  });
+
+  test('the commission is floored per payment, as the contract floors it', async () => {
+    /**
+     * `Forwarder._feeOn` floors each invoice's cut individually. Summing first and
+     * flooring once would overstate the total by up to a unit per payment — the kind of
+     * drift that makes a revenue figure impossible to reconcile against a wallet, and
+     * that grows with the number of payments rather than staying a rounding error.
+     */
+    const org = await freshMerchant('floored');
+    await feePlanService.ensureForOrganization(org);
+    // 0.5% of $0.000199 is 0.0000000995 dollars — under a micro-dollar, so it floors to
+    // nothing. Three of them still floor to nothing, rather than to two micro-dollars.
+    for (let index = 0; index < 3; index += 1) {
+      await giveVolume(org, 0.000199, daysAgo(1));
+    }
+
+    assert.equal(
+      (await feePlanService.commissionEarned({ organizationId: org })).creditedUsdMicros,
+      0n,
+    );
+  });
+
+  test('the book lists every account, biggest earner first', async () => {
+    const big = await freshMerchant('bookbig');
+    const small = await freshMerchant('booksmall');
+    const quiet = await freshMerchant('bookquiet');
+    for (const org of [big, small, quiet]) await feePlanService.ensureForOrganization(org);
+    await giveVolume(big, 100_000, daysAgo(1));
+    await giveVolume(small, 1_000, daysAgo(1));
+
+    const book = await feePlanService.book();
+    const positions = [big, small, quiet].map((org) =>
+      book.accounts.findIndex((account) => account.organizationId === org),
+    );
+    assert.ok(positions.every((index) => index >= 0), 'every account must be listed');
+    assert.ok(positions[0]! < positions[1]!, 'the bigger earner comes first');
+    /**
+     * An account that signed up and never traded is listed with zeros rather than left
+     * out. A merchant who is not trading is a fact about the business, and an owner
+     * scanning this is as likely to be looking for those as for the busy ones.
+     */
+    assert.ok(positions[1]! < positions[2]!);
+    assert.equal(book.accounts[positions[2]!]?.commissionUsdMicros, '0');
+    assert.equal(book.accounts[positions[0]!]?.commissionUsdMicros, '500000000');
+  });
+
+  test('the book total is the sum of what the accounts earned', async () => {
+    // Stated because a headline that disagrees with the list beneath it is worse than no
+    // headline: an owner cannot tell which of the two to believe.
+    const book = await feePlanService.book();
+    const summed = book.accounts.reduce(
+      (total, account) => total + BigInt(account.commissionUsdMicros),
+      0n,
+    );
+    assert.equal(book.creditedUsdMicros, summed.toString());
+    assert.ok(BigInt(book.settledUsdMicros) <= BigInt(book.creditedUsdMicros));
+  });
+
+  test('the revenue route is a staff read, and support may have it', async () => {
+    // Every account's rate and what each has paid us is the same class of data as the
+    // merchant list, not a settlement secret — so it takes the same permission.
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/commission/revenue',
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.ok(Array.isArray(response.json().accounts));
+  });
+
+  test('a merchant session cannot read the revenue book', async () => {
+    // The one thing on this route that would matter most in the wrong hands: every other
+    // merchant's volume and what they pay.
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/commission/revenue',
+      headers: asStaff(merchantSessionToken),
+    });
+    assert.equal(response.statusCode, 401, response.body);
   });
 
   /** Move a plan's period, to put a merchant either side of a close. */
