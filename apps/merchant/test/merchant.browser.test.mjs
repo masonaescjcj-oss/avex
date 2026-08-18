@@ -148,7 +148,12 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
           if (overrides.checkoutFails) {
             return route.fulfill(json({ error: 'no_assets', message: 'No currency is payable yet.' }, 409));
           }
-          return route.fulfill(json({ id: 'chk_1', url: 'https://pay.test/pay/chk_1', status: 'open' }, 201));
+          return route.fulfill(json({
+            id: 'chk_1',
+            url: 'https://pay.test/pay/chk_1',
+            receiptUrl: 'https://pay.test/pay/chk_1/receipt',
+            status: 'open',
+          }, 201));
         }
         if (path.endsWith('/webhook-endpoints')) {
           return route.fulfill(json({ id: 'e1', secret: 'whsec_shown_once' }, 201));
@@ -346,6 +351,26 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
+  test('the receipt link is given with the payment link, not after payment', async () => {
+    /**
+     * So it can be filed with the order now rather than hunted for later. It refuses with
+     * "not paid yet" until the money lands, which is the honest state for a receipt to be
+     * in — one that existed before the payment would be a document saying somebody had
+     * paid when they had not.
+     */
+    const { page, context } = await open();
+    await page.click('nav.tabs button:has-text("Take a payment")');
+    await page.fill('#new-amount', '19.99');
+    await page.click('#new-submit');
+    await page.waitForFunction(() => document.getElementById('new-result')?.hidden === false, { timeout: 5000 });
+
+    assert.equal(await text(page, '#new-receipt'), 'https://pay.test/pay/chk_1/receipt');
+    // Two distinct links: one to send, one to keep. Showing the same URL twice would be
+    // worse than showing one.
+    assert.notEqual(await text(page, '#new-receipt'), await text(page, '#new-link'));
+    await context.close();
+  });
+
   test('a refusal is shown with the reason the API gave', async () => {
     // AVEX's refusals are written for a merchant to act on — "no currency is payable
     // yet" is more useful than a generic failure.
@@ -524,6 +549,78 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.match(rows[0], /yours/);
     // Exactly one rung is theirs, or the table is telling them two different prices.
     assert.equal(rows.filter((row) => /yours/.test(row)).length, 1);
+    await context.close();
+  });
+
+  // ── preview mode ──────────────────────────────────────────────────────────
+
+  test('preview mode loads the whole dashboard with no API behind it', async () => {
+    /**
+     * The point of building the preview as a network stub rather than a branch: every render
+     * path runs exactly as it does against the real API. This test is what makes that claim
+     * checkable — the page is loaded with no route handlers at all, so anything it renders
+     * came through its own fetch path.
+     */
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(String(error)));
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push('console: ' + message.text());
+    });
+
+    await page.route(`${PAGE}*`, (route) =>
+      route.fulfill({ path: pageFile, contentType: 'text/html' }),
+    );
+    // Anything that escapes the stub is a failure, not a silent network call.
+    await page.route('**/v1/**', (route) => route.abort());
+
+    await page.goto(`${PAGE}?preview=1`);
+    await page
+      .waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 6000 })
+      .catch(() => {});
+
+    assert.equal(await shown(page, '#app'), true, 'the dashboard should open');
+    assert.deepEqual(errors, []);
+
+    // Said before anything else, and not dismissible: a dashboard full of plausible figures
+    // that somebody takes for their own account is worse than no preview.
+    assert.equal(await shown(page, '#preview-banner'), true);
+    assert.match(await text(page, '#preview-banner'), /made up|not an account/i);
+
+    // Every tab renders rather than half of them.
+    for (const label of ['Take a payment', 'Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Commission', 'Overview']) {
+      await page.click(`nav.tabs button:has-text("${label}")`);
+      await page.waitForTimeout(120);
+      assert.equal(await shown(page, '#flash'), false, `${label} flashed an error`);
+    }
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('preview mode refuses a change rather than pretending it worked', async () => {
+    /**
+     * The one place a preview has to decide what a write does. Pretending would leave
+     * somebody believing they had reconfigured an account that does not exist.
+     */
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const page = await context.newPage();
+    await page.route(`${PAGE}*`, (route) =>
+      route.fulfill({ path: pageFile, contentType: 'text/html' }),
+    );
+    await page.goto(`${PAGE}?preview=1`);
+    await page
+      .waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 6000 })
+      .catch(() => {});
+
+    await page.click('nav.tabs button:has-text("Commission")');
+    await page.waitForTimeout(150);
+    // The second option is the one not in force, so it is the clickable one.
+    await page.click('#fee-payer-options .choice:not([disabled])');
+    await page.waitForTimeout(200);
+
+    assert.equal(await shown(page, '#flash'), true);
+    assert.match(await text(page, '#flash'), /preview|cannot be changed/i);
     await context.close();
   });
 

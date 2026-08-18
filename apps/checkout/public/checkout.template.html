@@ -503,6 +503,23 @@
 
   .lock { display: flex; flex-direction: column; gap: 0.4rem; }
   .lock[hidden] { display: none; }
+
+  .receipt-offer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    margin-top: 0.75rem;
+    padding: 0.85rem 1rem;
+    border-radius: var(--r-md);
+    border: 1px solid var(--lime-edge);
+    background: var(--lime-wash);
+  }
+  /* Author `display` beats the user-agent `[hidden]` rule. */
+  .receipt-offer[hidden] { display: none; }
+  .receipt-link { color: var(--lime); font-weight: 700; text-decoration: none; }
+  .receipt-link:hover { text-decoration: underline; }
+  .receipt-link:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+  .receipt-note { font-size: var(--s-2); color: var(--muted); }
   .lock-line {
     display: flex;
     align-items: center;
@@ -720,6 +737,17 @@
             The exact amount depends on the network you choose — each one costs a
             different amount to settle.
           </p>
+        </section>
+
+        <!--
+          Offered only once the payment is final, and only in live mode where a session
+          exists to build the link from. A receipt is the thing a payer looks for the
+          moment they have paid, and making them ask the merchant for one is how a
+          successful payment still generates a support message.
+        -->
+        <section class="receipt-offer" id="receipt-offer" hidden>
+          <a class="receipt-link" id="receipt-link" href="#">🧾 View your receipt</a>
+          <span class="receipt-note">Keep it, print it, or forward it. No sign-in.</span>
         </section>
 
         <section class="lock" id="lock">
@@ -1740,6 +1768,14 @@
     // can no longer be changed, so neither should still look live.
     const settled = next === 'paid';
     el('lock').hidden = settled;
+    /**
+     * Live only, because the link is built from the session id and the demo has none.
+     *
+     * A dead "View your receipt" on the demo page would be worse than no link: it is the
+     * one control on this screen a payer will certainly press.
+     */
+    el('receipt-offer').hidden = !(settled && LIVE);
+    if (settled && LIVE) el('receipt-link').href = 'receipt.html?s=' + encodeURIComponent(SESSION_ID);
     for (const row of el('networks').children) row.disabled = settled;
 
     // Confirmation progress is only meaningful while a transfer is maturing.

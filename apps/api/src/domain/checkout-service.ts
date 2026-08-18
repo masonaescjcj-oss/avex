@@ -14,6 +14,7 @@ import {
   invoices,
   merchantAssets,
   organizations,
+  payments,
   payoutAddresses,
 } from '../db/schema.js';
 import type { AuditService } from './audit.js';
@@ -46,6 +47,7 @@ export class CheckoutError extends Error {
       | 'already_paid'
       | 'cancelled'
       | 'locked'
+      | 'not_paid'
       | 'no_assets',
     message: string,
   ) {
@@ -594,6 +596,120 @@ export class CheckoutService {
       expiresAt: row.invoice.expiresAt.toISOString(),
       // Deliberately absent: payoutAddress, feeDestination, organizationId. A payer has no
       // business knowing where the money goes afterwards.
+    };
+  }
+
+  /**
+   * The receipt for a settled checkout: the record the payer keeps.
+   *
+   * Public, like the rest of the payer side — the link is the capability, and a receipt
+   * a payer has to sign in for is a receipt they will not keep. It carries more than the
+   * payment page does, because the two are read at different moments: the page answers
+   * "what do I send and has it arrived", and this answers "what did I buy, when, for how
+   * much, and how would I prove it".
+   *
+   * The transaction hashes are the proof and the reason this exists at all. Everything
+   * else on here we assert; the hash is something the payer can check against a public
+   * chain without trusting us.
+   *
+   * Refused while the bill is unpaid. A receipt for a payment that has not arrived is not
+   * a receipt, and issuing one would give a payer a document saying they had paid.
+   */
+  async receipt(sessionId: string, now: Date = new Date()) {
+    const [row] = await this.db
+      .select({ session: checkoutSessions, merchantName: organizations.name })
+      .from(checkoutSessions)
+      .innerJoin(organizations, eq(organizations.id, checkoutSessions.organizationId))
+      .where(eq(checkoutSessions.id, sessionId))
+      .limit(1);
+    if (!row) throw new CheckoutError('not_found', 'No such checkout.');
+
+    const session = await this.settleStatus(row.session, now);
+    if (!session.invoiceId) {
+      throw new CheckoutError('not_paid', 'Nothing has been paid for this checkout yet.');
+    }
+
+    const [invoice] = await this.db
+      .select({ invoice: invoices, symbol: assets.symbol, decimals: assets.decimals })
+      .from(invoices)
+      .innerJoin(assets, eq(assets.id, invoices.assetId))
+      .where(eq(invoices.id, session.invoiceId))
+      .limit(1);
+    if (!invoice) throw new CheckoutError('not_found', 'No such checkout.');
+
+    /**
+     * `overpaid` gets a receipt too, and it says so.
+     *
+     * The money arrived — more of it than was asked for — so the payer is entitled to a
+     * record, and the record has to name the discrepancy rather than print the invoice
+     * amount as though that were what they sent. `underpaid` gets nothing: the bill is
+     * not settled, and a document that looks like a receipt would be worse than none.
+     */
+    if (invoice.invoice.status !== 'paid' && invoice.invoice.status !== 'overpaid') {
+      throw new CheckoutError(
+        'not_paid',
+        invoice.invoice.status === 'underpaid'
+          ? 'This payment was short of the amount due, so it has no receipt yet.'
+          : 'This payment has not completed yet, so it has no receipt yet.',
+      );
+    }
+
+    const transfers = await this.db
+      .select({
+        txHash: payments.txHash,
+        amount: payments.amount,
+        blockNumber: payments.blockNumber,
+        creditedAt: payments.creditedAt,
+      })
+      .from(payments)
+      .where(and(eq(payments.invoiceId, invoice.invoice.id), isNull(payments.reversedAt)))
+      .orderBy(payments.creditedAt);
+
+    return {
+      /**
+       * Derived from the invoice id rather than counted.
+       *
+       * A sequential number would need a counter, and a counter shared across merchants
+       * would tell each of them how many payments the others took. This is short enough
+       * to read down a phone and unique because the id is.
+       */
+      number: `AVEX-${invoice.invoice.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`,
+      status: invoice.invoice.status,
+      merchantName: row.merchantName,
+      description: session.description,
+      /** The merchant's own order id, so the payer can quote it back to them. */
+      reference: session.reference,
+      mode: invoice.invoice.mode,
+
+      amountFiatMicros: session.amountFiatMicros,
+      symbol: invoice.symbol,
+      decimals: invoice.decimals,
+      amountDue: invoice.invoice.amountDue,
+      amountPaid: invoice.invoice.amountPaid,
+
+      chain: invoice.invoice.chain,
+      depositAddress: invoice.invoice.depositAddress,
+      memo: invoice.invoice.memo,
+      /** The hashes. The only thing here a payer can verify without trusting us. */
+      transfers: transfers.map((transfer) => ({
+        txHash: transfer.txHash,
+        amount: transfer.amount,
+        blockNumber: transfer.blockNumber,
+        at: transfer.creditedAt.toISOString(),
+      })),
+
+      // The same disclosure rule as the payment page: shown when the payer paid it,
+      // absent when the merchant absorbed it.
+      feeBps: invoice.invoice.feePayer === 'payer' ? invoice.invoice.feeBps : 0,
+      feeIncluded:
+        invoice.invoice.feePayer === 'payer'
+          ? feeOnAmount(BigInt(invoice.invoice.amountDue), invoice.invoice.feeBps).toString()
+          : '0',
+
+      issuedAt: invoice.invoice.createdAt.toISOString(),
+      paidAt: (invoice.invoice.paidAt ?? invoice.invoice.createdAt).toISOString(),
+      // Deliberately absent, as everywhere else on this side: the payout address, our
+      // collector, and the merchant's id.
     };
   }
 

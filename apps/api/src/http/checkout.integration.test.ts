@@ -289,6 +289,45 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     app.inject({ method: 'GET', url: `/pay/${sessionId}/options` });
   const select = (sessionId: string, assetId: string) =>
     app.inject({ method: 'POST', url: `/pay/${sessionId}/select`, payload: { assetId } });
+  const receipt = (sessionId: string) =>
+    app.inject({ method: 'GET', url: `/pay/${sessionId}/receipt` });
+
+  /**
+   * Credit a payment against an invoice, as the watcher would.
+   *
+   * Written straight into the table rather than driven through a chain adapter: what these
+   * tests are about is what a receipt says once money has arrived, and going through the
+   * watcher would test the watcher a second time.
+   */
+  async function payInvoice(invoiceId: string, amount: string): Promise<string> {
+    const txHash = `0xreceipt${randomBytes(13).toString('hex')}`;
+    await db.insert(schema.payments).values({
+      invoiceId,
+      chain: 'bsc',
+      txHash,
+      transferIndex: 0,
+      amount,
+      blockNumber: 800,
+      valueSource: 'quote',
+    });
+
+    const [invoice] = await db
+      .select({ amountDue: schema.invoices.amountDue, toleranceBps: schema.invoices.toleranceBps })
+      .from(schema.invoices)
+      .where(eq(schema.invoices.id, invoiceId))
+      .limit(1);
+    const due = BigInt(invoice!.amountDue);
+    const paid = BigInt(amount);
+    const slack = (due * BigInt(invoice!.toleranceBps)) / 10_000n;
+    const status = paid + slack < due ? 'underpaid' : paid > due + slack ? 'overpaid' : 'paid';
+
+    await db
+      .update(schema.invoices)
+      .set({ amountPaid: amount, status, paidAt: new Date() })
+      .where(eq(schema.invoices.id, invoiceId));
+
+    return txHash;
+  }
 
   // ── the merchant opens a checkout ──────────────────────────────────────────
 
@@ -497,6 +536,153 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     } finally {
       await feePlans.setFeePayer(orgId, 'merchant', null);
     }
+  });
+
+  // ── receipts ───────────────────────────────────────────────────────────────
+
+  test('a receipt is refused until the payment has landed', async () => {
+    /**
+     * A receipt for a payment that has not arrived is not a receipt. Issuing one would
+     * hand a payer a document saying they had paid.
+     *
+     * 409, not 404: the link is real and the receipt will exist once the money lands, and
+     * "not found" reads to a payer as having lost their order.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const session = (await createCheckout({ amountFiatMicros: '20000000' })).json();
+
+    const beforeSelecting = await receipt(session.id);
+    assert.equal(beforeSelecting.statusCode, 409, beforeSelecting.body);
+    assert.equal(beforeSelecting.json().error, 'not_paid');
+
+    await select(session.id, assetId);
+    const beforePaying = await receipt(session.id);
+    assert.equal(beforePaying.statusCode, 409, beforePaying.body);
+    assert.match(beforePaying.json().message, /not completed yet/);
+  });
+
+  test('a settled payment has a receipt carrying the transaction that proves it', async () => {
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const session = (await createCheckout({
+      amountFiatMicros: '20000000',
+      description: 'Order 42',
+      reference: `receipt-${unique}`,
+    })).json();
+    const invoice = (await select(session.id, assetId)).json().payment;
+    const txHash = await payInvoice(invoice.invoiceId, invoice.amountDue);
+
+    const response = await receipt(session.id);
+    assert.equal(response.statusCode, 200, response.body);
+
+    const body = response.json();
+    assert.equal(body.status, 'paid');
+    assert.match(body.merchantName, /Checkout Shop/);
+    assert.equal(body.description, 'Order 42');
+    assert.equal(body.reference, `receipt-${unique}`);
+    assert.equal(body.amountFiatMicros, '20000000');
+    assert.equal(body.amountPaid, invoice.amountDue);
+    /**
+     * The hash is the only thing on a receipt that does not depend on trusting us, which
+     * makes it the field whose absence would matter most.
+     */
+    assert.deepEqual(
+      body.transfers.map((transfer: { txHash: string }) => transfer.txHash),
+      [txHash],
+    );
+    // Short, printable, and derived from the invoice id rather than counted — a shared
+    // counter would tell each merchant how many payments the others took.
+    assert.match(body.number, /^AVEX-[0-9A-F]{8}$/);
+  });
+
+  test('a receipt never carries the payout address or our collector', async () => {
+    // A receipt is forwarded, printed and filed, so it is the widest-travelling document
+    // this product produces — and the same boundary applies to it as to the payment page.
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    const payout = await ensurePayout('bsc');
+    const session = (await createCheckout({ amountFiatMicros: '20000000' })).json();
+    const invoice = (await select(session.id, assetId)).json().payment;
+    await payInvoice(invoice.invoiceId, invoice.amountDue);
+
+    const body = (await receipt(session.id)).body;
+    assert.ok(!body.includes(payout), 'the payout address must not travel on a receipt');
+    assert.ok(!body.includes(FEE_COLLECTOR));
+    assert.ok(!body.includes(orgId));
+  });
+
+  test('an overpaid checkout gets a receipt that names the excess', async () => {
+    /**
+     * The money arrived — more of it than was asked for — so the payer is entitled to the
+     * record, and the record has to show what they actually sent rather than printing the
+     * invoice amount as though that were it.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const session = (await createCheckout({ amountFiatMicros: '20000000' })).json();
+    const invoice = (await select(session.id, assetId)).json().payment;
+    await payInvoice(invoice.invoiceId, (BigInt(invoice.amountDue) * 2n).toString());
+
+    const body = (await receipt(session.id)).json();
+    assert.equal(body.status, 'overpaid');
+    assert.equal(body.amountPaid, (BigInt(invoice.amountDue) * 2n).toString());
+    assert.equal(body.amountDue, invoice.amountDue);
+  });
+
+  test('an underpaid checkout gets no receipt, and is told why', async () => {
+    // The bill is not settled. A document that looked like a receipt would be worse than
+    // none, and the message has to say what is wrong so the payer can send the rest.
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const session = (await createCheckout({ amountFiatMicros: '20000000' })).json();
+    const invoice = (await select(session.id, assetId)).json().payment;
+    await payInvoice(invoice.invoiceId, (BigInt(invoice.amountDue) / 2n).toString());
+
+    const response = await receipt(session.id);
+    assert.equal(response.statusCode, 409, response.body);
+    assert.match(response.json().message, /short of the amount due/);
+  });
+
+  test('a receipt discloses a commission the payer bore, and not one they did not', async () => {
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+
+    const absorbed = (await createCheckout({ amountFiatMicros: '20000000' })).json();
+    const absorbedInvoice = (await select(absorbed.id, assetId)).json().payment;
+    await payInvoice(absorbedInvoice.invoiceId, absorbedInvoice.amountDue);
+    assert.equal((await receipt(absorbed.id)).json().feeIncluded, '0');
+
+    const passedOn = (await createCheckout({
+      amountFiatMicros: '20000000',
+      feePayer: 'payer',
+    })).json();
+    const passedOnInvoice = (await select(passedOn.id, assetId)).json().payment;
+    await payInvoice(passedOnInvoice.invoiceId, passedOnInvoice.amountDue);
+
+    const body = (await receipt(passedOn.id)).json();
+    assert.equal(body.feeBps, 50);
+    assert.ok(BigInt(body.feeIncluded) > 0n);
+  });
+
+  test('a reversed payment leaves no transaction on the receipt', async () => {
+    /**
+     * A reorg took the transfer back. The hash is the proof, and a hash for a transaction
+     * that no longer exists is worse than no hash: a payer who looked it up would find
+     * nothing and conclude we had invented it.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const session = (await createCheckout({ amountFiatMicros: '20000000' })).json();
+    const invoice = (await select(session.id, assetId)).json().payment;
+    const txHash = await payInvoice(invoice.invoiceId, invoice.amountDue);
+
+    await db
+      .update(schema.payments)
+      .set({ reversedAt: new Date(), reversedReason: 'reorg' })
+      .where(eq(schema.payments.txHash, txHash));
+
+    const body = (await receipt(session.id)).json();
+    assert.deepEqual(body.transfers, []);
   });
 
   test('an unknown session is a 404, whether guessed or mistyped', async () => {

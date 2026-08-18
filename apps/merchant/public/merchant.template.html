@@ -290,6 +290,17 @@
     </div>
   </section>
 
+  <!--
+    Said before anything else on the page, and not dismissible. A dashboard full of
+    plausible figures that somebody takes for their own account is worse than no preview.
+  -->
+  <div class="banner" id="preview-banner" data-kind="warn" hidden>
+    <strong>Preview.</strong>
+    Every figure on this page is made up and nothing can be changed. It is the real
+    dashboard driven by canned answers instead of a server, so what you click is what
+    ships — but this is not an account.
+  </div>
+
   <!-- ── the dashboard ────────────────────────────────────────────────── -->
   <div id="app" hidden>
     <nav class="tabs" id="tabs"></nav>
@@ -339,9 +350,22 @@
             <div class="row"><button class="primary" type="submit" id="new-submit">Create payment link</button></div>
           </form>
           <div class="banner" id="new-result" data-kind="ok" hidden>
+            <p class="note" style="margin:0 0 .4rem">Send this to your customer:</p>
             <div class="copyable">
               <code id="new-link"></code>
               <button class="ghost" type="button" data-copy="new-link">Copy</button>
+            </div>
+            <!--
+              Given now rather than after payment, so it can be filed with the order
+              instead of hunted for later. It says "not paid yet" until the money lands,
+              which is the honest state for a receipt to be in.
+            -->
+            <p class="note" style="margin:.6rem 0 .4rem">
+              Their receipt, once they have paid — keep it with the order:
+            </p>
+            <div class="copyable">
+              <code id="new-receipt"></code>
+              <button class="ghost" type="button" data-copy="new-receipt">Copy</button>
             </div>
           </div>
         </div>
@@ -870,6 +894,7 @@
       });
 
       el('new-link').textContent = body.url;
+      el('new-receipt').textContent = body.receiptUrl;
       el('new-result').hidden = false;
       flash('Payment link created. Send it to your customer.', 'ok');
     } catch (problem) {
@@ -1304,6 +1329,39 @@
     el('auth-panel').hidden = true;
     el('app').hidden = false;
     show('overview');
+  }
+
+  /**
+   * Preview mode, opened with `?preview=1`.
+   *
+   * Implemented by replacing `fetch`, not by branching inside the page. Every render path,
+   * every request and every error handler then runs exactly as it does against the real
+   * API — a preview built by short-circuiting the page's own logic would be showing a
+   * version of the dashboard that has never been exercised.
+   */
+  if (new URLSearchParams(location.search).get('preview') === '1') {
+    const routes = previewRoutes();
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input.url;
+      const method = init?.method ?? (typeof input === 'string' ? 'GET' : input.method) ?? 'GET';
+      const match = matchPreview(method, url, routes);
+      if (match === null) {
+        return new Response(
+          JSON.stringify({ error: 'preview', message: 'Not part of this preview.' }),
+          { status: 404, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify(match.body), {
+        status: match.status,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    el('preview-banner').hidden = false;
+    // A token so `api()` sends an Authorization header, exactly as it would signed in.
+    // The stub ignores it; the page must not take a different path because of it.
+    token = 'preview';
+    void start().catch((problem) => flash('Preview failed to load: ' + problem.message, 'error'));
   }
 
   renderTabs();

@@ -246,6 +246,53 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
     await context.close();
   });
 
+  test('a paid payment offers the receipt, with the session in the link', async () => {
+    /**
+     * The thing a payer looks for the moment they have paid. Making them ask the merchant
+     * for it is how a successful payment still generates a support message.
+     */
+    const { page, context } = await open({
+      session: {
+        id: SESSION,
+        merchantName: 'Example Store',
+        description: 'Order 42',
+        amountFiatMicros: '20000000',
+        status: 'paid',
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        payment: {
+          invoiceId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+          chain: 'bsc',
+          symbol: 'USDT',
+          decimals: 18,
+          amountDue: '20100502512562814071',
+          amountPaid: '20100502512562814071',
+          depositAddress: BSC_ADDRESS,
+          memo: null,
+          status: 'paid',
+          toleranceBps: 50,
+          feeIncluded: '0',
+          feeBps: 0,
+          expiresAt: new Date(Date.now() + 900_000).toISOString(),
+        },
+      },
+    });
+
+    assert.equal(await shown(page, '#receipt-offer'), true);
+    const href = await page.$eval('#receipt-link', (node) => node.getAttribute('href'));
+    assert.equal(href, `receipt.html?s=${SESSION}`);
+    await context.close();
+  });
+
+  test('an unpaid payment offers no receipt', async () => {
+    // A receipt for a payment that has not arrived is not a receipt, and the link would be
+    // the one control on this screen a payer would certainly press.
+    const { page, context } = await open();
+    await page.click('#currencies .coin:has-text("USDT")');
+    await page.click('#networks .net-row:has-text("BNB Chain")');
+    assert.equal(await shown(page, '#receipt-offer'), false);
+    await context.close();
+  });
+
   test('a commission the merchant absorbs is not shown to the payer', async () => {
     /**
      * The default, and the half of this that is about restraint. The commission comes out

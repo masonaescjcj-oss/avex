@@ -17,6 +17,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const MODULES = [
   join(here, '..', '..', 'packages', 'ui-format', 'dist', 'index.js'),
   join(here, 'dist', 'dashboard.js'),
+  join(here, 'dist', 'preview.js'),
 ];
 const MARKER = '/* @inject:modules */';
 

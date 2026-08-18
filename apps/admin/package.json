@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -b && node build-page.mjs",
     "typecheck": "tsc -b --dry",
-    "test": "npm run build && node --test \"dist/**/*.test.js\""
+    "test": "npm run build && node --test \"dist/**/*.test.js\" \"test/*.test.mjs\""
   },
   "dependencies": {
     "@avex/ui-format": "*"

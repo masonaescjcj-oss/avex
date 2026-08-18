@@ -542,6 +542,7 @@
         <a href="#invoices">Invoices</a>
         <a href="#stars">Telegram Stars</a>
         <a href="#payer">Payer endpoints</a>
+        <a href="#receipts">Receipts</a>
         <a href="#webhooks">Webhooks</a>
         <a href="#config">Configuration</a>
         <a href="#errors">Errors</a>
@@ -957,6 +958,41 @@ curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices/
     </div>
   </section>
 
+  <!-- ── receipts ─────────────────────────────────────────────────────── -->
+  <section class="panel" id="receipts">
+    <div class="panel-head"><h2>🧾 Receipts <span class="tag" data-tag="public">no credentials</span></h2></div>
+    <div class="body">
+      <p>
+        Every checkout has a receipt at <code>{url}/receipt</code>. Creating a checkout
+        returns it as <code>receiptUrl</code>, so you can file it with the order straight
+        away — it answers <code>409 not_paid</code> until the payment lands. Once it does,
+        the payer reaches it from the payment page themselves, with no sign-in.
+      </p>
+      <div class="endpoint" data-route="GET /pay/:sessionId/receipt">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/pay/<em>:sessionId</em>/receipt</span></div>
+        <p>
+          What was bought, from whom, for how much, in which asset on which chain, and the
+          transaction hashes. The hashes are the point: everything else on a receipt is
+          something we assert, and those are something the payer can check against a public
+          chain without trusting either of us.
+        </p>
+      </div>
+      <p class="note">
+        <strong>An overpayment gets a receipt, and it says so.</strong> The money arrived,
+        so the payer is entitled to the record — but it names the excess and says you owe
+        them the difference, rather than printing as a clean settlement. An underpayment
+        gets no receipt at all: the bill is not settled, and a document that looked like one
+        would be worse than none.
+      </p>
+      <p class="note">
+        <strong>A test receipt says it is a test</strong>, above everything else on the
+        page. Nothing was sent — a test invoice's address is valid on no chain — and a
+        document headed "Paid in full" is exactly the thing somebody files and later
+        produces as proof of a payment that never happened.
+      </p>
+    </div>
+  </section>
+
   <!-- ── webhooks ─────────────────────────────────────────────────────── -->
   <section class="panel" id="webhooks">
     <div class="panel-head"><h2>🔔 Webhooks</h2></div>
@@ -1119,6 +1155,7 @@ curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices/
         <div class="code-row"><b>409</b><code>no_payout_address</code><span>Add one for that chain.</span></div>
         <div class="code-row"><b>409</b><code>fixed_rate_expired</code><span>Your own rate lapsed. Set a current one.</span></div>
         <div class="code-row"><b>409</b><code>not_test_mode</code><span>That only works on a test invoice.</span></div>
+        <div class="code-row"><b>409</b><code>not_paid</code><span>You asked for a receipt before the payment landed. The link is real — come back once it has.</span></div>
         <div class="code-row"><b>409</b><code>not_stars</code><span>That invoice is not in Stars. A crypto invoice is paid on chain.</span></div>
         <div class="code-row"><b>422</b><code>charge_reused</code><span>That Telegram charge is already recorded against another invoice.</span></div>
         <div class="code-row"><b>422</b><code>payload_mismatch</code><span>The Telegram payload belongs to a different invoice.</span></div>

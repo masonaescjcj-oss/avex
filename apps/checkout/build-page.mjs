@@ -24,12 +24,15 @@ if (!template.includes(MARKER)) {
   process.exit(1);
 }
 
-// Strip module syntax so the code runs in a plain classic script.
-const inlined = compiled
-  .replace(/^export\s+/gm, '')
-  .replace(/^import[^;]+;$/gm, '')
-  .replace(/\/\/# sourceMappingURL=.*$/gm, '')
-  .trim();
+/** Strip module syntax so the code runs in a plain classic script. */
+const strip = (source) =>
+  source
+    .replace(/^export\s+/gm, '')
+    .replace(/^import[^;]+;$/gm, '')
+    .replace(/\/\/# sourceMappingURL=.*$/gm, '')
+    .trim();
+
+const inlined = strip(compiled);
 
 /**
  * Replace with a function, never a string.
@@ -54,4 +57,33 @@ writeFileSync(target, output);
 
 console.log(
   `wrote ${target} (${(output.length / 1024).toFixed(1)} KB, encoder ${(inlined.length / 1024).toFixed(1)} KB)`,
+);
+
+/**
+ * The receipt page, built the same way from the same reason.
+ *
+ * Its own file rather than a state of the checkout page: a receipt is kept, printed and
+ * forwarded, which wants a URL of its own — and the payment flow page is already the
+ * largest thing here.
+ */
+const receiptModule = strip(readFileSync(join(here, 'dist', 'receipt.js'), 'utf8'));
+const receiptTemplate = readFileSync(join(here, 'public', 'receipt.template.html'), 'utf8');
+
+const RECEIPT_MARKER = '/* @inject:receipt */';
+if (!receiptTemplate.includes(RECEIPT_MARKER)) {
+  console.error(`receipt template is missing the ${RECEIPT_MARKER} marker`);
+  process.exit(1);
+}
+
+const receiptOutput = receiptTemplate.replace(RECEIPT_MARKER, () => receiptModule);
+if (!receiptOutput.includes(receiptModule)) {
+  console.error('inlining altered the injected source; refusing to write a corrupt page');
+  process.exit(1);
+}
+const receiptTarget = join(here, 'public', 'receipt.html');
+writeFileSync(receiptTarget, receiptOutput);
+
+console.log(
+  `wrote ${receiptTarget} (${(receiptOutput.length / 1024).toFixed(1)} KB, ` +
+    `module ${(receiptModule.length / 1024).toFixed(1)} KB)`,
 );

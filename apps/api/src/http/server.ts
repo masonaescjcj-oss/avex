@@ -126,6 +126,12 @@ const PUBLIC_ROUTES = new Set([
   'GET /pay/:sessionId/state',
   'GET /pay/:sessionId/options',
   'POST /pay/:sessionId/select',
+  /**
+   * The receipt, for the same reason and one more: a receipt a payer has to sign in for is
+   * a receipt they will not keep, and it is forwarded to accountants who have no account
+   * here at all.
+   */
+  'GET /pay/:sessionId/receipt',
 ]);
 
 /**

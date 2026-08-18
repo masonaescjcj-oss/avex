@@ -316,6 +316,19 @@
 </style>
 
 <!-- ══ sign in ══════════════════════════════════════════════════════════ -->
+<!--
+  Said before anything else, and not dismissible. A panel full of plausible figures that
+  somebody takes for their real system is worse than no preview.
+-->
+<div class="notice bad" id="preview-banner" hidden style="margin:1rem;border-radius:14px">
+  <span>
+    <strong>Preview. </strong>
+    Every figure here is made up and nothing can be changed. It is the real staff panel
+    driven by canned answers instead of a server, so what you click is what ships — but this
+    is not your system.
+  </span>
+</div>
+
 <div class="signin-wrap" id="signin-screen">
   <form class="signin" id="signin-form">
     <div class="brand">
@@ -774,6 +787,35 @@
       location.reload();
     }
   });
+
+  /**
+   * Preview mode, opened with `?preview=1`.
+   *
+   * Implemented by replacing `fetch`, not by branching inside the panel. Every render path,
+   * every request and every error handler then runs exactly as it does against the real API.
+   */
+  function installPreview() {
+    const routes = previewRoutes();
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input.url;
+      const method = init?.method ?? (typeof input === 'string' ? 'GET' : input.method) ?? 'GET';
+      const answer =
+        method.toUpperCase() === 'GET'
+          ? matchPreview(method, url, routes)
+          : PREVIEW_REFUSAL;
+
+      const route = answer ?? { status: 404, body: { error: 'preview', message: 'Not part of this preview.' } };
+      return new Response(JSON.stringify(route.body), {
+        status: route.status,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    el('preview-banner').hidden = false;
+    // A token so `api()` sends an Authorization header exactly as it would signed in. The
+    // stub ignores it; the panel must not take a different path because of it.
+    token = 'preview';
+  }
 
   async function start() {
     me = await api('/admin/me');
@@ -1453,7 +1495,12 @@
   }
 
 
-  // Nothing is fetched until a session exists.
-  el('signin-email').focus();
+  if (new URLSearchParams(location.search).get('preview') === '1') {
+    installPreview();
+    void start().catch((failure) => showError(failure));
+  } else {
+    // Nothing is fetched until a session exists.
+    el('signin-email').focus();
+  }
 })();
 </script>

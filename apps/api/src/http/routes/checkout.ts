@@ -84,6 +84,16 @@ export function registerCheckoutRoutes(app: FastifyInstance, context: AppContext
       id: result.session.id,
       /** The link to send the payer to. Built from APP_URL so it works per deployment. */
       url: `${context.env.APP_URL}/pay/${result.session.id}`,
+      /**
+       * The receipt for this payment, once there is one.
+       *
+       * Returned at creation rather than only after payment, so a merchant can file it
+       * with the order now instead of having to come back for it. It refuses with a
+       * `not_paid` message until the payment lands, which is the honest state for it to
+       * be in — a receipt that existed before the money would be a document saying
+       * somebody had paid when they had not.
+       */
+      receiptUrl: `${context.env.APP_URL}/pay/${result.session.id}/receipt`,
       status: result.session.status,
       mode: result.session.mode,
       amountFiatMicros: result.session.amountFiatMicros,
@@ -101,6 +111,8 @@ export function registerCheckoutRoutes(app: FastifyInstance, context: AppContext
     const session = await context.checkouts.forMerchant(granted.organizationId, params.sessionId);
     return reply.send({
       ...session,
+      url: `${context.env.APP_URL}/pay/${session.id}`,
+      receiptUrl: `${context.env.APP_URL}/pay/${session.id}/receipt`,
       amountFiatMicros: session.amountFiatMicros,
       createdAt: session.createdAt.toISOString(),
       expiresAt: session.expiresAt.toISOString(),
@@ -149,6 +161,21 @@ export function registerCheckoutRoutes(app: FastifyInstance, context: AppContext
       .send({ options: await context.checkouts.options(sessionId) });
   });
 
+  app.get('/pay/:sessionId/receipt', async (request, reply) => {
+    const { sessionId } = sessionParams.parse(request.params);
+    /**
+     * Cacheable, unlike everything else here, and for a good reason.
+     *
+     * A receipt is a record of something that has already happened: it cannot change,
+     * and a payer who forwards the link or opens it on a train should get it from a cache
+     * rather than a cold request. Everything else on this surface is live state, where a
+     * cached answer would show a payer the wrong thing at the worst moment.
+     */
+    return reply
+      .header('cache-control', 'private, max-age=300')
+      .send(await context.checkouts.receipt(sessionId));
+  });
+
   app.post('/pay/:sessionId/select', async (request, reply) => {
     const { sessionId } = sessionParams.parse(request.params);
     const body = z.object({ assetId: z.string().uuid() }).parse(request.body);
@@ -180,6 +207,14 @@ export function checkoutErrorResponse(error: CheckoutError): {
       return { status: 410, body: { error: error.code, message: error.message } };
     case 'already_paid':
     case 'locked':
+    /**
+     * 409 rather than 404 for an unpaid bill.
+     *
+     * The link is real and the receipt will exist once the payment lands, so a payer who
+     * opened it a minute early should be told to come back — not told the page does not
+     * exist, which reads as having lost their order.
+     */
+    case 'not_paid':
       return { status: 409, body: { error: error.code, message: error.message } };
     case 'no_assets':
       return { status: 409, body: { error: error.code, message: error.message } };
