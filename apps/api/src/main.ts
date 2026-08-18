@@ -19,6 +19,8 @@ import {
 
 import { AdminService } from './domain/admin-service.js';
 import { MerchantService } from './domain/merchant-service.js';
+import { DepositAddressDeriver } from './domain/deposit-address.js';
+import { InvoiceCreationService } from './domain/invoice-creation.js';
 import { SubscriptionService } from './domain/subscription-service.js';
 import { AuditService } from './domain/audit.js';
 import { AssetService } from './domain/asset-service.js';
@@ -142,7 +144,39 @@ async function main(): Promise<void> {
   }, 60_000);
   payoutWorker.unref();
 
-  const subscriptions = new SubscriptionService(db, audit);
+  const subscriptions = new SubscriptionService(db, audit, {
+    feeCollectors: env.FEE_COLLECTORS,
+  });
+
+  /**
+   * Address derivation, built from configuration alone.
+   *
+   * Every EVM chain shares one creation code because they run identical bytecode; the
+   * factory address differs because each chain has its own deployment. A chain absent
+   * from `FORWARDER_FACTORIES` simply cannot issue invoices, which is the safe
+   * direction — a defaulted factory would hand payers addresses no CREATE2 produces.
+   */
+  const deriver = new DepositAddressDeriver(
+    {
+      evm: Object.fromEntries(
+        Object.entries(env.FORWARDER_FACTORIES).map(([chain, factory]) => [
+          chain,
+          { factory, forwarderCreationCode: env.FORWARDER_CREATION_CODE },
+        ]),
+      ),
+      shared: env.SHARED_DEPOSIT_WALLETS,
+    },
+    env.MEMO_SECRET,
+  );
+
+  const invoiceCreation = new InvoiceCreationService(
+    db,
+    deriver,
+    subscriptions,
+    // The pricing engine, narrowed to the one method invoice creation needs.
+    { requireRate: (symbol) => prices.requireRate(symbol) },
+    audit,
+  );
 
   const staffAuth = new StaffAuthService(db, audit);
   const settlementStore = new SettlementStore(db);
@@ -162,6 +196,7 @@ async function main(): Promise<void> {
     settlements: settlementStore,
     reconciliation,
     merchant: new MerchantService(db),
+    invoiceCreation,
     webhooks,
     subscriptions,
     minPriceSources: env.PRICE_MIN_SOURCES,

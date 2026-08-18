@@ -616,12 +616,48 @@ export const invoices = pgTable(
     settledAt: timestamp('settled_at', { withTimezone: true }),
   },
   (table) => [
-    // The watcher matches an arriving transfer by address, so this must be fast
-    // and must not collide across merchants.
-    uniqueIndex('invoices_chain_deposit_key').on(table.chain, table.depositAddress),
+    /**
+     * What must be unique differs by address model, so the indexes are partial.
+     *
+     * On a unique-address chain the address *is* the invoice's identity: the watcher
+     * matches an arriving transfer by it, so two invoices sharing one address would
+     * make an incoming payment ambiguous. Hence unique — but only where there is no
+     * memo.
+     *
+     * On a shared-address chain every invoice has the same deposit address by design,
+     * and the memo is what distinguishes them. A blanket unique index on (chain,
+     * address) makes those chains unusable after their very first invoice, which is
+     * exactly what it did until a TON test caught it.
+     */
+    uniqueIndex('invoices_chain_deposit_key')
+      .on(table.chain, table.depositAddress)
+      .where(sql`${table.memo} is null`),
+    /**
+     * And the memo carries the same weight there that the address does elsewhere: two
+     * invoices on one shared wallet with the same memo could not be told apart, so a
+     * payment would be credited to whichever was found first.
+     */
+    uniqueIndex('invoices_chain_memo_key')
+      .on(table.chain, table.memo)
+      .where(sql`${table.memo} is not null`),
     index('invoices_org_created_idx').on(table.organizationId, table.createdAt),
     index('invoices_status_idx').on(table.status),
-    index('invoices_chain_memo_idx').on(table.chain, table.memo),
+
+    /**
+     * One invoice per merchant reference — the property that makes a retry safe.
+     *
+     * A merchant retrying "invoice for order #1234" after a timeout must get the same
+     * invoice back, not a second one with a second deposit address. Checking for an
+     * existing row first is not enough on its own: two simultaneous retries both find
+     * nothing and both insert. This index is what turns the second insert into a
+     * conflict the service can resolve by returning the first one.
+     *
+     * Partial, because a reference is optional and many rows without one must not
+     * collide with each other.
+     */
+    uniqueIndex('invoices_org_reference_key')
+      .on(table.organizationId, table.reference)
+      .where(sql`${table.reference} is not null`),
 
     /**
      * The fee invariants, enforced here rather than only in application code.

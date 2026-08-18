@@ -63,6 +63,52 @@ const schema = z.object({
   /** Fraction of the fee ceiling offered as a tip. Integer basis points internally. */
   SETTLEMENT_PRIORITY_FRACTION: z.coerce.number().min(0).max(1).default(0.1),
 
+  /**
+   * Deployed `ForwarderFactory` per chain, as `chain=address` pairs.
+   *
+   * A chain absent here cannot issue invoices, and that is the safe direction: the
+   * deposit address is a hash over this factory, so a wrong or default value would
+   * hand payers addresses that no CREATE2 will ever produce.
+   */
+  FORWARDER_FACTORIES: z
+    .string()
+    .default('')
+    .transform(parsePairs),
+
+  /**
+   * Compiled `Forwarder` creation code, hex.
+   *
+   * Every derived address is a hash over these bytes, so recompiling with different
+   * settings changes every address already handed out. It is configuration rather
+   * than a build artifact for exactly that reason — the value has to match whatever
+   * was deployed, which may predate this build.
+   */
+  FORWARDER_CREATION_CODE: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]*$/, 'must be hex')
+    .default('0x'),
+
+  /** One wallet per shared-address chain, as `chain=address`. TON today. */
+  SHARED_DEPOSIT_WALLETS: z.string().default('').transform(parsePairs),
+
+  /**
+   * Where commission is collected, as `chain=address`.
+   *
+   * Per chain because an address is chain-shaped. A chain missing from here charges
+   * no commission at all rather than falling back to another chain's address, which
+   * would send the fee somewhere it cannot be received.
+   */
+  FEE_COLLECTORS: z.string().default('').transform(parsePairs),
+
+  /**
+   * Secret behind invoice memos on shared-address chains.
+   *
+   * A memo has to be unguessable: it is visible to anyone watching the shared wallet,
+   * and a predictable one would let a stranger reuse someone else's memo to claim
+   * their payment. Defaulted only so development boots; production sets it.
+   */
+  MEMO_SECRET: z.string().min(16).default('development-memo-secret-do-not-ship'),
+
   EVM_RPC_URLS: z
     .string()
     .default('bsc=https://bsc-dataseed.binance.org')
@@ -77,6 +123,18 @@ const schema = z.object({
       return map;
     }),
 });
+
+/** `a=1,b=2` into `{a: '1', b: '2'}`. Malformed entries are skipped, not fatal. */
+function parsePairs(value: string): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const entry of value.split(',')) {
+    const [key, ...rest] = entry.split('=');
+    const parsed = rest.join('=').trim();
+    if (!key || !parsed) continue;
+    map[key.trim()] = parsed;
+  }
+  return map;
+}
 
 export type Env = z.infer<typeof schema>;
 

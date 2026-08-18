@@ -24,6 +24,8 @@ import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
 import { ReconciliationService } from '../domain/reconciliation-service.js';
 import { MerchantService } from '../domain/merchant-service.js';
+import { DepositAddressDeriver } from '../domain/deposit-address.js';
+import { InvoiceCreationService } from '../domain/invoice-creation.js';
 import { SubscriptionService } from '../domain/subscription-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import { WebhookService } from '../domain/webhook-service.js';
@@ -170,6 +172,24 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       settlements,
       reconciliation,
       merchant: new MerchantService(db),
+      invoiceCreation: new InvoiceCreationService(
+        db,
+        new DepositAddressDeriver(
+          {
+            evm: {
+              bsc: {
+                factory: '0x00000000000000000000000000000000000f4c70',
+                forwarderCreationCode: '0x60806040523480156100115760006000fd5b50',
+              },
+            },
+            shared: {},
+          },
+          'admin-suite-memo-secret',
+        ),
+        subscriptionsService,
+        { async requireRate() { return { priceScaled: 10n ** 18n, observedAt: Date.now() }; } } as never,
+        audit,
+      ),
       subscriptions: subscriptionsService,
       webhooks: webhookService,
       admin: new AdminService(db, audit, settlements, reconciliation),

@@ -29,6 +29,8 @@ import { AdminService } from '../domain/admin-service.js';
 import { AuthService } from '../domain/auth-service.js';
 import { ReconciliationService } from '../domain/reconciliation-service.js';
 import { MerchantService } from '../domain/merchant-service.js';
+import { DepositAddressDeriver } from '../domain/deposit-address.js';
+import { InvoiceCreationService } from '../domain/invoice-creation.js';
 import { SubscriptionService } from '../domain/subscription-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
@@ -55,6 +57,51 @@ const databaseUrl = process.env.DATABASE_URL;
  * attaching a transfer produces a genuine invoice status. Wiring a full sink into
  * every harness here would drag a webhook dispatcher along with it for no coverage.
  */
+/**
+ * A forwarder factory and creation code for derivation in tests.
+ *
+ * Not the real compiled bytecode: what these suites need is a derivation that is
+ * deterministic and that changes when its inputs change. That the off-chain
+ * derivation agrees with what the EVM actually deploys is a different claim, and it
+ * is tested where it belongs — against a real EVM, in contracts/test.
+ */
+const TEST_FACTORY = '0x00000000000000000000000000000000000f4c70';
+const TEST_CREATION_CODE = '0x60806040523480156100115760006000fd5b50';
+const TEST_FEE_COLLECTOR = '0x3333333333333333333333333333333333333333';
+
+/** $1 a token, matching what the fake price sources in this file report. */
+const priceStub = {
+  async requireRate() {
+    return { priceScaled: 10n ** 18n, observedAt: Date.now() };
+  },
+};
+
+function invoiceServices(
+  db: ReturnType<typeof createDatabase>['db'],
+  audit: AuditService,
+  prices: { requireRate(symbol: never): Promise<{ priceScaled: bigint; observedAt: number }> },
+) {
+  const subscriptions = new SubscriptionService(db, audit, {
+    feeCollectors: { bsc: TEST_FEE_COLLECTOR, ethereum: TEST_FEE_COLLECTOR },
+  });
+  const deriver = new DepositAddressDeriver(
+    {
+      evm: {
+        bsc: { factory: TEST_FACTORY, forwarderCreationCode: TEST_CREATION_CODE },
+        ethereum: { factory: TEST_FACTORY, forwarderCreationCode: TEST_CREATION_CODE },
+        polygon: { factory: TEST_FACTORY, forwarderCreationCode: TEST_CREATION_CODE },
+      },
+      // TON is the shared-address case, kept in so memo derivation is exercised.
+      shared: { ton: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs' },
+    },
+    'test-memo-secret-not-a-real-one',
+  );
+  return {
+    subscriptions,
+    invoiceCreation: new InvoiceCreationService(db, deriver, subscriptions, prices as never, audit),
+  };
+}
+
 function adminServices(db: ReturnType<typeof createDatabase>['db'], audit: AuditService) {
   const settlements = new SettlementStore(db);
   const reconciliation = new ReconciliationService(db, audit, {
@@ -136,7 +183,7 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
-      subscriptions: new SubscriptionService(database.db, audit),
+      ...invoiceServices(database.db, audit, priceStub),
       // Deliveries go nowhere in these harnesses; the webhook suite has its own.
       webhooks: new WebhookService(
         database.db,
@@ -584,7 +631,7 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
-      subscriptions: new SubscriptionService(database.db, audit),
+      ...invoiceServices(database.db, audit, priceStub),
       // Deliveries go nowhere in these harnesses; the webhook suite has its own.
       webhooks: new WebhookService(
         database.db,
@@ -765,7 +812,7 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
-      subscriptions: new SubscriptionService(database.db, audit),
+      ...invoiceServices(database.db, audit, priceStub),
       // Deliveries go nowhere in these harnesses; the webhook suite has its own.
       webhooks: new WebhookService(
         database.db,
@@ -1065,7 +1112,7 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
-      subscriptions: new SubscriptionService(database.db, audit),
+      ...invoiceServices(database.db, audit, priceStub),
       // Deliveries go nowhere in these harnesses; the webhook suite has its own.
       webhooks: new WebhookService(
         database.db,

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "invoices_org_reference_key" ON "invoices" USING btree ("organization_id","reference") WHERE "invoices"."reference" is not null;

@@ -38,6 +38,8 @@ import type { MerchantService } from '../domain/merchant-service.js';
 import { WebhookConfigError } from '../domain/webhook-service.js';
 import type { WebhookService } from '../domain/webhook-service.js';
 import { StaffAuthError } from '../domain/staff-auth.js';
+import { InvoiceCreationError } from '../domain/invoice-creation.js';
+import type { InvoiceCreationService } from '../domain/invoice-creation.js';
 import type { StaffAuthService, StaffPrincipal } from '../domain/staff-auth.js';
 import {
   StaffElevationRequiredError,
@@ -60,6 +62,7 @@ import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerPayoutRoutes, payoutErrorResponse } from './routes/payouts.js';
 import { registerPriceRoutes } from './routes/prices.js';
 import {
+  invoiceCreationErrorResponse,
   merchantErrorResponse,
   registerMerchantRoutes,
   subscriptionErrorResponse,
@@ -97,6 +100,7 @@ export interface AppContext {
   readonly merchant: MerchantService;
   readonly webhooks: WebhookService;
   readonly subscriptions: SubscriptionService;
+  readonly invoiceCreation: InvoiceCreationService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */
   readonly minPriceSources: number;
 }
@@ -255,6 +259,11 @@ export function buildServer(context: AppContext): FastifyInstance {
 
     if (error instanceof SubscriptionError) {
       const { status, body } = subscriptionErrorResponse(error);
+      return reply.status(status).send(body);
+    }
+
+    if (error instanceof InvoiceCreationError) {
+      const { status, body } = invoiceCreationErrorResponse(error);
       return reply.status(status).send(body);
     }
 
