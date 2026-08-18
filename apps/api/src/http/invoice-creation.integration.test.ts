@@ -832,4 +832,282 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     });
     assert.equal(read.statusCode, 200, read.body);
   });
+
+  // ── test mode ──────────────────────────────────────────────────────────────
+
+  /** An API key of a given mode, inserted directly to skip the 2FA-gated route. */
+  async function keyFor(
+    mode: 'test' | 'live',
+    scopes: string[] = ['invoice:create', 'invoice:read'],
+  ) {
+    const issued = issueApiKey(mode);
+    await db.insert(schema.apiKeys).values({
+      organizationId: orgId,
+      name: `${mode}-key`,
+      mode,
+      tokenHash: issued.hash,
+      displayPrefix: issued.displayPrefix,
+      scopes: scopes as never,
+    });
+    return issued.token;
+  }
+
+  const openWith = (key: string, payload: Record<string, unknown>) =>
+    app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/invoices`,
+      headers: { authorization: `Bearer ${key}` },
+      payload,
+    });
+
+  test('a test key opens a test invoice with an address no wallet accepts', async () => {
+    /**
+     * The address is deliberately not valid on any chain. A testnet address would need a
+     * testnet node, a faucet and a second set of contracts, and would still leave a
+     * merchant able to confuse the two — whereas an address nothing will accept cannot
+     * take a payment by mistake.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+
+    const response = await openWith(await keyFor('test'), {
+      assetId,
+      amountFiatMicros: '1000000',
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(response.json().mode, 'test');
+    assert.match(response.json().depositAddress, /^AVEXTEST-BSC-[0-9A-F]{24}$/);
+  });
+
+  test('a test key cannot mint a live invoice, however it asks', async () => {
+    /**
+     * The whole security property of test mode. A key a merchant pastes into a staging
+     * config, a CI job or a third-party integration must not be able to take real money
+     * even when the caller explicitly asks for it.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+
+    const response = await openWith(await keyFor('test'), {
+      assetId,
+      amountFiatMicros: '1000000',
+      mode: 'live',
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(response.json().mode, 'test', 'a test key must never produce a live invoice');
+  });
+
+  test('a live key cannot opt into test mode either', async () => {
+    // The mirror. If a live key could quietly become a test key, a bug in a merchant's
+    // code would stop charging their customers and nothing would look broken.
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+
+    const response = await openWith(await keyFor('live'), {
+      assetId,
+      amountFiatMicros: '1000000',
+      mode: 'test',
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(response.json().mode, 'live');
+    assert.match(response.json().depositAddress, /^0x[0-9a-fA-F]{40}$/);
+  });
+
+  test('a dashboard session may choose, and defaults to live', async () => {
+    // A human in the dashboard is the one party who legitimately does both.
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+
+    const live = await open({ assetId, amountFiatMicros: '1000000' });
+    assert.equal(live.json().mode, 'live');
+
+    const test = await open({ assetId, amountFiatMicros: '1000000', mode: 'test' });
+    assert.equal(test.json().mode, 'test');
+  });
+
+  test('a test invoice can be paid without a chain', async () => {
+    /**
+     * What makes test mode worth having. A merchant needs to drive their own code all
+     * the way through — webhook received, signature verified, order marked paid — and
+     * without this they can create a test invoice and then do nothing with it.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+    const invoice = (await open({ assetId, amountFiatMicros: '1000000', mode: 'test' })).json();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/invoices/${invoice.id}/simulate-payment`,
+      headers: auth(),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().status, 'paid');
+    assert.equal(response.json().amountPaid, invoice.amountDue);
+    // Marked as synthetic, so nobody reading a payments table or an export mistakes it
+    // for something that happened on a chain.
+    assert.match(response.json().txHash, /^0xtest[0-9a-f]{32}$/);
+  });
+
+  test('a partial simulated payment underpays, so that branch can be tested too', async () => {
+    // The awkward branches are the ones integrations get wrong.
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+    const invoice = (await open({ assetId, amountFiatMicros: '10000000', mode: 'test' })).json();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/invoices/${invoice.id}/simulate-payment`,
+      headers: auth(),
+      payload: { amount: (BigInt(invoice.amountDue) / 2n).toString() },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().status, 'underpaid');
+  });
+
+  test('a live invoice cannot be marked paid this way', async () => {
+    /**
+     * The most important refusal in the product. A merchant able to mark a live invoice
+     * paid could ship goods against money that never arrived — and so could anyone who
+     * stole their API key. A live invoice is paid by a chain or not at all.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+    const invoice = (await open({ assetId, amountFiatMicros: '1000000' })).json();
+    assert.equal(invoice.mode, 'live');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/invoices/${invoice.id}/simulate-payment`,
+      headers: auth(),
+    });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.json().error, 'not_test_mode');
+    assert.match(response.json().message, /paid on chain/);
+
+    // And nothing moved.
+    const read = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/invoices/${invoice.id}`,
+      headers: auth(),
+    });
+    assert.equal(read.json().status, 'pending');
+    assert.equal(read.json().amountPaid, '0');
+  });
+
+  test('one merchant cannot simulate a payment on another merchant invoice', async () => {
+    // Tenancy, on a route that writes. Not found rather than forbidden.
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+    const invoice = (await open({ assetId, amountFiatMicros: '1000000', mode: 'test' })).json();
+
+    const other = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/signup',
+      payload: {
+        email: `sim-${unique}@example.com`,
+        password,
+        organizationName: `Sim ${unique}`,
+      },
+    });
+    const otherOrg = other.json().organizationId as string;
+    const login = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: { email: `sim-${unique}@example.com`, password },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${otherOrg}/invoices/${invoice.id}/simulate-payment`,
+      headers: { authorization: `Bearer ${login.json().token as string}` },
+    });
+    assert.equal(response.statusCode, 404, response.body);
+  });
+
+  test('test volume never reaches the merchant volume report', async () => {
+    /**
+     * A merchant reconciling against this figure is reconciling real money. Test
+     * payments in the same total would make it useless for the one purpose it has, and
+     * a merchant who had been testing would find their revenue overstated.
+     */
+    const assetId = await enableAsset({ symbol: 'VOLT' });
+    await addPayoutAddress('bsc');
+    const invoice = (await open({ assetId, amountFiatMicros: '50000000', mode: 'test' })).json();
+    await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/invoices/${invoice.id}/simulate-payment`,
+      headers: auth(),
+    });
+
+    const report = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/reports/volume`,
+      headers: auth(),
+    });
+    assert.equal(report.statusCode, 200, report.body);
+    const volt = (report.json().volume as { assetSymbol: string }[]).find(
+      (row) => row.assetSymbol === 'VOLT',
+    );
+    assert.equal(volt, undefined, 'a test payment must not appear in the volume report');
+  });
+
+  test('test volume never reaches the billing assessment', async () => {
+    /**
+     * Both the free tier and the commission ladder read this figure. A merchant able to
+     * add test volume could climb into a cheaper commission tier for nothing; one able
+     * to keep real volume in test mode could stay under the $1,500 threshold
+     * indefinitely. Either way they would be choosing their own bill.
+     */
+    const assetId = await enableAsset({ symbol: 'BILL' });
+    await addPayoutAddress('bsc');
+    const invoice = (await open({ assetId, amountFiatMicros: '90000000000', mode: 'test' })).json();
+    await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/invoices/${invoice.id}/simulate-payment`,
+      headers: auth(),
+    });
+
+    const volume = await subscriptions.assessedVolume(orgId, {
+      from: new Date(Date.now() - 86_400_000),
+      to: new Date(Date.now() + 60_000),
+    });
+    assert.equal(volume.totalUsdMicros, 0n, 'test volume must not be assessed');
+  });
+
+  test('a priced payment on a test invoice is still not assessed', async () => {
+    /**
+     * The previous test passes for the wrong reason on its own: a simulated payment
+     * carries no valuation, so it contributes zero dollars whether the mode filter
+     * exists or not — a mutation removing that filter passed it.
+     *
+     * This one writes the payment the filter actually defends against: a fully priced
+     * one, with a verified source, against a test invoice. Which is the shape any future
+     * change that gave simulated payments a valuation would produce, and at that point
+     * the mode filter is the only thing standing between a merchant and choosing their
+     * own commission tier.
+     */
+    const assetId = await enableAsset({ symbol: 'PRCD' });
+    await addPayoutAddress('bsc');
+    const invoice = (await open({ assetId, amountFiatMicros: '1000000', mode: 'test' })).json();
+
+    await db.insert(schema.payments).values({
+      invoiceId: invoice.id,
+      chain: 'bsc',
+      txHash: `0xpriced${randomBytes(13).toString('hex')}`,
+      transferIndex: 0,
+      amount: invoice.amountDue,
+      blockNumber: 900,
+      creditedAt: new Date(),
+      // $90,000, which would move this merchant two commission tiers.
+      valueUsdMicros: '90000000000',
+      valueSource: 'quote',
+    });
+
+    const volume = await subscriptions.assessedVolume(orgId, {
+      from: new Date(Date.now() - 86_400_000),
+      to: new Date(Date.now() + 60_000),
+    });
+    assert.equal(volume.totalUsdMicros, 0n, 'a test invoice contributes nothing, however priced');
+    assert.equal(volume.verifiedUsdMicros, 0n);
+  });
 });

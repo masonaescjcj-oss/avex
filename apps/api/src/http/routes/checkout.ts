@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { CheckoutError } from '../../domain/checkout-service.js';
+import { resolveMode } from '../../domain/invoice-creation.js';
 import {
   UnauthenticatedError,
   requireOrganizationAccess,
@@ -36,6 +37,8 @@ const createBody = z.object({
   successUrl: z.string().url().max(2000).optional(),
   cancelUrl: z.string().url().max(2000).optional(),
   ttlMs: z.coerce.number().int().min(60_000).max(24 * 60 * 60 * 1000).optional(),
+  /** Honoured for a session only; an API key's own mode always wins. */
+  mode: z.enum(['test', 'live']).optional(),
 });
 
 export function registerCheckoutRoutes(app: FastifyInstance, context: AppContext): void {
@@ -59,6 +62,7 @@ export function registerCheckoutRoutes(app: FastifyInstance, context: AppContext
         successUrl: body.successUrl,
         cancelUrl: body.cancelUrl,
         ttlMs: body.ttlMs,
+        mode: resolveMode(granted.principal, body.mode),
       },
       {
         userId: granted.principal.kind === 'session' ? granted.principal.session.userId : null,
@@ -73,6 +77,7 @@ export function registerCheckoutRoutes(app: FastifyInstance, context: AppContext
       /** The link to send the payer to. Built from APP_URL so it works per deployment. */
       url: `${context.env.APP_URL}/pay/${result.session.id}`,
       status: result.session.status,
+      mode: result.session.mode,
       amountFiatMicros: result.session.amountFiatMicros,
       reference: result.session.reference,
       expiresAt: result.session.expiresAt.toISOString(),

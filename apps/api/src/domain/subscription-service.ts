@@ -336,6 +336,17 @@ export class SubscriptionService {
       .where(
         and(
           eq(invoices.organizationId, organizationId),
+          /**
+           * Test invoices are not volume, and this is the load-bearing reason test mode
+           * is a column rather than a convention.
+           *
+           * Both the free tier and the commission ladder read this figure. A merchant
+           * able to add test volume could climb into a cheaper commission tier for
+           * free; one able to keep real volume in test mode could stay under the
+           * $1,500 threshold indefinitely. Either way they would be choosing their own
+           * bill, so the filter belongs here rather than in a caller that might forget.
+           */
+          eq(invoices.mode, 'live'),
           // Reversed payments are not volume. A reorg that took a payment back must not
           // keep a merchant above the threshold for a month that did not happen.
           isNull(payments.reversedAt),

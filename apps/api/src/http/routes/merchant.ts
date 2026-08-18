@@ -2,7 +2,7 @@ import { SUPPORTED_CHAINS } from '@avex/core';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
-import { InvoiceCreationError } from '../../domain/invoice-creation.js';
+import { InvoiceCreationError, resolveMode } from '../../domain/invoice-creation.js';
 import { MerchantError } from '../../domain/merchant-service.js';
 import { SubscriptionError } from '../../domain/subscription-service.js';
 import { WebhookConfigError } from '../../domain/webhook-service.js';
@@ -52,6 +52,11 @@ const createInvoiceBody = z
     amountToken: z.coerce.bigint().positive().optional(),
     /** How long the payer has. Clamped to between a minute and a day. */
     ttlMs: z.coerce.number().int().positive().optional(),
+    /**
+     * Test or live. Honoured only for a dashboard session — an API key's mode is the
+     * key's own and cannot be overridden from the body. See `resolveMode`.
+     */
+    mode: z.enum(['test', 'live']).optional(),
   })
   .refine(
     (value) => (value.amountFiatMicros === undefined) !== (value.amountToken === undefined),
@@ -68,6 +73,7 @@ const createInvoiceBody = z
 function serialiseInvoice(invoice: {
   id: string;
   reference: string | null;
+  mode: 'test' | 'live';
   chain: string;
   status: string;
   amountDue: string;
@@ -82,6 +88,14 @@ function serialiseInvoice(invoice: {
   return {
     id: invoice.id,
     reference: invoice.reference,
+    /**
+     * Echoed back on every invoice, deliberately near the top.
+     *
+     * A merchant debugging "why did my webhook fire but no money arrived" needs to see
+     * this without looking for it, and an integration that ships with a test key in
+     * production needs the answer to be obvious in its own logs.
+     */
+    mode: invoice.mode,
     chain: invoice.chain,
     status: invoice.status,
     amountDue: invoice.amountDue,
@@ -161,6 +175,7 @@ export function registerMerchantRoutes(app: FastifyInstance, context: AppContext
         amountFiatMicros: body.amountFiatMicros,
         amountToken: body.amountToken,
         ttlMs: body.ttlMs,
+        mode: resolveMode(granted.principal, body.mode),
       },
       {
         userId: granted.principal.kind === 'session' ? granted.principal.session.userId : null,
@@ -177,6 +192,54 @@ export function registerMerchantRoutes(app: FastifyInstance, context: AppContext
      * they have just created a second address for the same order.
      */
     return reply.status(result.created ? 201 : 200).send(serialiseInvoice(result.invoice));
+  });
+
+  /**
+   * Pretend a payment arrived. Test invoices only.
+   *
+   * This is what makes test mode worth having. Without it a merchant can create a test
+   * invoice and then has nothing to do with it — the whole point is to drive their own
+   * code all the way through: webhook received, signature verified, order marked paid.
+   *
+   * Refused on a live invoice, and that refusal is the most important line in this
+   * route. A merchant able to mark a live invoice paid could ship goods against money
+   * that never arrived; more to the point, so could anyone who stole their API key.
+   * There is no flag, no override and no staff equivalent — a live invoice is paid by a
+   * chain or not at all.
+   */
+  app.post('/v1/organizations/:orgId/invoices/:invoiceId/simulate-payment', async (request, reply) => {
+    const params = orgParams.extend({ invoiceId: z.string().uuid() }).parse(request.params);
+    const body = z
+      .object({
+        /**
+         * Defaults to the full amount, which is what a merchant testing the happy path
+         * wants. A smaller figure produces an underpayment, so the awkward branches can
+         * be exercised too — those are the ones integrations get wrong.
+         */
+        amount: z.coerce.bigint().positive().optional(),
+      })
+      .parse(request.body ?? {});
+    const granted = await access(request);
+    requirePermission(granted, 'invoice:create');
+
+    const result = await context.merchant.simulatePayment(
+      granted.organizationId,
+      params.invoiceId,
+      body.amount,
+    );
+
+    await context.audit.record({
+      organizationId: granted.organizationId,
+      userId: granted.principal.kind === 'session' ? granted.principal.session.userId : null,
+      apiKeyId: granted.principal.kind === 'api_key' ? granted.principal.apiKeyId : null,
+      action: 'invoice.payment_simulated',
+      targetType: 'invoice',
+      targetId: params.invoiceId,
+      metadata: { amount: result.amountPaid, status: result.status },
+      ip: request.ip,
+    });
+
+    return reply.send(result);
   });
 
   // ── reporting ─────────────────────────────────────────────────────────────
@@ -380,6 +443,9 @@ export function merchantErrorResponse(error: MerchantError): {
   switch (error.code) {
     case 'not_found':
       return { status: 404, body: { error: 'not_found', message: error.message } };
+    case 'not_test_mode':
+      // 409 rather than 403: the credential was fine, the object was not.
+      return { status: 409, body: { error: 'not_test_mode', message: error.message } };
   }
 }
 

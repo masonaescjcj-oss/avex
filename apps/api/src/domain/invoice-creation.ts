@@ -63,6 +63,36 @@ export interface CreateInvoiceRequest {
   /** For `token` pricing, in the asset's smallest unit. */
   readonly amountToken?: bigint | undefined;
   readonly ttlMs?: number | undefined;
+  /**
+   * Test or live. Absent means live.
+   *
+   * Requested rather than assumed, because a dashboard session has no inherent mode —
+   * a merchant testing from the dashboard has to be able to say so. An API key does
+   * have one, and `resolveMode` below is what stops a request overriding it.
+   */
+  readonly mode?: 'test' | 'live' | undefined;
+}
+
+/**
+ * The mode an object is created in, from the credential and the request together.
+ *
+ * The rule that matters is one-directional: a test key can only ever produce test
+ * objects, whatever the request says. That is the whole security property of test mode —
+ * a key a merchant pastes into a staging config, a CI job or a third-party integration
+ * must not be able to take real money, even if the caller asks it to.
+ *
+ * A live key is the mirror: it produces live objects only. Letting it opt into test
+ * would mean a bug in a merchant's code could silently stop charging their customers.
+ *
+ * A session may choose, defaulting to live, because a human in the dashboard is the one
+ * party who legitimately does both.
+ */
+export function resolveMode(
+  credential: { readonly kind: 'api_key'; readonly mode: 'test' | 'live' } | { readonly kind: 'session' },
+  requested: 'test' | 'live' | undefined,
+): 'test' | 'live' {
+  if (credential.kind === 'api_key') return credential.mode;
+  return requested ?? 'live';
 }
 
 export interface RateProvider {
@@ -157,6 +187,7 @@ export class InvoiceCreationService {
       .returning();
 
     const invoiceId = crypto.randomUUID();
+    const mode = request.mode ?? 'live';
     let target;
     try {
       target = this.deriver.derive({
@@ -164,6 +195,7 @@ export class InvoiceCreationService {
         chain: config.asset.chain,
         payoutAddress,
         fee,
+        mode,
       });
     } catch (error) {
       if (error instanceof DepositAddressError) {
@@ -181,6 +213,7 @@ export class InvoiceCreationService {
         quoteId: quoteRow!.id,
         reference: request.reference ?? null,
         amountDue: quote.amountDue.toString(),
+        mode,
         chain: config.asset.chain,
         depositAddress: target.address,
         memo: target.memo ?? null,
@@ -218,7 +251,8 @@ export class InvoiceCreationService {
         chain: config.asset.chain,
         assetSymbol: config.asset.symbol,
         amountDue: quote.amountDue.toString(),
-        mode: config.pricingMode,
+        pricingMode: config.pricingMode,
+        mode,
         // Recorded because it is the number a merchant is most likely to dispute
         // later, and it cannot be recovered from the address afterwards.
         feeBps: fee?.feeBps ?? 0,

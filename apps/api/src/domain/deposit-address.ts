@@ -79,6 +79,30 @@ export class DepositAddressDeriver {
   }
 
   /**
+   * A deposit address for a test invoice.
+   *
+   * Deliberately not a real address, and deliberately not a valid one on any chain.
+   * The alternative — a testnet address — would need a testnet node, a faucet and a
+   * second set of contracts, and would still leave a merchant able to confuse the two.
+   * An address that no wallet will accept cannot take a payment by mistake, which is
+   * the property that matters: a payer who somehow reached a test checkout must not be
+   * able to send real money into it.
+   *
+   * Derived from the invoice id so it is stable across reads, and prefixed so it is
+   * obvious in a log, a dashboard or a support ticket which kind of object it belongs
+   * to.
+   */
+  private testTarget(invoiceId: string, chain: string): DepositTarget {
+    const digest = createHmac('sha256', this.memoSecret)
+      .update(`test:${chain}:${invoiceId}`)
+      .digest('hex');
+    return {
+      address: `AVEXTEST-${chain.toUpperCase()}-${digest.slice(0, 24).toUpperCase()}`,
+      ...(this.config.shared[chain] ? { memo: memoFor(invoiceId, this.memoSecret) } : {}),
+    };
+  }
+
+  /**
    * Derive the address for one invoice.
    *
    * `fee` feeds the EVM derivation, so it must be the fee the invoice will be stored
@@ -90,7 +114,22 @@ export class DepositAddressDeriver {
     readonly chain: string;
     readonly payoutAddress: string;
     readonly fee?: FeeSplit | undefined;
+    readonly mode?: 'test' | 'live' | undefined;
   }): DepositTarget {
+    /**
+     * Test first, before any of the chain checks below.
+     *
+     * A test invoice must be creatable on a chain this deployment has no factory for —
+     * a merchant integrating should not be blocked by our deployment configuration,
+     * and there is no address to get wrong.
+     */
+    if (input.mode === 'test') {
+      if (!KNOWN_CHAINS.has(input.chain)) {
+        throw new DepositAddressError('chain_unsupported', `Unknown chain: ${input.chain}.`);
+      }
+      return this.testTarget(input.invoiceId, input.chain);
+    }
+
     const evm = this.config.evm[input.chain];
     if (evm) {
       const create2: Create2Config = {

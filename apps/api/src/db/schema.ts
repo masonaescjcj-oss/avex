@@ -332,6 +332,22 @@ export const pendingChanges = pgTable(
  * tokens — and `text` would sort lexicographically, making "10" precede "9".
  */
 
+/**
+ * Whether an object is real money or a rehearsal.
+ *
+ * A merchant integrating needs to drive their own code end to end — create a payment,
+ * see the webhook, mark the order shipped — without moving funds. So test objects are
+ * first-class rather than a separate sandbox deployment, and the mode travels on the
+ * row.
+ *
+ * Everything that follows from that is about keeping the two apart. A test invoice gets
+ * no real deposit address, is never settled, and is excluded from every figure that
+ * decides money: the merchant's volume report, the billing assessment, and the free
+ * tier. A merchant able to inflate or deflate their assessed volume with test data
+ * would be able to choose their own bill.
+ */
+export const objectModeEnum = pgEnum('object_mode', ['test', 'live']);
+
 export const pricingModeEnum = pgEnum('pricing_mode', ['fiat', 'token', 'fixed_rate']);
 
 /**
@@ -580,6 +596,12 @@ export const invoices = pgTable(
     amountPaid: numeric('amount_paid', { precision: 78, scale: 0 }).notNull().default('0'),
     status: invoiceStatusEnum('status').notNull().default('pending'),
 
+    /**
+     * Test or live. Taken from the credential that created the invoice, never from the
+     * request body alone — a test key must not be able to mint a live invoice.
+     */
+    mode: objectModeEnum('mode').notNull().default('live'),
+
     chain: text('chain').notNull(),
     /**
      * Where the payer sends. On EVM chains this is the CREATE2 forwarder, whose
@@ -641,6 +663,9 @@ export const invoices = pgTable(
       .on(table.chain, table.memo)
       .where(sql`${table.memo} is not null`),
     index('invoices_org_created_idx').on(table.organizationId, table.createdAt),
+    // Volume, billing and reports all filter on mode, and each of them scans a
+    // merchant's history rather than a single row.
+    index('invoices_org_mode_idx').on(table.organizationId, table.mode),
     index('invoices_status_idx').on(table.status),
 
     /**
@@ -1117,6 +1142,8 @@ export const checkoutSessions = pgTable(
     description: text('description'),
 
     status: checkoutSessionStatusEnum('status').notNull().default('open'),
+    /** Test or live, from the credential. A test session opens test invoices only. */
+    mode: objectModeEnum('mode').notNull().default('live'),
 
     /**
      * The invoice for the currency the payer chose. Null while still open.

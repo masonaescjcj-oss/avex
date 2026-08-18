@@ -93,6 +93,7 @@ export class CheckoutService {
       readonly successUrl?: string | undefined;
       readonly cancelUrl?: string | undefined;
       readonly ttlMs?: number | undefined;
+      readonly mode?: 'test' | 'live' | undefined;
     },
     actor: { readonly userId: string | null; readonly apiKeyId: string | null },
   ): Promise<{ readonly session: typeof checkoutSessions.$inferSelect; readonly created: boolean }> {
@@ -127,6 +128,7 @@ export class CheckoutService {
         description: input.description ?? null,
         successUrl: input.successUrl ?? null,
         cancelUrl: input.cancelUrl ?? null,
+        mode: input.mode ?? 'live',
         expiresAt,
       })
       .onConflictDoNothing()
@@ -215,6 +217,14 @@ export class CheckoutService {
       description: session.description,
       amountFiatMicros: session.amountFiatMicros,
       status: session.status,
+      /**
+       * Shown to the payer, because a test checkout that looks real is a trap.
+       *
+       * The address on a test invoice is not a valid address on any chain, so nothing
+       * can be lost — but someone staring at a page that says nothing while their
+       * wallet refuses the address deserves an explanation.
+       */
+      mode: session.mode,
       expiresAt: session.expiresAt.toISOString(),
       /** Present once a currency has been chosen. This is what the payer pays to. */
       payment: invoice,
@@ -370,6 +380,14 @@ export class CheckoutService {
           assetId,
           reference,
           amountFiatMicros: BigInt(session.amountFiatMicros),
+          /**
+           * Inherited from the session, never re-derived.
+           *
+           * There is no credential to derive it from here — the payer has none — and
+           * the mode was fixed when the merchant opened the session. A test session
+           * that produced a live invoice would take real money on a rehearsal.
+           */
+          mode: session.mode,
           // The invoice must not outlive the session it belongs to.
           ttlMs: Math.max(60_000, session.expiresAt.getTime() - Date.now()),
         },

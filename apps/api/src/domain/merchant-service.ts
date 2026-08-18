@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { and, asc, count, desc, eq, gte, isNull, lt, lte, or, sql } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
@@ -27,7 +29,7 @@ import {
 
 export class MerchantError extends Error {
   constructor(
-    readonly code: 'not_found',
+    readonly code: 'not_found' | 'not_test_mode',
     message: string,
   ) {
     super(message);
@@ -192,7 +194,18 @@ export class MerchantService {
     organizationId: string,
     options: { readonly from?: Date | undefined; readonly to?: Date | undefined } = {},
   ) {
-    const conditions = [eq(invoices.organizationId, organizationId), isNull(payments.reversedAt)];
+    /**
+     * Live only.
+     *
+     * A merchant reconciling their books against this figure is reconciling real money.
+     * Test payments in the same total would make it useless for the one purpose it has,
+     * and a merchant who had been testing would find their revenue overstated.
+     */
+    const conditions = [
+      eq(invoices.organizationId, organizationId),
+      eq(invoices.mode, 'live'),
+      isNull(payments.reversedAt),
+    ];
     if (options.from) conditions.push(gte(payments.creditedAt, options.from));
     if (options.to) conditions.push(lte(payments.creditedAt, options.to));
 
@@ -214,13 +227,91 @@ export class MerchantService {
     const byStatus = await this.db
       .select({ status: invoices.status, value: count() })
       .from(invoices)
-      .where(eq(invoices.organizationId, organizationId))
+      .where(and(eq(invoices.organizationId, organizationId), eq(invoices.mode, 'live')))
       .groupBy(invoices.status);
 
     return {
       volume: rows,
       invoicesByStatus: Object.fromEntries(byStatus.map((row) => [row.status, row.value])),
     };
+  }
+
+  /**
+   * Credit a test invoice as though a payment arrived.
+   *
+   * The mode check is the whole security of this method, so it is the first thing it
+   * does and it reads from the row rather than from anything the caller supplied. A
+   * live invoice is paid by a chain or not at all — there is no override, because the
+   * only thing an override could add is the ability to release goods against money that
+   * never existed.
+   *
+   * Everything else mirrors what the real payment path does: a `payments` row keyed the
+   * same way, `amountPaid` recomputed from those rows rather than incremented, and the
+   * status classified against the invoice's own tolerance. A test that took a different
+   * route through the code would be testing the wrong code.
+   */
+  async simulatePayment(organizationId: string, invoiceId: string, amount?: bigint) {
+    const [invoice] = await this.db
+      .select()
+      .from(invoices)
+      .where(and(eq(invoices.id, invoiceId), eq(invoices.organizationId, organizationId)))
+      .limit(1);
+    if (!invoice) throw new MerchantError('not_found', 'No such invoice.');
+
+    if (invoice.mode !== 'test') {
+      throw new MerchantError(
+        'not_test_mode',
+        'Only a test invoice can be paid this way. A live invoice is paid on chain.',
+      );
+    }
+
+    const due = BigInt(invoice.amountDue);
+    const paid = amount ?? due;
+
+    /**
+     * A synthetic transaction hash, marked as such.
+     *
+     * Keyed like a real payment so the unique constraint still prevents a double
+     * credit, and prefixed so nobody looking at a payments table, an export or a
+     * support ticket mistakes it for something that happened on a chain.
+     */
+    const txHash = `0xtest${randomUUID().replace(/-/g, '')}`;
+
+    await this.db.insert(payments).values({
+      invoiceId,
+      chain: invoice.chain,
+      txHash,
+      transferIndex: 0,
+      amount: paid.toString(),
+      blockNumber: 0,
+      creditedAt: new Date(),
+      valueUsdMicros: null,
+      // Not `quote`: nothing was priced, and letting simulated payments claim a
+      // verified valuation would put them in reach of the volume assessment if the
+      // mode filter were ever removed.
+      valueSource: 'unknown',
+    });
+
+    const total = await this.db
+      .select({ sum: sql<string>`coalesce(sum(${payments.amount}), 0)::text` })
+      .from(payments)
+      .where(and(eq(payments.invoiceId, invoiceId), isNull(payments.reversedAt)));
+    const amountPaid = BigInt(total[0]?.sum ?? '0');
+
+    const tolerance = (due * BigInt(invoice.toleranceBps)) / 10_000n;
+    const status =
+      amountPaid < due - tolerance ? 'underpaid' : amountPaid > due + tolerance ? 'overpaid' : 'paid';
+
+    await this.db
+      .update(invoices)
+      .set({
+        amountPaid: amountPaid.toString(),
+        status,
+        paidAt: status === 'paid' ? new Date() : invoice.paidAt,
+      })
+      .where(eq(invoices.id, invoiceId));
+
+    return { invoiceId, mode: invoice.mode, status, amountPaid: amountPaid.toString(), txHash };
   }
 
   // ── webhooks ────────────────────────────────────────────────────────────────
