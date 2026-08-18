@@ -10,7 +10,7 @@ import {
   WebhookDispatcher,
 } from '@avex/core';
 import type { PriceSource } from '@avex/core';
-import { eq, inArray, like } from 'drizzle-orm';
+import { count, eq, inArray, like } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 
 import { hashToken } from '../auth/tokens.js';
@@ -2715,12 +2715,20 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     assert.equal(response.statusCode, 400, response.body);
   });
 
+  /**
+   * How many audit rows exist for an action, counted in the database.
+   *
+   * Not through `/admin/audit`, which caps a page at 200 rows. Every caller here
+   * compares a count before and after, and once an action passes 200 rows — which it
+   * does after enough runs against a shared database — both sides read 200 and the
+   * delta is always zero. The test then passes or fails on how much history happens to
+   * be lying around, which is the opposite of what it is for.
+   */
   async function countAudit(action: string): Promise<number> {
-    const response = await app.inject({
-      method: 'GET',
-      url: `/admin/audit?action=${encodeURIComponent(action)}&limit=200`,
-      headers: asStaff(superadminToken),
-    });
-    return (response.json().rows as unknown[]).length;
+    const [row] = await db
+      .select({ value: count() })
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.action, action));
+    return row?.value ?? 0;
   }
 });

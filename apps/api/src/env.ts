@@ -109,6 +109,27 @@ const schema = z.object({
    */
   MEMO_SECRET: z.string().min(16).default('development-memo-secret-do-not-ship'),
 
+  /**
+   * Origins allowed to call the payer-facing checkout routes from a browser.
+   *
+   * An allowlist rather than `*`, and scoped to `/pay` alone. Those routes take no
+   * credentials, so a wildcard there leaks nothing by itself — but the same header on
+   * an authenticated route would let any page a merchant visits read their invoices
+   * with their own session, so the narrow version is the one worth having.
+   *
+   * Empty by default, which means no cross-origin browser access at all. A deployment
+   * serving the checkout page from the same origin as the API needs nothing here.
+   */
+  CHECKOUT_ORIGINS: z
+    .string()
+    .default('')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((entry) => entry.trim().replace(/\/$/, ''))
+        .filter(Boolean),
+    ),
+
   EVM_RPC_URLS: z
     .string()
     .default('bsc=https://bsc-dataseed.binance.org')

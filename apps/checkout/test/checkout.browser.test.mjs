@@ -254,6 +254,22 @@ describe('checkout, in a browser', { skip: playwright ? false : 'playwright is n
     assert.equal(await text('#back-to-network'), 'Locked in');
   });
 
+  test('the page declares its own character set', async () => {
+    /**
+     * Not decoration. This page is full of em dashes, emoji section markers and a
+     * middot, and served without a charset a browser decodes the UTF-8 bytes as
+     * Latin-1 — every one of them becomes mojibake. Declaring it in the document means
+     * the page is correct whatever headers the host sends, which is the only version
+     * that survives being moved to a different static host.
+     */
+    const charset = await page.$eval('meta[charset]', (node) => node.getAttribute('charset'));
+    assert.equal(charset?.toLowerCase(), 'utf-8');
+
+    // And the em dash actually renders as one, rather than as three bytes of noise.
+    await reset();
+    assert.equal(await text('#summary-rate'), '\u2014');
+  });
+
   test('the page ran without throwing', () => {
     // Last, so it covers every interaction above rather than only the initial load.
     assert.deepEqual(errors, []);

@@ -1,3 +1,5 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AVEX Pay</title>
 <style>
   /**
@@ -376,6 +378,8 @@
   .primary:focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; }
   .primary:disabled { background: var(--card-3); color: var(--faint); cursor: default; }
 
+  .hint[data-error="true"] { color: #FF6B6B; }
+
   .hint { font-size: var(--s-1); color: var(--faint); margin: 0; }
 
   /* ── the chosen network, carried onto the second screen ─────────────── */
@@ -683,7 +687,7 @@
       <span class="brand-mark" aria-hidden="true">A</span>
       <span>AVEX <span class="brand-pay">Pay</span></span>
     </div>
-    <div class="invoice-ref">Invoice <code>#INV-8F2C41</code></div>
+    <div class="invoice-ref">Invoice <code id="invoice-ref">#INV-8F2C41</code></div>
   </header>
 
   <div class="split">
@@ -794,7 +798,7 @@
         <div class="panel-head"><h2>🧾 Summary</h2></div>
         <div class="body">
           <dl class="summary">
-            <div class="summary-row"><dt>Item</dt><dd class="prose">Annual subscription</dd></div>
+            <div class="summary-row"><dt>Item</dt><dd class="prose" id="summary-item">Annual subscription</dd></div>
             <div class="summary-row"><dt>Amount</dt><dd id="summary-amount">—</dd></div>
             <div class="summary-row"><dt>Network</dt><dd id="summary-network">—</dd></div>
             <div class="summary-row"><dt>Settlement cost</dt><dd id="summary-cost">—</dd></div>
@@ -845,7 +849,7 @@
     </aside>
   </div>
 
-  <div class="demo-bar">
+  <div class="demo-bar" data-demo-panel>
     <strong>Interactive demo:</strong>
     <span>step through the live states —</span>
     <button class="demo-btn" type="button" data-demo="confirming">Payment seen</button>
@@ -921,6 +925,123 @@
   const el = (id) => document.getElementById(id);
 
   /**
+   * Live mode, when the page was opened with a session id.
+   *
+   * The catalogue above is a demo so this file can be opened from disk and still show
+   * something honest. With `?s=<uuid>` — or a path of `/pay/<uuid>` — the page instead
+   * asks the API what the merchant will accept and what each currency would cost, and
+   * the demo data is never read.
+   *
+   * The API is same-origin by default. Nothing here takes a base URL from the query
+   * string: a page that let its caller redirect the payment endpoint would be a page
+   * that could be pointed at an attacker's address list.
+   */
+  const SESSION_ID = (() => {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const query = new URLSearchParams(location.search).get('s');
+    if (query && uuid.test(query)) return query;
+    // `/pay/<uuid>` when the API serves the page itself.
+    const fromPath = location.pathname.match(/\/pay\/([0-9a-f-]{36})/i);
+    if (fromPath && uuid.test(fromPath[1])) return fromPath[1];
+    return null;
+  })();
+
+  const LIVE = SESSION_ID !== null;
+  /** Same origin unless a deployment says otherwise at build time. */
+  const API_BASE = (document.querySelector('meta[name="avex-api"]')?.content ?? '').replace(/\/$/, '');
+  const api = (path) => `${API_BASE}/pay/${SESSION_ID}${path}`;
+
+  async function getJson(url, options) {
+    const response = await fetch(url, {
+      ...options,
+      headers: { 'content-type': 'application/json', ...(options?.headers ?? {}) },
+      // Never send credentials: this endpoint takes none, and asking for them would
+      // require the API to relax its CORS policy for no gain.
+      credentials: 'omit',
+      cache: 'no-store',
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(body.message ?? `request failed (${response.status})`);
+      error.code = body.error ?? String(response.status);
+      error.status = response.status;
+      throw error;
+    }
+    return body;
+  }
+
+  /**
+   * Turn the API's flat option list into the currency-then-network shape the page
+   * renders.
+   *
+   * The API returns one row per (asset, chain) because that is what an invoice is
+   * opened against. The page groups them, because a payer thinks "I have USDT" first
+   * and "on which chain" second — and grouping here keeps the wrong-chain guarantee
+   * intact: a network only appears under a currency the API said carries it.
+   */
+  function groupOptions(options) {
+    const bySymbol = new Map();
+    for (const option of options) {
+      if (!bySymbol.has(option.symbol)) {
+        bySymbol.set(option.symbol, {
+          id: option.symbol,
+          name: option.name ?? option.symbol,
+          decimals: option.decimals,
+          networks: [],
+        });
+      }
+      bySymbol.get(option.symbol).networks.push(option);
+    }
+
+    // A currency with nothing available anywhere is dropped; one with some networks
+    // available keeps only those. An unavailable network shown as selectable would let
+    // a payer choose something that cannot be invoiced.
+    const grouped = [];
+    for (const entry of bySymbol.values()) {
+      const usable = entry.networks.filter((network) => network.available);
+      if (usable.length > 0) grouped.push({ ...entry, networks: usable });
+    }
+    return grouped;
+  }
+
+  /** Chain metadata the API does not carry: a label, and how long confirming takes. */
+  const CHAIN_LABELS = {
+    ton: { label: 'TON', confirm: '~5 sec' },
+    solana: { label: 'Solana', confirm: '~1 sec' },
+    tron: { label: 'TRON', confirm: '~1 min' },
+    bsc: { label: 'BNB Chain', confirm: '~45 sec' },
+    polygon: { label: 'Polygon', confirm: '~3 min' },
+    ethereum: { label: 'Ethereum', confirm: '~3 min' },
+  };
+
+  /**
+   * A scaled rate as dollars, with precision that suits the size of the number.
+   *
+   * Two decimals for anything above a dollar and six below it. A fixed two would print
+   * TRX at "$0.00", which reads as free rather than as cheap.
+   */
+  function formatRate(scaled) {
+    if (scaled === null || scaled === undefined) return null;
+    const whole = formatUnits(scaled, 18);
+    const value = Number(whole);
+    if (!Number.isFinite(value)) return null;
+    return value >= 1
+      ? value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+  }
+
+  /** Render an amount in the asset's own precision, without floating point. */
+  function formatUnits(amount, decimals) {
+    const digits = String(amount).replace(/^0+(?=\d)/, '');
+    if (decimals === 0) return digits;
+    const padded = digits.padStart(decimals + 1, '0');
+    const whole = padded.slice(0, -decimals);
+    const fraction = padded.slice(-decimals).replace(/0+$/, '');
+    return fraction.length > 0 ? `${whole}.${fraction}` : whole;
+  }
+
+
+  /**
    * Nothing is selected to begin with, on purpose.
    *
    * Paying on the wrong chain cannot be reversed, so the network is an explicit
@@ -960,8 +1081,31 @@
     return (units / scale).toFixed(currencyRow.decimals);
   }
 
-  /** The selectable rows for a currency: one per chain that carries it. */
+  /**
+   * The selectable rows for a currency: one per chain that carries it.
+   *
+   * In live mode the rows come from the API, which has already computed the amount at
+   * a rate it will honour. The demo computes its own, which is the only difference
+   * between the two modes below this point — everything downstream reads the same
+   * shape.
+   */
   function optionsFor(currencyRow) {
+    if (LIVE) {
+      return currencyRow.networks.map((network) => ({
+        id: network.chain,
+        label: CHAIN_LABELS[network.chain]?.label ?? network.chain,
+        confirm: CHAIN_LABELS[network.chain]?.confirm ?? '',
+        // The payer covers the network fee, and the API has already included it.
+        cost: 0,
+        memo: false,
+        asset: network.symbol,
+        assetId: network.assetId,
+        decimals: network.decimals,
+        amount: formatUnits(network.amount, network.decimals),
+        rateUsd: network.rateUsd,
+        address: null,
+      }));
+    }
     return currencyRow.networks.map((id) => ({
       id,
       ...CHAINS[id],
@@ -970,11 +1114,14 @@
     }));
   }
 
+  /** The catalogue in play: the API's in live mode, the demo's otherwise. */
+  let catalogue = CURRENCIES;
+
   function renderCurrencies() {
     const container = el('currencies');
     container.textContent = '';
 
-    for (const row of CURRENCIES) {
+    for (const row of catalogue) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'coin';
@@ -995,11 +1142,15 @@
       symbol.className = 'coin-sym';
       symbol.textContent = row.id;
 
-      const name = document.createElement('span');
-      name.className = 'coin-name';
-      name.textContent = row.name;
-
-      text.append(symbol, name);
+      text.append(symbol);
+      // Only when it says something the ticker does not. Live, the API sends the symbol
+      // as the name, and "USDT / USDT" is two lines carrying one fact.
+      if (row.name && row.name !== row.id) {
+        const name = document.createElement('span');
+        name.className = 'coin-name';
+        name.textContent = row.name;
+        text.append(name);
+      }
       chip.append(mark, text);
 
       chip.addEventListener('click', () => {
@@ -1063,10 +1214,22 @@
       time.className = 'net-time';
       time.textContent = network.confirm;
 
-      const cost = costLabel(network.cost);
       const costEl = document.createElement('span');
-      costEl.className = 'net-cost' + (cost.free ? ' free' : '');
-      costEl.textContent = cost.text;
+      if (LIVE) {
+        /**
+         * Nothing, live.
+         *
+         * The API returns an amount with the network fee already inside it, so there is
+         * no per-network figure to compare — and "Free" against every row would say the
+         * opposite of what is true.
+         */
+        costEl.className = 'net-cost';
+        costEl.textContent = '';
+      } else {
+        const cost = costLabel(network.cost);
+        costEl.className = 'net-cost' + (cost.free ? ' free' : '');
+        costEl.textContent = cost.text;
+      }
 
       row.append(dot, name, time, costEl);
       row.addEventListener('click', () => {
@@ -1080,6 +1243,7 @@
         renderScreen();
       });
       container.append(row);
+
     }
   }
 
@@ -1098,9 +1262,12 @@
     el('net-step').hidden = currency === null;
     if (currency !== null) {
       const count = currency.networks.length;
-      el('net-note').textContent = count === 1
-        ? currency.id + ' exists on one network only, so it is already selected.'
-        : 'We show what settling on each network costs — the cheapest option is at the top.';
+      el('net-note').textContent =
+        count === 1
+          ? currency.id + ' exists on one network only, so it is already selected.'
+          : LIVE
+            ? 'The amount shown for each already includes its network fee.'
+            : 'We show what settling on each network costs — the cheapest option is at the top.';
     }
 
     el('to-pay').disabled = selected === null;
@@ -1112,8 +1279,36 @@
     el('back-to-network').textContent = paymentSeen() ? 'Locked in' : 'Change';
   }
 
-  el('to-pay').addEventListener('click', () => {
+  el('to-pay').addEventListener('click', async () => {
     if (selected === null) return;
+
+    /**
+     * In live mode Continue is what creates the invoice.
+     *
+     * Deferred to here rather than fired on every row tap, for two reasons. A payer
+     * flicking through networks would otherwise open an invoice for each, most of them
+     * never paid. And the address only becomes real when they commit — which is also
+     * when they are about to act on it.
+     */
+    if (LIVE) {
+      const button = el('to-pay');
+      button.disabled = true;
+      button.textContent = 'Preparing…';
+      try {
+        const result = await getJson(api('/select'), {
+          method: 'POST',
+          body: JSON.stringify({ assetId: selected.assetId }),
+        });
+        applyPayment(result.payment);
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = 'Continue';
+        showError(error);
+        return;
+      }
+      button.textContent = 'Continue';
+    }
+
     screen = 'pay';
     setState(state);
   });
@@ -1182,12 +1377,13 @@
       el('summary-amount').textContent = '$' + INVOICE_USD.toFixed(2);
       // The rate is a property of the currency, so it is knowable as soon as one is
       // picked — and must not read '1 USDT = $1.00' before anything is.
-      el('summary-rate').textContent = currency === null
-        ? '—'
-        : '1 ' + currency.id + ' = $' + currency.usdPrice.toLocaleString('en-US', {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          });
+      el('summary-rate').textContent =
+        currency === null || LIVE
+          ? '—'
+          : '1 ' + currency.id + ' = $' + currency.usdPrice.toLocaleString('en-US', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            });
 
       // Clear the previous network's address, memo and QR rather than leaving them
       // on the hidden screen. A stale deposit address is the one piece of state that
@@ -1203,32 +1399,213 @@
 
     el('amount').textContent = selected.amount;
     el('amount-unit').textContent = selected.asset;
-    el('amount-note').textContent =
-      'Equal to $' + INVOICE_USD.toFixed(2) + ' including the ' +
-      (selected.cost === 0 ? 'free' : '$' + selected.cost.toFixed(4)) +
-      ' network fee — the rate holds until the countdown below runs out.';
+    el('amount-note').textContent = LIVE
+      ? 'Includes the network fee — the rate holds until the countdown below runs out.'
+      : 'Equal to $' + INVOICE_USD.toFixed(2) + ' including the ' +
+        (selected.cost === 0 ? 'free' : '$' + selected.cost.toFixed(4)) +
+        ' network fee — the rate holds until the countdown below runs out.';
 
     el('chosen-net').textContent = selected.asset + ' on ' + selected.label;
     el('chosen-time').textContent = 'confirms in ' + selected.confirm;
 
-    el('address').textContent = selected.address;
+    el('address').textContent = selected.address ?? '—';
     el('summary-network').textContent = selected.asset + ' · ' + selected.label;
     el('summary-total').textContent = selected.amount + ' ' + selected.asset;
-    el('summary-cost').textContent =
-      selected.cost === 0 ? '$0.0000' : '$' + selected.cost.toFixed(4);
+    // The API folds the network fee into the amount, so there is no separate figure
+    // to show for a live invoice — and inventing one would be a number we could not
+    // stand behind.
+    el('summary-cost').textContent = LIVE
+      ? 'included'
+      : selected.cost === 0
+        ? '$0.0000'
+        : '$' + selected.cost.toFixed(4);
     el('summary-amount').textContent = '$' + INVOICE_USD.toFixed(2);
-    el('summary-rate').textContent =
-      '1 ' + currency.id + ' = $' + currency.usdPrice.toLocaleString('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      });
+    /**
+     * The rate, from the API in live mode and from the demo catalogue otherwise.
+     *
+     * Live it belongs to the chosen option rather than to the currency: the same coin on
+     * two chains is quoted from one market rate, but the value the payer is being held
+     * to is the one recorded against the invoice they are about to fund.
+     */
+    const rate = LIVE
+      ? formatRate(selected.rateUsd)
+      : currency.usdPrice.toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        });
+    el('summary-rate').textContent = rate === null ? '—' : '1 ' + selected.asset + ' = $' + rate;
 
     el('memo-block').hidden = !selected.memo;
-    el('memo').textContent = MEMO;
+    el('memo').textContent = selected.memoValue ?? MEMO;
 
     // On a shared-address chain the memo is what identifies the invoice, so it
     // belongs in the QR too rather than only in the copyable field.
-    renderQr(selected.memo ? selected.address + '?memo=' + MEMO : selected.address);
+    // No address means no invoice yet, and a QR of nothing would scan to nothing.
+    if (selected.address) {
+      const memo = selected.memoValue ?? MEMO;
+      renderQr(selected.memo ? selected.address + '?memo=' + memo : selected.address);
+    } else {
+      el('qr').textContent = '';
+      el('address').textContent = '—';
+    }
+  }
+
+  // ── live mode ───────────────────────────────────────────────────────────
+
+  /**
+   * Fold the API's payment record into the selected row, then re-render.
+   *
+   * The address arrives only at this point, so `selected.address` is null until now.
+   * That is deliberate: a page that held an address before the invoice existed would
+   * be holding one nobody had committed to, and the risk of showing it is exactly the
+   * risk of a payer funding it.
+   */
+  function applyPayment(payment) {
+    if (!payment) return;
+    selected = {
+      ...selected,
+      address: payment.depositAddress,
+      memo: Boolean(payment.memo),
+      memoValue: payment.memo,
+      amount: formatUnits(payment.amountDue, payment.decimals ?? selected.decimals ?? 0),
+      invoiceId: payment.invoiceId,
+      toleranceBps: payment.toleranceBps,
+    };
+    liveExpiresAt = Date.parse(payment.expiresAt);
+    renderSelection();
+    applyInvoiceStatus(payment.status, payment.amountPaid);
+  }
+
+  /** Map the API's invoice status onto the page's own state machine. */
+  function applyInvoiceStatus(status, amountPaid) {
+    if (status === 'paid' || status === 'overpaid') return setState('paid');
+    if (status === 'confirming') return setState('confirming');
+    if (status === 'underpaid') return setState('underpaid');
+    if (status === 'expired') {
+      remaining = 0;
+      return setState('expired');
+    }
+    // Pending with something received is a transfer we have seen but not confirmed.
+    if (amountPaid && BigInt(amountPaid) > 0n) return setState('confirming');
+    return setState('awaiting');
+  }
+
+  /** A refusal the payer can act on, in the place they are already looking. */
+  function showError(error) {
+    const hint = el('choose-hint');
+    hint.hidden = false;
+    hint.textContent = error.message ?? 'Something went wrong. Please try again.';
+    hint.dataset.error = 'true';
+  }
+
+  let liveExpiresAt = null;
+  let pollTimer = null;
+
+  /**
+   * Load the session, and everything the payer may choose from.
+   *
+   * A session that is already `selected` — a reload, or a payer coming back to a link
+   * they left open — skips straight to the pay screen with the address they were given.
+   * Losing that on refresh would be the worst possible moment to lose it.
+   */
+  async function loadLive() {
+    let view;
+    try {
+      view = await getJson(api('/state'));
+    } catch (error) {
+      renderFatal(error);
+      return;
+    }
+
+    el('amount').textContent = (Number(view.amountFiatMicros) / 1e6).toFixed(2);
+    el('amount-unit').textContent = 'USD';
+    if (view.description) {
+      el('invoice-ref').textContent = view.description;
+      // The same string in both places rather than a demo label left behind in the
+      // summary, which is what a payer reads to check they are paying for the right
+      // thing.
+      el('summary-item').textContent = view.description;
+    } else {
+      el('summary-item').textContent = 'Payment';
+    }
+    liveExpiresAt = Date.parse(view.expiresAt);
+
+    if (view.status === 'cancelled' || view.status === 'expired') {
+      renderFatal({
+        message:
+          view.status === 'cancelled'
+            ? 'This payment was cancelled by the merchant.'
+            : 'This payment link has expired. Ask the merchant for a new one.',
+      });
+      return;
+    }
+
+    try {
+      const { options } = await getJson(api('/options'));
+      catalogue = groupOptions(options);
+    } catch (error) {
+      renderFatal(error);
+      return;
+    }
+
+    if (catalogue.length === 0) {
+      renderFatal({ message: 'No currency is available for this payment right now.' });
+      return;
+    }
+
+    renderCurrencies();
+
+    if (view.payment) {
+      // Restore the choice already made, so a reload does not lose the address.
+      const symbol = view.payment.symbol;
+      const restored = catalogue.find((entry) => entry.id === symbol);
+      if (restored) {
+        currency = restored;
+        selected =
+          optionsFor(restored).find((option) => option.id === view.payment.chain) ??
+          optionsFor(restored)[0];
+        applyPayment(view.payment);
+        screen = 'pay';
+        renderCurrencies();
+        renderNetworks();
+      }
+    }
+
+    renderScreen();
+    startPolling();
+  }
+
+  /**
+   * Poll for the payment's progress.
+   *
+   * Polling rather than a socket: this page is open for minutes at a time on a phone
+   * that may sleep, and a dropped socket that silently stops updating is worse than a
+   * request every few seconds. Stops once the payment is final, because there is
+   * nothing further to learn.
+   */
+  function startPolling() {
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try {
+        const view = await getJson(api('/state'));
+        if (view.payment) applyInvoiceStatus(view.payment.status, view.payment.amountPaid);
+        if (view.status === 'paid') clearInterval(pollTimer);
+      } catch {
+        // A failed poll is not worth showing: the next one is seconds away, and an
+        // error banner appearing and vanishing on a payment page reads as a fault.
+      }
+    }, 4000);
+  }
+
+  /** Nothing can be paid, so say so where the choices would have been. */
+  function renderFatal(error) {
+    el('net-step').hidden = true;
+    el('currencies').textContent = '';
+    el('to-pay').disabled = true;
+    const hint = el('choose-hint');
+    hint.hidden = false;
+    hint.dataset.error = 'true';
+    hint.textContent = error.message ?? 'This payment is not available.';
   }
 
   // ── copy ────────────────────────────────────────────────────────────────
@@ -1356,7 +1733,7 @@
         if (selected === null) {
           // Any state past the first screen implies both choices were made, so the
           // demo makes them rather than rendering a pay screen with no address.
-          if (currency === null) currency = CURRENCIES[0];
+          if (currency === null) currency = catalogue[0];
           selected = optionsFor(currency)[0];
         }
         screen = 'pay';
@@ -1383,9 +1760,23 @@
     });
   }
 
-  renderCurrencies();
-  renderNetworks();
-  renderSelection();
-  setState('awaiting');
+  /**
+   * Boot.
+   *
+   * The demo controls are removed in live mode rather than hidden: a button that can
+   * force a real payment page into "Confirmed" is not something to leave in the DOM of
+   * a page a stranger is looking at, however invisible.
+   */
+  if (LIVE) {
+    for (const panel of document.querySelectorAll('[data-demo-panel]')) panel.remove();
+    renderSelection();
+    setState('awaiting');
+    void loadLive();
+  } else {
+    renderCurrencies();
+    renderNetworks();
+    renderSelection();
+    setState('awaiting');
+  }
 })();
 </script>

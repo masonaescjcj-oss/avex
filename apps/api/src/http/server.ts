@@ -140,6 +140,9 @@ const PUBLIC_ADMIN_ROUTES = new Set(['POST /admin/auth/login', 'POST /admin/auth
 /** Everything below this prefix authenticates as staff, never as a merchant. */
 const ADMIN_PREFIX = '/admin';
 
+/** The payer-facing checkout. The only prefix that may be called cross-origin. */
+const CHECKOUT_PREFIX = '/pay';
+
 export function buildServer(context: AppContext): FastifyInstance {
   const app = Fastify({
     logger: {
@@ -163,6 +166,52 @@ export function buildServer(context: AppContext): FastifyInstance {
 
   app.decorateRequest('principal', null);
   app.decorateRequest('staff', null);
+
+  /**
+   * Cross-origin access, for the payer-facing checkout only.
+   *
+   * Scoped deliberately. Those routes carry no credentials — the session id in the URL
+   * is the whole authorisation — so allowing a browser on another origin to read them
+   * gives away nothing it could not get with a plain fetch from a server. The same
+   * header on an authenticated route would be a different matter entirely: any page a
+   * signed-in merchant visited could then read their invoices using their own session,
+   * which is why this never applies outside `/pay`.
+   *
+   * Credentials are never allowed, so a browser will not attach cookies even if a
+   * future deployment sets any.
+   */
+  app.addHook('onRequest', async (request, reply) => {
+    const url = request.routeOptions.url ?? request.url;
+    if (!url.startsWith(CHECKOUT_PREFIX)) return;
+
+    const origin = request.headers.origin;
+    if (typeof origin !== 'string') return;
+
+    const allowed = context.env.CHECKOUT_ORIGINS.includes(origin.replace(/\/$/, ''));
+    if (!allowed) {
+      /**
+       * An unlisted origin gets no CORS header at all, and the preflight is still
+       * answered.
+       *
+       * Refusing the preflight with a 403 would be indistinguishable, to the page, from
+       * the API being down — and the browser blocks the real request either way, so the
+       * header's absence is the whole enforcement. Saying less is better here.
+       */
+      if (request.method === 'OPTIONS') return reply.status(204).send();
+      return;
+    }
+
+    reply
+      .header('access-control-allow-origin', origin)
+      // So a cache keyed on the URL alone cannot serve one origin's header to another.
+      .header('vary', 'origin')
+      .header('access-control-allow-methods', 'GET, POST, OPTIONS')
+      .header('access-control-allow-headers', 'content-type')
+      .header('access-control-max-age', '600');
+
+    // The preflight ends here; there is no handler for OPTIONS and none is wanted.
+    if (request.method === 'OPTIONS') return reply.status(204).send();
+  });
 
   app.addHook('onRequest', async (request, reply) => {
     const decision = globalLimiter.check(request.ip);

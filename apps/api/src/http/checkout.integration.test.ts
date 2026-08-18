@@ -93,6 +93,8 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
       DATABASE_URL: databaseUrl!,
       RATE_LIMIT_PER_MINUTE: '10000',
       APP_URL: 'https://pay.example.test',
+      // One allowed origin, so the refusal path is testable against a second.
+      CHECKOUT_ORIGINS: 'https://shop.example.test',
     });
 
     const database = createDatabase(env.DATABASE_URL);
@@ -767,6 +769,98 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     assert.ok(entry, 'the failure should be in the merchant audit log');
     // The specific cause, which the payer was deliberately not told.
     assert.equal(entry!.metadata?.cause, 'price_unavailable');
+  });
+
+  // ── cross-origin access ────────────────────────────────────────────────────
+
+  test('an allowed origin may read the checkout from a browser', async () => {
+    await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/pay/${session.id}/state`,
+      headers: { origin: 'https://shop.example.test' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.headers['access-control-allow-origin'], 'https://shop.example.test');
+    // So a cache keyed on the URL alone cannot serve one origin's header to another.
+    assert.equal(response.headers['vary'], 'origin');
+  });
+
+  test('an unlisted origin gets no header, and the request still answers', async () => {
+    /**
+     * The header's absence is the whole enforcement — the browser blocks the read. A
+     * 403 would be indistinguishable, to the page, from the API being down, and would
+     * tell a prober that the origin check exists. Saying less is better.
+     */
+    await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/pay/${session.id}/state`,
+      headers: { origin: 'https://evil.example.test' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.headers['access-control-allow-origin'], undefined);
+  });
+
+  test('a preflight is answered for an allowed origin', async () => {
+    const response = await app.inject({
+      method: 'OPTIONS',
+      url: '/pay/11111111-2222-4333-8444-555555555555/select',
+      headers: {
+        origin: 'https://shop.example.test',
+        'access-control-request-method': 'POST',
+      },
+    });
+    assert.equal(response.statusCode, 204, response.body);
+    assert.equal(response.headers['access-control-allow-origin'], 'https://shop.example.test');
+    assert.match(String(response.headers['access-control-allow-methods']), /POST/);
+  });
+
+  test('a preflight from an unlisted origin is answered without the header', async () => {
+    const response = await app.inject({
+      method: 'OPTIONS',
+      url: '/pay/11111111-2222-4333-8444-555555555555/select',
+      headers: { origin: 'https://evil.example.test' },
+    });
+    assert.equal(response.statusCode, 204);
+    assert.equal(response.headers['access-control-allow-origin'], undefined);
+  });
+
+  test('cross-origin access never reaches an authenticated route', async () => {
+    /**
+     * The reason CORS is scoped to `/pay` rather than applied globally. With the header
+     * on an authenticated route, any page a signed-in merchant visited could read their
+     * invoices using their own session. The allowed origin is used here precisely
+     * because it must make no difference.
+     */
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/invoices`,
+      headers: { ...auth(), origin: 'https://shop.example.test' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.headers['access-control-allow-origin'], undefined);
+  });
+
+  test('credentials are never allowed, even for an allowed origin', async () => {
+    // Without this a future deployment that set a cookie would have it attached by the
+    // browser on every cross-origin checkout read.
+    await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/pay/${session.id}/state`,
+      headers: { origin: 'https://shop.example.test' },
+    });
+    assert.equal(response.headers['access-control-allow-credentials'], undefined);
   });
 
   test('payer-facing responses are never cached', async () => {
