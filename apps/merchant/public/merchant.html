@@ -1,0 +1,1568 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AVEX Pay — Dashboard</title>
+<style>
+  /**
+   * AVEX Pay merchant dashboard.
+   *
+   * The same design language as the checkout and the staff panel: pure black ground,
+   * acid lime spent on the one thing that matters per view, dark cards at a 14-20px
+   * radius, and monospace for every number, address and identifier so figures line up
+   * under each other and can be read digit by digit. Dark only, because AVEX has no
+   * light theme.
+   */
+  :root {
+    --void: #000000;
+    --card: #121212;
+    --card-2: #1A1A1A;
+    --card-3: #242424;
+    --line: #262626;
+    --line-2: #333333;
+
+    --ink: #FFFFFF;
+    --muted: #8B8B8B;
+    --faint: #5A5A5A;
+
+    --lime: #C6F73F;
+    --lime-ink: #0A0A0A;
+    --lime-wash: rgba(198, 247, 63, 0.10);
+    --lime-edge: rgba(198, 247, 63, 0.28);
+
+    --teal: #2ED3A0;
+    --teal-wash: rgba(46, 211, 160, 0.12);
+    --amber: #F5A623;
+    --amber-wash: rgba(245, 166, 35, 0.14);
+    --coral: #FF5A4E;
+    --coral-wash: rgba(255, 90, 78, 0.14);
+
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+    --r-lg: 20px;
+    --r-md: 14px;
+    --r-sm: 10px;
+    --pill: 999px;
+
+    --s-2: 0.6875rem;
+    --s-1: 0.8125rem;
+    --s0: 0.9375rem;
+    --s1: 1.0625rem;
+    --s2: 1.375rem;
+    --s3: 1.875rem;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--void);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: var(--s0);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { max-width: 78rem; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
+
+  /* ── chrome ───────────────────────────────────────────────────────────── */
+
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.25rem;
+  }
+  .brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 800; font-size: var(--s1); }
+  .brand-mark {
+    width: 1.75rem; height: 1.75rem; border-radius: var(--r-sm);
+    background: var(--lime); color: var(--lime-ink);
+    display: grid; place-items: center;
+    font-family: var(--mono); font-weight: 700; flex: none;
+  }
+  .brand-pay { color: var(--lime); }
+
+  .whoami { display: flex; align-items: center; gap: 0.625rem; font-size: var(--s-1); color: var(--muted); }
+  .whoami code { font-family: var(--mono); color: var(--ink); }
+
+  nav.tabs { display: flex; gap: 0.25rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  nav.tabs button {
+    font: inherit; font-size: var(--s-1);
+    padding: 0.4rem 0.85rem; border-radius: var(--pill);
+    background: var(--card-2); color: var(--muted);
+    border: 1px solid var(--line); cursor: pointer;
+  }
+  nav.tabs button:hover { color: var(--ink); }
+  nav.tabs button[aria-current="page"] {
+    background: var(--lime); color: var(--lime-ink); border-color: var(--lime); font-weight: 700;
+  }
+
+  /* ── panels ───────────────────────────────────────────────────────────── */
+
+  .panel { background: var(--card); border-radius: var(--r-lg); margin-bottom: 0.875rem; overflow: hidden; }
+  .panel-head {
+    padding: 1rem 1.125rem 0.625rem;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;
+  }
+  .panel-head h2 { margin: 0; font-size: var(--s0); font-weight: 700; display: flex; align-items: center; gap: 0.4rem; }
+  .panel-body { padding: 0 1.125rem 1.125rem; display: flex; flex-direction: column; gap: 0.875rem; }
+
+  h1 { font-size: var(--s2); font-weight: 800; margin: 0 0 0.25rem; letter-spacing: -0.015em; }
+  p { margin: 0; }
+  .note { font-size: var(--s-1); color: var(--muted); }
+  .warn-note { font-size: var(--s-1); color: var(--amber); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.875rem; }
+
+  /* ── stats ────────────────────────────────────────────────────────────── */
+
+  .stat { background: var(--card-2); border-radius: var(--r-md); padding: 0.875rem 1rem; }
+  .stat-label { font-size: var(--s-2); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .stat-value {
+    font-family: var(--mono); font-size: var(--s3); font-weight: 700;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1.15;
+  }
+  .stat-value.lime { color: var(--lime); }
+  .stat-sub { font-size: var(--s-1); color: var(--muted); }
+
+  /* ── free tier bar ────────────────────────────────────────────────────── */
+
+  .bar-track { height: 0.4rem; border-radius: var(--pill); background: var(--card-3); overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--lime); border-radius: var(--pill); transition: width 240ms ease; }
+  .bar-fill[data-over="true"] { background: var(--amber); }
+
+  /* ── checklist ────────────────────────────────────────────────────────── */
+
+  ol.checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+  .check { display: grid; grid-template-columns: 1.5rem 1fr; gap: 0.625rem; align-items: start; }
+  .check-mark {
+    width: 1.5rem; height: 1.5rem; border-radius: 50%;
+    display: grid; place-items: center; flex: none;
+    font-family: var(--mono); font-size: var(--s-2); font-weight: 700;
+    background: var(--card-3); color: var(--muted);
+  }
+  .check[data-done="true"] .check-mark { background: var(--lime); color: var(--lime-ink); }
+  .check-title { font-weight: 600; }
+  .check[data-done="true"] .check-title { color: var(--muted); text-decoration: line-through; }
+  .check-why { font-size: var(--s-1); color: var(--muted); }
+
+  /* ── tables ───────────────────────────────────────────────────────────── */
+
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--s-1); }
+  th {
+    text-align: left; padding: 0.5rem 0.625rem;
+    font-size: var(--s-2); letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; white-space: nowrap;
+    border-bottom: 1px solid var(--line);
+  }
+  td { padding: 0.55rem 0.625rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td.mono, th.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  td.right, th.right { text-align: right; }
+  tr[data-attention="true"] { background: var(--amber-wash); }
+
+  /* ── pills ────────────────────────────────────────────────────────────── */
+
+  .pill {
+    display: inline-block; font-size: var(--s-2); font-weight: 700;
+    padding: 0.12rem 0.5rem; border-radius: var(--pill);
+    background: var(--card-3); color: var(--muted); white-space: nowrap;
+  }
+  .pill[data-tone="good"] { background: var(--teal-wash); color: var(--teal); }
+  .pill[data-tone="wait"] { background: var(--card-3); color: var(--muted); }
+  .pill[data-tone="warn"] { background: var(--amber-wash); color: var(--amber); }
+  .pill[data-tone="bad"] { background: var(--coral-wash); color: var(--coral); }
+  .pill[data-tone="dead"] { background: var(--card-3); color: var(--faint); }
+  .pill[data-mode="test"] { background: var(--amber-wash); color: var(--amber); }
+  .pill[data-mode="live"] { background: var(--teal-wash); color: var(--teal); }
+
+  /* ── forms ────────────────────────────────────────────────────────────── */
+
+  form { display: flex; flex-direction: column; gap: 0.75rem; }
+  .row { display: flex; gap: 0.625rem; flex-wrap: wrap; align-items: flex-end; }
+  label { display: flex; flex-direction: column; gap: 0.25rem; font-size: var(--s-1); color: var(--muted); flex: 1 1 12rem; }
+  input, select, textarea {
+    font: inherit; font-size: var(--s0);
+    padding: 0.55rem 0.7rem; border-radius: var(--r-sm);
+    background: var(--card-2); color: var(--ink); border: 1px solid var(--line);
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--lime-edge); outline-offset: 1px; }
+  input.mono { font-family: var(--mono); }
+
+  button.primary {
+    font: inherit; font-weight: 700; cursor: pointer;
+    padding: 0.6rem 1.1rem; border-radius: var(--pill);
+    background: var(--lime); color: var(--lime-ink); border: 0;
+  }
+  button.primary:disabled { background: var(--card-3); color: var(--faint); cursor: default; }
+  button.ghost {
+    font: inherit; font-size: var(--s-1); cursor: pointer;
+    padding: 0.35rem 0.75rem; border-radius: var(--pill);
+    background: var(--card-2); color: var(--muted); border: 1px solid var(--line);
+  }
+  button.ghost:hover:not(:disabled) { color: var(--ink); }
+  button.ghost:disabled { opacity: 0.45; cursor: default; }
+  button.danger { color: var(--coral); border-color: var(--coral-wash); }
+
+  .banner {
+    padding: 0.7rem 0.9rem; border-radius: var(--r-sm);
+    font-size: var(--s-1); border: 1px solid var(--line);
+  }
+  .banner[data-kind="error"] { background: var(--coral-wash); border-color: var(--coral); color: var(--ink); }
+  .banner[data-kind="ok"] { background: var(--teal-wash); border-color: var(--teal); color: var(--ink); }
+  .banner[data-kind="warn"] { background: var(--amber-wash); border-color: var(--amber); color: var(--ink); }
+  .banner[hidden] { display: none; }
+
+  .copyable { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .copyable code {
+    font-family: var(--mono); font-size: var(--s-1); word-break: break-all;
+    background: var(--card-2); padding: 0.35rem 0.6rem; border-radius: var(--r-sm); flex: 1 1 12rem;
+  }
+
+  .empty { color: var(--muted); font-size: var(--s-1); padding: 0.75rem 0; }
+
+  /* Author `display` beats the user-agent `[hidden]` rule, so anything that sets one
+     needs saying twice. This bit has bitten this project before. */
+  .view[hidden], form[hidden], .panel[hidden], .row[hidden] { display: none; }
+
+  .view { display: flex; flex-direction: column; }
+</style>
+
+<div class="page">
+  <header class="top">
+    <div class="brand"><span class="brand-mark">A</span>AVEX <span class="brand-pay">Pay</span></div>
+    <div class="whoami" id="whoami" hidden>
+      <span id="whoami-org"></span>
+      <code id="whoami-mode"></code>
+      <button class="ghost" type="button" id="sign-out">Sign out</button>
+    </div>
+  </header>
+
+  <!-- ── sign in ──────────────────────────────────────────────────────── -->
+  <section class="panel" id="auth-panel">
+    <div class="panel-head"><h1>Sign in</h1></div>
+    <div class="panel-body">
+      <div class="banner" id="auth-error" data-kind="error" hidden></div>
+      <form id="auth-form">
+        <div class="row">
+          <label>Email<input type="email" id="auth-email" autocomplete="username" required></label>
+          <label>Password<input type="password" id="auth-password" autocomplete="current-password" required></label>
+        </div>
+        <div class="row" id="auth-mfa-row" hidden>
+          <label>Authenticator code<input class="mono" id="auth-code" inputmode="numeric" autocomplete="one-time-code"></label>
+        </div>
+        <div class="row"><button class="primary" type="submit" id="auth-submit">Sign in</button></div>
+      </form>
+      <p class="note">
+        This dashboard holds your session in memory only, so closing the tab signs you
+        out. That is deliberate: a token in browser storage survives an XSS.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── the dashboard ────────────────────────────────────────────────── -->
+  <div id="app" hidden>
+    <nav class="tabs" id="tabs"></nav>
+    <div class="banner" id="flash" hidden></div>
+
+    <!-- overview -->
+    <section class="view" id="view-overview">
+      <div class="panel">
+        <div class="panel-head"><h2>📊 This period</h2><span class="note" id="period-note"></span></div>
+        <div class="panel-body">
+          <div class="grid" id="overview-stats"></div>
+          <div>
+            <div class="bar-track"><div class="bar-fill" id="free-bar" style="width:0%"></div></div>
+            <p class="note" id="free-note"></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="setup-panel">
+        <div class="panel-head"><h2>🚦 Before your first live payment</h2></div>
+        <div class="panel-body"><ol class="checklist" id="checklist"></ol></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>⚠️ Needs a look</h2><span class="note" id="attention-note"></span></div>
+        <div class="panel-body"><div class="scroll"><table id="attention-table"></table></div></div>
+      </div>
+    </section>
+
+    <!-- new payment -->
+    <section class="view" id="view-new" hidden>
+      <div class="panel">
+        <div class="panel-head"><h2>➕ Take a payment</h2></div>
+        <div class="panel-body">
+          <p class="note">
+            Creates a checkout and gives you a link. Your customer picks the coin and
+            network there — you do not have to know which one they hold.
+          </p>
+          <form id="new-form">
+            <div class="row">
+              <label>Amount in USD<input class="mono" id="new-amount" inputmode="decimal" placeholder="25.00" required></label>
+              <label>Your order reference<input id="new-reference" placeholder="order-1042"></label>
+            </div>
+            <div class="row">
+              <label>Description shown to the customer<input id="new-description" placeholder="Order 1042"></label>
+            </div>
+            <div class="row"><button class="primary" type="submit" id="new-submit">Create payment link</button></div>
+          </form>
+          <div class="banner" id="new-result" data-kind="ok" hidden>
+            <div class="copyable">
+              <code id="new-link"></code>
+              <button class="ghost" type="button" data-copy="new-link">Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- invoices -->
+    <section class="view" id="view-invoices" hidden>
+      <div class="panel">
+        <div class="panel-head"><h2>🧾 Invoices</h2><span class="note" id="invoice-count"></span></div>
+        <div class="panel-body">
+          <form id="invoice-filters">
+            <div class="row">
+              <label>Status<select id="filter-status">
+                <option value="">Any</option>
+                <option value="pending">Awaiting payment</option>
+                <option value="confirming">Confirming</option>
+                <option value="paid">Paid</option>
+                <option value="underpaid">Underpaid</option>
+                <option value="overpaid">Overpaid</option>
+                <option value="expired">Expired</option>
+              </select></label>
+              <label>Your reference<input id="filter-reference" placeholder="order-1042"></label>
+              <button class="ghost" type="submit">Apply</button>
+            </div>
+          </form>
+          <div class="scroll"><table id="invoice-table"></table></div>
+          <div class="row"><button class="ghost" type="button" id="invoice-more" hidden>Load more</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- currencies -->
+    <section class="view" id="view-assets" hidden>
+      <div class="panel">
+        <div class="panel-head"><h2>💰 Currencies</h2></div>
+        <div class="panel-body">
+          <p class="note">
+            Only approved currencies can be invoiced in, and each needs a payout address on
+            its chain.
+          </p>
+          <div class="scroll"><table id="asset-table"></table></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- payouts -->
+    <section class="view" id="view-payouts" hidden>
+      <div class="panel">
+        <div class="panel-head"><h2>🏦 Payout addresses</h2></div>
+        <div class="panel-body">
+          <p class="warn-note">
+            A change here is scheduled rather than immediate, and we email you when it is
+            requested. That delay is the difference between a stolen session costing you
+            one order and costing you everything after it.
+          </p>
+          <div class="scroll"><table id="payout-table"></table></div>
+          <form id="payout-form">
+            <div class="row">
+              <label>Chain<select id="payout-chain"></select></label>
+              <label>Address<input class="mono" id="payout-address" placeholder="0x…" required></label>
+              <button class="primary" type="submit">Request change</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- webhooks -->
+    <section class="view" id="view-webhooks" hidden>
+      <div class="panel">
+        <div class="panel-head"><h2>🔔 Webhook endpoints</h2></div>
+        <div class="panel-body">
+          <div class="scroll"><table id="endpoint-table"></table></div>
+          <form id="endpoint-form">
+            <div class="row">
+              <label>URL<input id="endpoint-url" type="url" placeholder="https://your-store.example/avex" required></label>
+              <button class="primary" type="submit">Add endpoint</button>
+            </div>
+          </form>
+          <div class="banner" id="endpoint-secret" data-kind="warn" hidden>
+            <p><strong>Store this secret now — it is shown once.</strong></p>
+            <div class="copyable">
+              <code id="endpoint-secret-value"></code>
+              <button class="ghost" type="button" data-copy="endpoint-secret-value">Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>📨 Recent deliveries</h2></div>
+        <div class="panel-body"><div class="scroll"><table id="delivery-table"></table></div></div>
+      </div>
+    </section>
+
+    <!-- keys -->
+    <section class="view" id="view-keys" hidden>
+      <div class="panel">
+        <div class="panel-head"><h2>🔑 API keys</h2></div>
+        <div class="panel-body">
+          <p class="note">
+            A test key cannot move real money, whatever it is asked to do. Start with one.
+          </p>
+          <div class="scroll"><table id="key-table"></table></div>
+          <div class="banner" id="key-secret" data-kind="warn" hidden>
+            <p><strong>Copy this key now — it is shown once and stored only as a hash.</strong></p>
+            <div class="copyable">
+              <code id="key-secret-value"></code>
+              <button class="ghost" type="button" data-copy="key-secret-value">Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- billing -->
+    <section class="view" id="view-billing" hidden>
+      <div class="panel">
+        <div class="panel-head"><h2>💳 Billing</h2></div>
+        <div class="panel-body">
+          <div class="grid" id="billing-stats"></div>
+          <div class="scroll"><table id="charge-table"></table></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  /**
+ * Formatting shared by the staff panel and the merchant dashboard.
+ *
+ * Shared rather than copied because the two show a merchant's money to two different
+ * audiences, and support reading a different figure from the merchant is a support
+ * conversation nobody can win. One tested definition, one set of rounding rules.
+ *
+ * Every function here is pure, and they are in a module rather than in the page
+ * because these are the things that quietly lie. A panel that displays a rounded
+ * token balance, or an age of "NaN", or a truncated address that matches a different
+ * address, is worse than one that displays nothing — an operator acts on what they
+ * read.
+ *
+ * Nothing here converts a token amount through `number`. An 18-decimal amount
+ * exceeds what a double holds exactly, so amounts arrive as decimal strings and are
+ * formatted by moving the decimal point in the string itself.
+ */
+class FormatError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'FormatError';
+    }
+}
+/**
+ * A smallest-unit amount as a human decimal, exactly.
+ *
+ * `formatUnits('20000000000000000000', 18)` is `'20'`, and
+ * `formatUnits('1', 18)` is `'0.000000000000000001'` rather than `'0'`. Rounding
+ * the second to zero would tell an operator that nothing arrived.
+ */
+function formatUnits(amount, decimals) {
+    if (!/^-?\d+$/.test(amount))
+        throw new FormatError(`not an integer amount: ${amount}`);
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+        throw new FormatError(`unreasonable decimals: ${decimals}`);
+    }
+    const negative = amount.startsWith('-');
+    const digits = negative ? amount.slice(1) : amount;
+    if (decimals === 0)
+        return (negative ? '-' : '') + stripLeadingZeros(digits);
+    const padded = digits.padStart(decimals + 1, '0');
+    const whole = stripLeadingZeros(padded.slice(0, padded.length - decimals));
+    const fraction = padded.slice(padded.length - decimals).replace(/0+$/, '');
+    const body = fraction.length > 0 ? `${whole}.${fraction}` : whole;
+    return (negative ? '-' : '') + body;
+}
+/**
+ * The same, with thousands separators on the whole part.
+ *
+ * Grouping only the integer side, because grouping a fraction is not a convention
+ * anyone reads and a token amount's fraction is long.
+ */
+function formatUnitsGrouped(amount, decimals) {
+    const plain = formatUnits(amount, decimals);
+    const negative = plain.startsWith('-');
+    const body = negative ? plain.slice(1) : plain;
+    const [whole, fraction] = body.split('.');
+    const grouped = (whole ?? '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return (negative ? '-' : '') + (fraction === undefined ? grouped : `${grouped}.${fraction}`);
+}
+/**
+ * Micro-dollars as a dollar figure.
+ *
+ * Money the platform spends and earns is stored at 1e6 so that a cent is always
+ * exact. Displayed to four places when small, because a settlement costing
+ * $0.0141 rounds to $0.01 and the whole point of the fee engine is that the
+ * difference matters.
+ */
+function formatUsdMicros(micros) {
+    const whole = formatUnits(micros, 6);
+    const value = whole.includes('.') ? whole : `${whole}.0`;
+    const [integer, fraction = ''] = value.split('.');
+    const small = (integer === '0' || integer === '-0') && fraction.length > 2;
+    const places = small ? 4 : 2;
+    const padded = fraction.padEnd(places, '0').slice(0, places);
+    const grouped = (integer ?? '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return grouped.startsWith('-')
+        ? `-$${grouped.slice(1)}.${padded}`
+        : `$${grouped}.${padded}`;
+}
+/** Wei as gwei, which is the unit gas is actually discussed in. */
+function formatGwei(wei) {
+    const gwei = formatUnits(wei, 9);
+    // Three places is enough to distinguish 0.047 gwei from 0.05, which is the
+    // difference between a $0.014 settlement and a $0.015 one.
+    if (!gwei.includes('.'))
+        return `${gwei} gwei`;
+    const [whole, fraction = ''] = gwei.split('.');
+    return `${whole}.${fraction.slice(0, 3).padEnd(3, '0')} gwei`;
+}
+/**
+ * A duration as the coarsest unit that is still true.
+ *
+ * "3m" rather than "180s", but never "0m" — sub-minute reads as "just now", because
+ * a watcher polled four seconds ago is healthy and "0m" looks like a stopped clock.
+ */
+function formatDuration(ms) {
+    if (ms === null)
+        return '—';
+    if (!Number.isFinite(ms))
+        return '—';
+    if (ms < 0)
+        return 'just now';
+    const seconds = Math.floor(ms / 1000);
+    if (seconds < 45)
+        return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60)
+        return `${Math.max(1, minutes)}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24)
+        return `${hours}h ${minutes % 60}m`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ${hours % 24}h`;
+}
+/** How long ago an ISO timestamp was. Null and unparseable both read as an em dash. */
+function formatAgo(iso, now = Date.now()) {
+    if (!iso)
+        return '—';
+    const at = Date.parse(iso);
+    if (Number.isNaN(at))
+        return '—';
+    return at > now ? 'just now' : formatDuration(now - at);
+}
+/**
+ * An address shortened for a table, keeping both ends.
+ *
+ * Both ends, never one: operators compare addresses by eye, and two different
+ * addresses sharing a prefix are common enough — vanity addresses, and every
+ * contract deployed by the same factory — that a leading fragment alone can match
+ * the wrong thing.
+ */
+function shortenAddress(address, lead = 6, tail = 4) {
+    if (address.length <= lead + tail + 1)
+        return address;
+    return `${address.slice(0, lead)}…${address.slice(-tail)}`;
+}
+/** A transaction hash, shortened harder — nobody reads the middle of one. */
+function shortenHash(hash) {
+    return shortenAddress(hash, 10, 6);
+}
+/**
+ * Turn a dotted action name into something readable, without losing the original.
+ *
+ * `payout_address.change_requested` becomes `payout address · change requested`. The
+ * dot is kept as a separator because the prefix is what the audit filter searches
+ * on, and hiding the structure would hide how to search.
+ */
+function humanizeAction(action) {
+    return action
+        .split('.')
+        .map((part) => part.replace(/_/g, ' '))
+        .join(' · ');
+}
+function stripLeadingZeros(digits) {
+    const trimmed = digits.replace(/^0+/, '');
+    return trimmed.length > 0 ? trimmed : '0';
+}
+
+/**
+ * The merchant dashboard's own decisions, as pure functions.
+ *
+ * Everything here answers a question the page has to get right and that a reader cannot
+ * check by looking: whether a merchant is ready to take a live payment, what an invoice
+ * status means for them, how far through the free allowance they are. Rendering can be
+ * eyeballed; these cannot, so they live in a module with tests.
+ */
+function statusView(status) {
+    switch (status) {
+        case 'paid':
+            return {
+                label: 'Paid',
+                tone: 'good',
+                needsAttention: false,
+                hint: 'Settled to your wallet, or queued to be.',
+            };
+        case 'confirming':
+            return {
+                label: 'Confirming',
+                tone: 'wait',
+                needsAttention: false,
+                hint: 'The transfer has been seen and is waiting for confirmations.',
+            };
+        case 'pending':
+            return {
+                label: 'Awaiting payment',
+                tone: 'wait',
+                needsAttention: false,
+                hint: 'Nothing received yet.',
+            };
+        case 'underpaid':
+            return {
+                label: 'Underpaid',
+                tone: 'warn',
+                needsAttention: true,
+                hint: 'Real money arrived but less than the invoice. The payer can send the difference to the same address.',
+            };
+        case 'overpaid':
+            return {
+                label: 'Overpaid',
+                tone: 'warn',
+                needsAttention: true,
+                hint: 'More arrived than was due. You owe the payer the difference.',
+            };
+        case 'expired':
+            return {
+                label: 'Expired',
+                tone: 'dead',
+                needsAttention: false,
+                hint: 'The window closed. If money arrived late it will still be credited.',
+            };
+        default:
+            /**
+             * An unknown status is shown as itself, not mapped onto a guess.
+             *
+             * A future state rendered as "Paid" because it was the closest match is the kind of
+             * mistake that gets goods shipped. Showing the raw value is honest and obviously
+             * unfinished.
+             */
+            return {
+                label: status || 'Unknown',
+                tone: 'bad',
+                needsAttention: true,
+                hint: 'This dashboard does not recognise that status. Check the API reference.',
+            };
+    }
+}
+/**
+ * What is still missing, in the order it blocks things.
+ *
+ * A checklist rather than a single "ready" flag, because each of these fails differently
+ * and a merchant needs to know which one. The ordering is the order the API refuses in:
+ * no enabled asset means nothing to invoice, no payout address means nowhere to settle,
+ * and no webhook means payments arrive that nobody is told about.
+ */
+function setupSteps(input) {
+    /**
+     * Every chain with an enabled asset must have a payout address.
+     *
+     * Not "at least one payout address": a merchant who enabled USDT on BSC and TON, and
+     * added a BSC address only, has a half-configured account whose TON invoices are all
+     * refused. Checking the intersection is what catches that.
+     */
+    const covered = new Set(input.payoutChains);
+    const uncovered = input.assetChains.filter((chain) => !covered.has(chain));
+    return [
+        {
+            id: 'assets',
+            title: 'Enable a currency',
+            done: input.approvedEnabledAssets > 0,
+            why: input.enabledAssets > 0 && input.approvedEnabledAssets === 0
+                ? 'The currencies you enabled are still in review, so they cannot be invoiced in yet.'
+                : 'Choose which coins you accept. Nothing can be invoiced until at least one is enabled and approved.',
+        },
+        {
+            id: 'payouts',
+            title: 'Add a payout address for every chain',
+            done: input.assetChains.length > 0 && uncovered.length === 0,
+            why: uncovered.length > 0
+                ? `Invoices on ${uncovered.join(', ')} will be refused: funds can only move to an address you configured.`
+                : 'Funds go straight from the payer to your own wallet, so we need one address per chain.',
+        },
+        {
+            id: 'webhook',
+            title: 'Add a webhook endpoint',
+            done: input.webhookEndpoints > 0,
+            why: 'Without one, payments arrive and nothing tells your system. Polling works, but a payer who has paid and sees nothing will contact you.',
+        },
+        {
+            id: 'live-key',
+            title: 'Create a live API key',
+            done: input.liveKeys > 0,
+            why: 'Test keys cannot take real money, by design. You need a live key to go live.',
+        },
+    ];
+}
+function freeTierView(input) {
+    const processed = toBigInt(input.processedUsdMicros);
+    const threshold = toBigInt(input.thresholdUsdMicros);
+    const remaining = toBigInt(input.remainingUsdMicros);
+    /**
+     * Clamped at 100, and zero when the threshold is zero.
+     *
+     * A bar wider than its track is a visual bug, but the reason to clamp here rather than
+     * in CSS is that the number is also read aloud by a screen reader — "142 per cent of
+     * your free allowance" is not a sentence that helps anyone.
+     */
+    const percent = threshold === 0n ? 0 : Math.min(100, Number((processed * 100n) / threshold));
+    return {
+        processedUsd: usd(processed),
+        thresholdUsd: usd(threshold),
+        remainingUsd: usd(remaining),
+        percent,
+        willBeFree: input.willBeFree,
+        message: input.willBeFree
+            ? `${usd(remaining)} of free volume left this period.`
+            : `Over the free allowance, so this period costs ${usd(toBigInt(input.monthlyPriceUsdMicros))}.`,
+    };
+}
+/**
+ * A commission in basis points, as the money it actually costs.
+ *
+ * Basis points are the unit the ladder is written in; dollars per thousand is the unit a
+ * merchant thinks in. Showing only the first makes them do arithmetic to find out what
+ * they are paying.
+ */
+function commissionParts(feeBps) {
+    const percent = feeBps / 100;
+    const perThousand = (1000 * feeBps) / 10_000;
+    return {
+        percent: `${trimZeros(percent.toFixed(2))}%`,
+        perThousand: `$${trimZeros(perThousand.toFixed(2))} per $1,000`,
+    };
+}
+/**
+ * Both halves in one line, for somewhere with room.
+ *
+ * The overview uses the parts instead: at headline size the joined string wraps onto two
+ * lines and shouts louder than the figure beside it, which is the merchant's own volume.
+ * The percentage is the headline and the money is the explanation, not the reverse.
+ */
+function commissionLabel(feeBps) {
+    const parts = commissionParts(feeBps);
+    return `${parts.percent} — ${parts.perThousand}`;
+}
+/**
+ * Whether an API key should be treated as dangerous to display.
+ *
+ * A live key is the one that moves real money, so the page marks it differently. Read
+ * from the prefix rather than from a field, because the prefix is what the API enforces.
+ */
+function keyMode(displayPrefix) {
+    if (displayPrefix.startsWith('ak_test_'))
+        return 'test';
+    if (displayPrefix.startsWith('ak_live_'))
+        return 'live';
+    return 'unknown';
+}
+function toBigInt(value) {
+    const text = (value ?? '').trim();
+    if (!/^-?\d+$/.test(text))
+        return 0n;
+    return BigInt(text);
+}
+/** Micro-dollars as a currency string, without going through a float. */
+function usd(micros) {
+    const negative = micros < 0n;
+    const absolute = negative ? -micros : micros;
+    const whole = absolute / 1000000n;
+    const cents = (absolute % 1000000n) / 10000n;
+    const grouped = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return `${negative ? '-' : ''}$${grouped}.${cents.toString().padStart(2, '0')}`;
+}
+function trimZeros(value) {
+    return value.replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
+}
+
+  const el = (id) => document.getElementById(id);
+
+  /**
+   * Build an element from children, filtering out the falsy ones.
+   *
+   * `replaceChildren` stringifies whatever it is given, so a `null` from a conditional
+   * branch renders as the literal text "null" — which shipped in the staff panel once.
+   * Filtering here is what stops it, and it is why nothing in this file assigns
+   * `innerHTML` from data.
+   */
+  function h(tag, attrs, children) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs || {})) {
+      if (value === null || value === undefined || value === false) continue;
+      if (key === 'class') node.className = String(value);
+      else if (key === 'text') node.textContent = String(value);
+      else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+      else node.setAttribute(key, String(value));
+    }
+    for (const child of (children || []).flat()) {
+      if (child === null || child === undefined || child === false) continue;
+      node.append(child);
+    }
+    return node;
+  }
+
+  const text = (value) => document.createTextNode(String(value));
+
+  function fill(container, children) {
+    container.replaceChildren(
+      ...children.flat().filter((child) => child !== null && child !== undefined && child !== false),
+    );
+  }
+
+  // ── transport ─────────────────────────────────────────────────────────────
+
+  /**
+   * The session token lives in a closure, never in `localStorage`.
+   *
+   * An XSS on this origin can read storage; a token held here at least dies with the
+   * tab. It is the cheapest meaningful mitigation available to a page like this.
+   */
+  let token = null;
+  let orgId = null;
+  let orgName = '';
+
+  const API = (document.querySelector('meta[name="avex-api"]')?.content ?? '').replace(/\/$/, '');
+
+  class ApiError extends Error {
+    constructor(status, code, message) {
+      super(message);
+      this.status = status;
+      this.code = code;
+    }
+  }
+
+  async function api(path, options) {
+    const response = await fetch(API + path, {
+      ...options,
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: 'Bearer ' + token } : {}),
+        ...(options?.headers ?? {}),
+      },
+      credentials: 'omit',
+      cache: 'no-store',
+    });
+
+    if (response.status === 204) return null;
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new ApiError(response.status, body.error ?? String(response.status), body.message ?? 'Request failed.');
+    }
+    return body;
+  }
+
+  function flash(message, kind) {
+    const banner = el('flash');
+    banner.textContent = message;
+    banner.dataset.kind = kind || 'ok';
+    banner.hidden = false;
+    // Errors stay until the next action; confirmations fade, because a success message
+    // that lingers gets read as applying to whatever the merchant does next.
+    if (kind !== 'error') {
+      window.setTimeout(() => { banner.hidden = true; }, 6000);
+    }
+  }
+
+  // ── sign in ───────────────────────────────────────────────────────────────
+
+  el('auth-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = el('auth-submit');
+    const error = el('auth-error');
+    error.hidden = true;
+    button.disabled = true;
+
+    try {
+      const code = el('auth-code').value.trim();
+      const outcome = code
+        ? await api('/v1/auth/mfa', {
+            method: 'POST',
+            body: JSON.stringify({ email: el('auth-email').value.trim(), password: el('auth-password').value, code }),
+          })
+        : await api('/v1/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ email: el('auth-email').value.trim(), password: el('auth-password').value }),
+          });
+
+      /**
+       * A password alone may not be enough, and the response says so rather than
+       * returning a session.
+       *
+       * Revealing the second step only after the password is right would leak which
+       * accounts exist; the API does not do that, so neither does this — the field
+       * appears whenever a session was not returned.
+       */
+      if (!outcome || !outcome.token) {
+        el('auth-mfa-row').hidden = false;
+        el('auth-code').focus();
+        error.textContent = 'Enter the code from your authenticator app.';
+        error.dataset.kind = 'warn';
+        error.hidden = false;
+        return;
+      }
+
+      token = outcome.token;
+      await start();
+    } catch (problem) {
+      error.textContent = problem.message || 'Could not sign in.';
+      error.dataset.kind = 'error';
+      error.hidden = false;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  el('sign-out').addEventListener('click', async () => {
+    try {
+      await api('/v1/auth/logout', { method: 'POST' });
+    } catch {
+      // A failed sign-out must still clear the token locally: leaving it in memory
+      // because the server did not answer is the wrong direction to fail in.
+    }
+    token = null;
+    orgId = null;
+    el('app').hidden = true;
+    el('whoami').hidden = true;
+    el('auth-panel').hidden = false;
+  });
+
+  // ── tabs ──────────────────────────────────────────────────────────────────
+
+  const VIEWS = [
+    ['overview', 'Overview'],
+    ['new', 'Take a payment'],
+    ['invoices', 'Invoices'],
+    ['assets', 'Currencies'],
+    ['payouts', 'Payouts'],
+    ['webhooks', 'Webhooks'],
+    ['keys', 'API keys'],
+    ['billing', 'Billing'],
+  ];
+
+  let current = 'overview';
+
+  function renderTabs() {
+    fill(
+      el('tabs'),
+      VIEWS.map(([id, label]) =>
+        h('button', {
+          type: 'button',
+          text: label,
+          'aria-current': id === current ? 'page' : null,
+          onclick: () => show(id),
+        }),
+      ),
+    );
+  }
+
+  function show(id) {
+    current = id;
+    for (const [viewId] of VIEWS) el('view-' + viewId).hidden = viewId !== id;
+    renderTabs();
+    void refresh(id);
+  }
+
+  // ── overview ──────────────────────────────────────────────────────────────
+
+  let cache = {};
+
+  function renderOverview() {
+    const subscription = cache.subscription;
+    const report = cache.report;
+    if (!subscription || !report) return;
+
+    const free = freeTierView({
+      processedUsdMicros: subscription.freeTier.processedUsdMicros,
+      thresholdUsdMicros: subscription.freeTier.thresholdUsdMicros,
+      remainingUsdMicros: subscription.freeTier.remainingUsdMicros,
+      willBeFree: subscription.freeTier.willBeFree,
+      monthlyPriceUsdMicros: subscription.subscription.priceUsdMicros,
+    });
+
+    const byStatus = report.invoicesByStatus || {};
+    const attention = (byStatus.underpaid || 0) + (byStatus.overpaid || 0);
+
+    fill(el('overview-stats'), [
+      stat('Processed this period', free.processedUsd, 'of ' + free.thresholdUsd + ' free', true),
+      // The percentage as the headline and the money underneath: joined at headline size
+      // it wraps and shouts louder than the merchant's own volume beside it.
+      stat(
+        'Commission',
+        commissionParts(subscription.commission.feeBps).percent,
+        commissionParts(subscription.commission.feeBps).perThousand,
+      ),
+      stat('Paid invoices', String(byStatus.paid || 0), 'lifetime'),
+      stat('Needs a look', String(attention), attention > 0 ? 'under- or overpaid' : 'nothing outstanding'),
+    ]);
+
+    const bar = el('free-bar');
+    bar.style.width = free.percent + '%';
+    bar.dataset.over = String(!free.willBeFree);
+    el('free-note').textContent = free.message;
+    el('period-note').textContent = subscription.subscription.currentPeriodEnd
+      ? 'Period ends ' + new Date(subscription.subscription.currentPeriodEnd).toLocaleDateString()
+      : '';
+
+    renderChecklist();
+    renderAttention();
+  }
+
+  function stat(label, value, sub, lime) {
+    return h('div', { class: 'stat' }, [
+      h('div', { class: 'stat-label', text: label }),
+      h('div', { class: 'stat-value' + (lime ? ' lime' : ''), text: value }),
+      sub ? h('div', { class: 'stat-sub', text: sub }) : null,
+    ]);
+  }
+
+  function renderChecklist() {
+    const assets = cache.assets || [];
+    const payouts = cache.payouts || [];
+    const endpoints = cache.endpoints || [];
+    const keys = cache.keys || [];
+
+    const enabled = assets.filter((asset) => asset.enabled);
+    const approved = enabled.filter((asset) => asset.verdict === 'approved');
+
+    const steps = setupSteps({
+      enabledAssets: enabled.length,
+      approvedEnabledAssets: approved.length,
+      assetChains: [...new Set(approved.map((asset) => asset.chain))],
+      payoutChains: [...new Set(payouts.filter((row) => !row.supersededAt).map((row) => row.chain))],
+      webhookEndpoints: endpoints.length,
+      liveKeys: keys.filter((key) => keyMode(key.displayPrefix) === 'live').length,
+    });
+
+    // Hidden once everything is done: a checklist of ticks is furniture, and this panel
+    // is the first thing on the page.
+    el('setup-panel').hidden = steps.every((step) => step.done);
+
+    fill(
+      el('checklist'),
+      steps.map((step) =>
+        h('li', { class: 'check', 'data-done': String(step.done) }, [
+          h('span', { class: 'check-mark', text: step.done ? '✓' : '·' }),
+          h('div', {}, [
+            h('div', { class: 'check-title', text: step.title }),
+            h('div', { class: 'check-why', text: step.why }),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  function renderAttention() {
+    const rows = (cache.invoices || []).filter((invoice) => statusView(invoice.status).needsAttention);
+    el('attention-note').textContent = rows.length === 0 ? 'Nothing outstanding.' : rows.length + ' invoice(s)';
+
+    if (rows.length === 0) {
+      fill(el('attention-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'Nothing needs your attention.' })])])]);
+      return;
+    }
+    fill(el('attention-table'), [
+      h('thead', {}, [h('tr', {}, ['Reference', 'Status', 'Received', 'Due', 'What to do'].map((label) => h('th', { text: label })))]),
+      h('tbody', {}, rows.map(invoiceRow)),
+    ]);
+  }
+
+  // ── invoices ──────────────────────────────────────────────────────────────
+
+  function invoiceRow(invoice) {
+    const view = statusView(invoice.status);
+    return h('tr', { 'data-attention': String(view.needsAttention) }, [
+      h('td', { class: 'mono', text: invoice.reference || '—' }),
+      h('td', {}, [h('span', { class: 'pill', 'data-tone': view.tone, text: view.label })]),
+      h('td', { class: 'mono right', text: formatUnits(invoice.amountPaid, invoice.assetDecimals ?? 0) }),
+      h('td', { class: 'mono right', text: formatUnits(invoice.amountDue, invoice.assetDecimals ?? 0) + ' ' + (invoice.assetSymbol || '') }),
+      h('td', { text: view.hint }),
+    ]);
+  }
+
+  function renderInvoices() {
+    const rows = cache.invoices || [];
+    el('invoice-count').textContent = rows.length + ' shown';
+    if (rows.length === 0) {
+      fill(el('invoice-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No invoices yet.' })])])]);
+      return;
+    }
+    fill(el('invoice-table'), [
+      h('thead', {}, [h('tr', {}, ['Reference', 'Status', 'Received', 'Due', 'Chain', 'Created'].map((label) => h('th', { text: label })))]),
+      h('tbody', {}, rows.map((invoice) => {
+        const view = statusView(invoice.status);
+        return h('tr', { 'data-attention': String(view.needsAttention) }, [
+          h('td', { class: 'mono', text: invoice.reference || '—' }),
+          h('td', {}, [h('span', { class: 'pill', 'data-tone': view.tone, text: view.label })]),
+          h('td', { class: 'mono right', text: formatUnits(invoice.amountPaid, invoice.assetDecimals ?? 0) }),
+          h('td', { class: 'mono right', text: formatUnits(invoice.amountDue, invoice.assetDecimals ?? 0) + ' ' + (invoice.assetSymbol || '') }),
+          h('td', { class: 'mono', text: invoice.chain }),
+          h('td', { text: formatAgo(invoice.createdAt) }),
+        ]);
+      })),
+    ]);
+  }
+
+  el('invoice-filters').addEventListener('submit', (event) => {
+    event.preventDefault();
+    void loadInvoices();
+  });
+
+  async function loadInvoices() {
+    const params = new URLSearchParams({ limit: '50' });
+    const status = el('filter-status').value;
+    const reference = el('filter-reference').value.trim();
+    if (status) params.set('status', status);
+    if (reference) params.set('reference', reference);
+
+    const body = await api('/v1/organizations/' + orgId + '/invoices?' + params.toString());
+    cache.invoices = body.invoices || [];
+    renderInvoices();
+    renderAttention();
+  }
+
+  // ── take a payment ────────────────────────────────────────────────────────
+
+  el('new-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = el('new-submit');
+    button.disabled = true;
+    el('new-result').hidden = true;
+
+    try {
+      const amount = el('new-amount').value.trim();
+      const body = await api('/v1/organizations/' + orgId + '/checkouts', {
+        method: 'POST',
+        body: JSON.stringify({
+          // Micro-dollars from the string, never through a float: 19.99 has no exact
+          // binary representation and a store at that price would be a cent out.
+          amountFiatMicros: toMicros(amount),
+          reference: el('new-reference').value.trim() || undefined,
+          description: el('new-description').value.trim() || undefined,
+        }),
+      });
+
+      el('new-link').textContent = body.url;
+      el('new-result').hidden = false;
+      flash('Payment link created. Send it to your customer.', 'ok');
+    } catch (problem) {
+      flash(problem.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  /** A decimal string as micro-dollars, digit by digit. */
+  function toMicros(amount) {
+    const parts = String(amount).trim().split('.');
+    const whole = (parts[0] || '0').replace(/\D/g, '') || '0';
+    const fraction = (parts[1] || '').replace(/\D/g, '').padEnd(6, '0').slice(0, 6);
+    const digits = (whole + fraction).replace(/^0+(?=\d)/, '');
+    return digits === '' ? '0' : digits;
+  }
+
+  // ── currencies ────────────────────────────────────────────────────────────
+
+  function renderAssets() {
+    const rows = cache.assets || [];
+    const payoutChains = new Set((cache.payouts || []).filter((row) => !row.supersededAt).map((row) => row.chain));
+
+    if (rows.length === 0) {
+      fill(el('asset-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No currencies available yet.' })])])]);
+      return;
+    }
+
+    fill(el('asset-table'), [
+      h('thead', {}, [h('tr', {}, ['Currency', 'Chain', 'Review', 'Enabled', 'Pricing', 'Payout address'].map((label) => h('th', { text: label })))]),
+      h('tbody', {}, rows.map((asset) => {
+        const tone = asset.verdict === 'approved' ? 'good' : asset.verdict === 'blocked' ? 'bad' : 'wait';
+        const hasPayout = payoutChains.has(asset.chain);
+        return h('tr', {}, [
+          h('td', { class: 'mono', text: asset.symbol }),
+          h('td', { class: 'mono', text: asset.chain }),
+          h('td', {}, [h('span', { class: 'pill', 'data-tone': tone, text: asset.verdict })]),
+          h('td', {}, [h('span', { class: 'pill', 'data-tone': asset.enabled ? 'good' : 'dead', text: asset.enabled ? 'on' : 'off' })]),
+          h('td', { text: asset.pricingMode || '—' }),
+          // Stated per currency rather than only in the checklist: this is the table a
+          // merchant looks at when an invoice was refused.
+          h('td', {}, [
+            h('span', { class: 'pill', 'data-tone': hasPayout ? 'good' : 'warn', text: hasPayout ? 'set' : 'missing' }),
+          ]),
+        ]);
+      })),
+    ]);
+  }
+
+  // ── payouts ───────────────────────────────────────────────────────────────
+
+  function renderPayouts() {
+    const rows = cache.payouts || [];
+    const chains = [...new Set((cache.assets || []).map((asset) => asset.chain))].sort();
+    fill(el('payout-chain'), chains.map((chain) => h('option', { value: chain, text: chain })));
+
+    if (rows.length === 0) {
+      fill(el('payout-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No payout addresses yet. Add one per chain you accept.' })])])]);
+      return;
+    }
+
+    fill(el('payout-table'), [
+      h('thead', {}, [h('tr', {}, ['Chain', 'Address', 'Active since', 'State'].map((label) => h('th', { text: label })))]),
+      h('tbody', {}, rows.map((row) =>
+        h('tr', {}, [
+          h('td', { class: 'mono', text: row.chain }),
+          h('td', { class: 'mono', title: row.address, text: shortenAddress(row.address) }),
+          h('td', { text: formatAgo(row.activeFrom) }),
+          h('td', {}, [
+            h('span', {
+              class: 'pill',
+              'data-tone': row.supersededAt ? 'dead' : 'good',
+              text: row.supersededAt ? 'replaced' : 'active',
+            }),
+          ]),
+        ]),
+      )),
+    ]);
+  }
+
+  el('payout-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      await api('/v1/organizations/' + orgId + '/payout-addresses', {
+        method: 'POST',
+        body: JSON.stringify({ chain: el('payout-chain').value, address: el('payout-address').value.trim() }),
+      });
+      el('payout-address').value = '';
+      flash('Change requested. Check your email — it takes effect after a delay.', 'warn');
+      await refresh('payouts');
+    } catch (problem) {
+      flash(problem.message, 'error');
+    }
+  });
+
+  // ── webhooks ──────────────────────────────────────────────────────────────
+
+  function renderWebhooks() {
+    const endpoints = cache.endpoints || [];
+    if (endpoints.length === 0) {
+      fill(el('endpoint-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No endpoints. Payments will arrive with nothing telling your system.' })])])]);
+    } else {
+      fill(el('endpoint-table'), [
+        h('thead', {}, [h('tr', {}, ['URL', 'Events', 'State', 'Pending', 'Failed', ''].map((label) => h('th', { text: label })))]),
+        h('tbody', {}, endpoints.map((endpoint) =>
+          h('tr', {}, [
+            h('td', { class: 'mono', text: endpoint.url }),
+            h('td', { text: (endpoint.events || []).join(', ') }),
+            h('td', {}, [h('span', { class: 'pill', 'data-tone': endpoint.enabled ? 'good' : 'dead', text: endpoint.enabled ? 'on' : 'off' })]),
+            h('td', { class: 'mono right', text: String(endpoint.pending ?? 0) }),
+            h('td', { class: 'mono right', text: String(endpoint.failed ?? 0) }),
+            h('td', {}, [
+              h('button', {
+                class: 'ghost',
+                type: 'button',
+                text: endpoint.enabled ? 'Disable' : 'Enable',
+                onclick: async () => {
+                  try {
+                    await api('/v1/organizations/' + orgId + '/webhook-endpoints/' + endpoint.id + '/' + (endpoint.enabled ? 'disable' : 'enable'), { method: 'POST' });
+                    await refresh('webhooks');
+                  } catch (problem) {
+                    flash(problem.message, 'error');
+                  }
+                },
+              }),
+            ]),
+          ]),
+        )),
+      ]);
+    }
+
+    const deliveries = cache.deliveries || [];
+    if (deliveries.length === 0) {
+      fill(el('delivery-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No deliveries yet.' })])])]);
+      return;
+    }
+    fill(el('delivery-table'), [
+      h('thead', {}, [h('tr', {}, ['Event', 'State', 'Attempts', 'Last error', 'When', ''].map((label) => h('th', { text: label })))]),
+      h('tbody', {}, deliveries.map((delivery) =>
+        h('tr', {}, [
+          h('td', { class: 'mono', text: delivery.event }),
+          h('td', {}, [
+            h('span', {
+              class: 'pill',
+              'data-tone': delivery.status === 'delivered' ? 'good' : delivery.status === 'pending' ? 'wait' : 'bad',
+              text: delivery.status,
+            }),
+          ]),
+          h('td', { class: 'mono right', text: String(delivery.attempts ?? 0) }),
+          // The error a merchant needs to see, rather than a generic failure.
+          h('td', { text: delivery.lastError || '—' }),
+          h('td', { text: formatAgo(delivery.createdAt) }),
+          h('td', {}, [
+            h('button', {
+              class: 'ghost',
+              type: 'button',
+              text: 'Replay',
+              onclick: async () => {
+                try {
+                  await api('/v1/organizations/' + orgId + '/webhook-deliveries/' + delivery.id + '/replay', { method: 'POST' });
+                  flash('Queued for another attempt.', 'ok');
+                  await refresh('webhooks');
+                } catch (problem) {
+                  flash(problem.message, 'error');
+                }
+              },
+            }),
+          ]),
+        ]),
+      )),
+    ]);
+  }
+
+  el('endpoint-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      const body = await api('/v1/organizations/' + orgId + '/webhook-endpoints', {
+        method: 'POST',
+        body: JSON.stringify({
+          url: el('endpoint-url').value.trim(),
+          // Everything, because an endpoint subscribed to nothing receives nothing and
+          // looks exactly like a broken integration.
+          events: ['*'],
+        }),
+      });
+      el('endpoint-url').value = '';
+      el('endpoint-secret-value').textContent = body.secret;
+      el('endpoint-secret').hidden = false;
+      await refresh('webhooks');
+    } catch (problem) {
+      flash(problem.message, 'error');
+    }
+  });
+
+  // ── keys ──────────────────────────────────────────────────────────────────
+
+  function renderKeys() {
+    const keys = cache.keys || [];
+    const rows = keys.length === 0
+      ? [h('tr', {}, [h('td', { class: 'empty', text: 'No keys yet.' })])]
+      : keys.map((key) => {
+          const mode = keyMode(key.displayPrefix);
+          return h('tr', {}, [
+            h('td', { text: key.name }),
+            h('td', { class: 'mono', text: key.displayPrefix + '…' }),
+            h('td', {}, [h('span', { class: 'pill', 'data-mode': mode, text: mode })]),
+            h('td', { text: (key.scopes || []).join(', ') }),
+            h('td', { text: key.revokedAt ? 'revoked ' + formatAgo(key.revokedAt) : formatAgo(key.createdAt) }),
+            h('td', {}, [
+              key.revokedAt
+                ? null
+                : h('button', {
+                    class: 'ghost danger',
+                    type: 'button',
+                    text: 'Revoke',
+                    onclick: async () => {
+                      try {
+                        await api('/v1/organizations/' + orgId + '/api-keys/' + key.id, { method: 'DELETE' });
+                        flash('Key revoked.', 'ok');
+                        await refresh('keys');
+                      } catch (problem) {
+                        flash(problem.message, 'error');
+                      }
+                    },
+                  }),
+            ]),
+          ]);
+        });
+
+    fill(el('key-table'), [
+      h('thead', {}, [h('tr', {}, ['Name', 'Prefix', 'Mode', 'Permissions', 'Created', ''].map((label) => h('th', { text: label })))]),
+      h('tbody', {}, rows),
+    ]);
+  }
+
+  // ── billing ───────────────────────────────────────────────────────────────
+
+  function renderBilling() {
+    const subscription = cache.subscription;
+    if (!subscription) return;
+
+    const commission = subscription.commission;
+    fill(el('billing-stats'), [
+      stat('Status', subscription.subscription.status, subscription.verdict.mayIssueInvoices ? 'invoices open' : 'invoices paused'),
+      stat('Monthly', formatUsdMicros(subscription.subscription.priceUsdMicros), 'free below ' + formatUsdMicros(subscription.freeTier.thresholdUsdMicros)),
+      stat('Commission', commissionLabel(commission.feeBps), commission.nextTier
+        ? 'next rung ' + commissionLabel(commission.nextTier.bps) + ' at ' + formatUsdMicros(commission.nextTier.fromUsdMicros) + '/month'
+        : 'lowest rung'),
+      stat('Owed now', formatUsdMicros(subscription.verdict.amountDueUsdMicros), subscription.subscription.graceEndsAt ? 'grace ends ' + new Date(subscription.subscription.graceEndsAt).toLocaleDateString() : 'nothing overdue'),
+    ]);
+
+    const charges = subscription.charges || [];
+    if (charges.length === 0) {
+      fill(el('charge-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No charges yet.' })])])]);
+      return;
+    }
+    fill(el('charge-table'), [
+      h('thead', {}, [h('tr', {}, ['Period', 'Amount', 'State', 'Note'].map((label) => h('th', { text: label })))]),
+      h('tbody', {}, charges.map((charge) =>
+        h('tr', {}, [
+          h('td', { text: new Date(charge.periodStart).toLocaleDateString() }),
+          h('td', { class: 'mono right', text: formatUsdMicros(charge.amountUsdMicros) }),
+          h('td', {}, [
+            h('span', {
+              class: 'pill',
+              'data-tone': charge.status === 'paid' || charge.status === 'free_tier' ? 'good' : charge.status === 'due' ? 'warn' : 'bad',
+              // `free_tier` renders as words: a merchant should not have to decode our
+              // column values to find out why a month cost nothing.
+              text: charge.status === 'free_tier' ? 'free tier' : charge.status,
+            }),
+          ]),
+          h('td', { text: charge.note || '—' }),
+        ]),
+      )),
+    ]);
+  }
+
+  // ── copy buttons ──────────────────────────────────────────────────────────
+
+  for (const button of document.querySelectorAll('[data-copy]')) {
+    button.addEventListener('click', async () => {
+      const value = el(button.dataset.copy).textContent;
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch {
+        // A denied clipboard must not look like a broken button, so fall back to
+        // selecting the text for the merchant to copy by hand.
+        const range = document.createRange();
+        range.selectNodeContents(el(button.dataset.copy));
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      const original = button.textContent;
+      button.textContent = 'Copied';
+      window.setTimeout(() => { button.textContent = original; }, 1600);
+    });
+  }
+
+  // ── loading ───────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch what a view needs, and only that.
+   *
+   * The overview needs almost everything because it summarises everything; the other
+   * views are narrow. Loading the lot on every tab would make the dashboard feel slower
+   * than the API is.
+   */
+  async function refresh(view) {
+    const base = '/v1/organizations/' + orgId;
+    try {
+      if (view === 'overview') {
+        const [subscription, report, assets, payouts, endpoints, keys, invoices] = await Promise.all([
+          api(base + '/subscription'),
+          api(base + '/reports/volume'),
+          api(base + '/assets'),
+          api(base + '/payout-addresses'),
+          api(base + '/webhook-endpoints'),
+          api(base + '/api-keys'),
+          api(base + '/invoices?limit=50'),
+        ]);
+        cache = {
+          ...cache,
+          subscription,
+          report,
+          assets: assets.assets || assets,
+          payouts: payouts.addresses || payouts.payoutAddresses || payouts,
+          endpoints: endpoints.endpoints || [],
+          keys: keys.keys || keys.apiKeys || [],
+          invoices: invoices.invoices || [],
+        };
+        renderOverview();
+      } else if (view === 'invoices') {
+        await loadInvoices();
+      } else if (view === 'assets') {
+        const [assets, payouts] = await Promise.all([api(base + '/assets'), api(base + '/payout-addresses')]);
+        cache.assets = assets.assets || assets;
+        cache.payouts = payouts.addresses || payouts.payoutAddresses || payouts;
+        renderAssets();
+      } else if (view === 'payouts') {
+        const [assets, payouts] = await Promise.all([api(base + '/assets'), api(base + '/payout-addresses')]);
+        cache.assets = assets.assets || assets;
+        cache.payouts = payouts.addresses || payouts.payoutAddresses || payouts;
+        renderPayouts();
+      } else if (view === 'webhooks') {
+        const [endpoints, deliveries] = await Promise.all([
+          api(base + '/webhook-endpoints'),
+          api(base + '/webhook-deliveries?limit=25'),
+        ]);
+        cache.endpoints = endpoints.endpoints || [];
+        cache.deliveries = deliveries.deliveries || [];
+        renderWebhooks();
+      } else if (view === 'keys') {
+        const keys = await api(base + '/api-keys');
+        cache.keys = keys.keys || keys.apiKeys || [];
+        renderKeys();
+      } else if (view === 'billing') {
+        cache.subscription = await api(base + '/subscription');
+        renderBilling();
+      }
+    } catch (problem) {
+      /**
+       * A 402 is the one refusal worth surfacing as its own message.
+       *
+       * "Your subscription is overdue" is something a merchant can act on immediately,
+       * and it explains every other thing on the page that has stopped working.
+       */
+      flash(problem.status === 402 ? problem.message : 'Could not load: ' + problem.message, 'error');
+    }
+  }
+
+  async function start() {
+    const me = await api('/v1/auth/me');
+    const organizations = await api('/v1/organizations');
+    const list = organizations.organizations || organizations.data || organizations;
+    const first = Array.isArray(list) ? list[0] : null;
+    if (!first) {
+      flash('This account belongs to no organisation yet.', 'error');
+      return;
+    }
+
+    orgId = first.id || first.organizationId;
+    orgName = first.name || '';
+    el('whoami-org').textContent = orgName;
+    el('whoami-mode').textContent = me.email || '';
+    el('whoami').hidden = false;
+    el('auth-panel').hidden = true;
+    el('app').hidden = false;
+    show('overview');
+  }
+
+  renderTabs();
+})();
+</script>

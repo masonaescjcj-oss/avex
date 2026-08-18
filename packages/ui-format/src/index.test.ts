@@ -12,7 +12,7 @@ import {
   humanizeAction,
   shortenAddress,
   shortenHash,
-} from './format.js';
+} from './index.js';
 
 test('a whole token amount loses its trailing zeros', () => {
   assert.equal(formatUnits('20000000000000000000', 18), '20');

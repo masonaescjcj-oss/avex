@@ -14,7 +14,17 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-const MODULES = ['format.js', 'permissions.js'];
+/**
+ * Sources to inline, each an absolute path from this file.
+ *
+ * Formatting now lives in a shared package, because the merchant dashboard shows the
+ * same money to a different audience and support reading a different figure from the
+ * merchant is a conversation nobody can win.
+ */
+const MODULES = [
+  join(here, '..', '..', 'packages', 'ui-format', 'dist', 'index.js'),
+  join(here, 'dist', 'permissions.js'),
+];
 const MARKER = '/* @inject:modules */';
 
 const template = readFileSync(join(here, 'public', 'admin.template.html'), 'utf8');
@@ -31,9 +41,7 @@ const strip = (source) =>
     .replace(/\/\/# sourceMappingURL=.*$/gm, '')
     .trim();
 
-const inlined = MODULES.map((name) => strip(readFileSync(join(here, 'dist', name), 'utf8'))).join(
-  '\n\n',
-);
+const inlined = MODULES.map((path) => strip(readFileSync(path, 'utf8'))).join('\n\n');
 
 /**
  * Replace with a function, never a string.

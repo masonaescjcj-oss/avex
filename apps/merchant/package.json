@@ -1,13 +1,13 @@
 {
-  "name": "@avex/admin",
+  "name": "@avex/merchant",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "AVEX staff admin panel",
+  "description": "AVEX merchant dashboard",
   "scripts": {
     "build": "tsc -b && node build-page.mjs",
     "typecheck": "tsc -b --dry",
-    "test": "npm run build && node --test \"dist/**/*.test.js\""
+    "test": "npm run build && node --test \"dist/**/*.test.js\" \"test/*.test.mjs\""
   },
   "dependencies": {
     "@avex/ui-format": "*"

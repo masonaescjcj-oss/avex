@@ -1,5 +1,9 @@
 /**
- * Formatting for the admin panel.
+ * Formatting shared by the staff panel and the merchant dashboard.
+ *
+ * Shared rather than copied because the two show a merchant's money to two different
+ * audiences, and support reading a different figure from the merchant is a support
+ * conversation nobody can win. One tested definition, one set of rounding rules.
  *
  * Every function here is pure, and they are in a module rather than in the page
  * because these are the things that quietly lie. A panel that displays a rounded
