@@ -329,6 +329,14 @@ export class AssetService {
            * looking.
            */
           listed: asset.listed,
+          /**
+           * Who stands behind the token, for the merchant deciding whether to take it.
+           *
+           * A bridged token depends on its custodian as well as on the issuer's reserves, so
+           * "USDT on BNB Chain" and "USDT on TRON" are not the same promise even though both
+           * say USDT. Null for a merchant's own submission: we have no issuer to speak for.
+           */
+          issuer: findCuratedAsset(asset.chain as ChainId, asset.contract)?.issuer ?? null,
           requiresFixedRate: asset.requiresFixedRate,
           findings: asset.findings ?? [],
           enabled: config?.enabled ?? false,
@@ -363,6 +371,14 @@ export class AssetService {
       readonly requiresFixedRate: boolean;
       readonly priced: boolean;
       readonly note: string | null;
+      /**
+       * Who stands behind the token, when we know.
+       *
+       * Null for anything not on the curated list — a merchant's own submission has no
+       * issuer we can speak for, and guessing `native` would be a claim we cannot support.
+       */
+      readonly issuer: 'native' | 'bridged' | null;
+      readonly source: { readonly url: string; readonly checkedOn: string } | null;
       readonly submittedByOrganizationId: string | null;
       readonly enabledByMerchants: number;
       readonly createdAt: string;
@@ -397,6 +413,8 @@ export class AssetService {
        */
       priced: this.pricedSymbols.includes(asset.symbol),
       note: findCuratedAsset(asset.chain as ChainId, asset.contract)?.note ?? null,
+      issuer: findCuratedAsset(asset.chain as ChainId, asset.contract)?.issuer ?? null,
+      source: findCuratedAsset(asset.chain as ChainId, asset.contract)?.source ?? null,
       submittedByOrganizationId: asset.submittedByOrganizationId,
       enabledByMerchants: byAsset.get(asset.id) ?? 0,
       createdAt: asset.createdAt.toISOString(),
@@ -415,12 +433,23 @@ export class AssetService {
   gaps(): readonly {
     readonly chain: string;
     readonly symbol: string;
+    /**
+     * `not_issued` closes the question; `unverified` is a task; null is an oversight.
+     *
+     * Three states rather than a list of names, because the panel has to render them
+     * differently. Telling an operator to add USDC on TRON — which Circle stopped issuing,
+     * and whose old contract is still findable — is worse than saying nothing.
+     */
+    readonly kind: 'not_issued' | 'unverified' | null;
     readonly reason: string | null;
+    readonly source: { readonly url: string; readonly checkedOn: string } | null;
   }[] {
     return curatedCoverage(SUPPORTED_CHAINS).map((hole) => ({
       chain: hole.chain,
       symbol: hole.symbol,
+      kind: hole.declared?.kind ?? null,
       reason: hole.declared?.reason ?? null,
+      source: hole.declared?.source ?? null,
     }));
   }
 

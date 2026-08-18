@@ -724,6 +724,46 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
+  test('a bridged token is labelled, and a native one is not', async () => {
+    /**
+     * "USDT on BNB Chain" is Binance-Peg BSC-USD: a Binance liability, not a Tether one.
+     * Perfectly usable and merchants accept it, but it depends on a custodian as well as on
+     * Tether's reserves — and the merchant deciding what to take should know which promise
+     * they are accepting.
+     *
+     * The native rows carry no badge on purpose. A badge on everything is a badge nobody
+     * reads, and it is the exception that carries the information.
+     */
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const page = await context.newPage();
+    await page.route(`${PAGE}*`, (route) =>
+      route.fulfill({ path: pageFile, contentType: 'text/html' }),
+    );
+    await page.goto(`${PAGE}?preview=1`);
+    await page
+      .waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 6000 })
+      .catch(() => {});
+
+    await page.click('nav.tabs button:has-text("Currencies")');
+    await page.waitForTimeout(250);
+
+    const badged = await page.$$eval('.asset-row', (rows) =>
+      rows
+        .filter((row) => [...row.querySelectorAll('.pill')].some((pill) => pill.textContent === 'bridged'))
+        .map((row) => row.querySelector('.asset-symbol')?.textContent + '/' + (row.dataset.state ?? '')),
+    );
+    assert.ok(badged.length >= 1, 'the Binance-Peg rows should be marked');
+
+    // And it says what it means, rather than leaving a word nobody can act on.
+    const row = await page.$('.asset-row:has(.pill:text-is("bridged"))');
+    assert.match((await row.textContent()).replace(/\s+/g, ' '), /Wrapped by a third party/);
+
+    // TRON's USDT is issued by Tether itself, so it carries no badge.
+    const total = (await page.$$('.asset-row')).length;
+    assert.ok(badged.length < total, 'native rows must not be badged too');
+    await context.close();
+  });
+
   test('preview mode refuses a change rather than pretending it worked', async () => {
     /**
      * The one place a preview has to decide what a write does. Pretending would leave

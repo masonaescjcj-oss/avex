@@ -6,7 +6,9 @@ import {
   CURATED_ASSETS,
   CURATED_GAPS,
   EXPECTED_STABLECOINS,
+  bridgedAssets,
   curatedCoverage,
+  openCuratedWork,
   curatedForChain,
   findCuratedAsset,
   isCurated,
@@ -189,15 +191,135 @@ describe('catalogue coverage', () => {
     }
   });
 
-  test('a declared gap says what would close it', () => {
+  test('a declared gap cites the issuer, with a page and a date', () => {
     /**
-     * A reason of "not yet" is a note to nobody. Each one has to name where the address is
-     * to be read from, because the failure this whole list guards against is somebody
-     * pasting one they half-remember.
+     * A reason of "not yet" is a note to nobody, and "verified by hand" is unfalsifiable a
+     * year later. A URL and a date can be re-opened; a claim that somebody once looked
+     * cannot.
      */
     for (const gap of CURATED_GAPS) {
       assert.ok(gap.reason.length > 60, `${gap.symbol} on ${gap.chain} needs a real reason`);
-      assert.match(gap.reason, /documentation/i);
+      assert.match(gap.source.url, /^https:\/\//);
+      assert.match(gap.source.checkedOn, /^\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+
+  test('an absence the issuer created is not put in front of an operator as work', () => {
+    /**
+     * The distinction this whole model exists for, and the reason it is not cosmetic.
+     *
+     * USDC on TRON is the dangerous case: it *used to* exist, so an address is findable, the
+     * contract is still on chain, and it would probe perfectly well. Telling an operator to
+     * "add the missing USDC on TRON" is how somebody ends up adding a token whose issuer has
+     * stopped minting and stopped redeeming it.
+     */
+    const work = openCuratedWork(SUPPORTED_CHAINS);
+    assert.deepEqual(
+      work.map((hole) => `${hole.symbol} on ${hole.chain}`),
+      [],
+      'every remaining hole is one the issuer never filled',
+    );
+
+    // And each is recorded as such rather than merely absent from the work list.
+    const holes = curatedCoverage(SUPPORTED_CHAINS);
+    assert.ok(holes.length > 0, 'USDC is genuinely not on every chain');
+    assert.ok(holes.every((hole) => hole.declared?.kind === 'not_issued'));
+  });
+
+  test('an unverified gap is work, and an undeclared one is too', () => {
+    /**
+     * Both branches the real data cannot reach, which is why the gap list is injectable: with
+     * production data every hole happens to be `not_issued`, and the failure mode here is
+     * silent — a hole that stopped being reported would simply never be worked on.
+     *
+     * `unverified` means it exists and nobody has checked the address. Undeclared means
+     * nobody decided at all. Both belong in front of an operator; only `not_issued` does not.
+     */
+    const unverified = openCuratedWork(['ton'], [
+      {
+        chain: 'ton',
+        symbol: 'USDC',
+        kind: 'unverified',
+        reason: 'It exists and nobody has read the address off the issuer’s own page yet.',
+        source: { url: 'https://example.test/', checkedOn: '2026-08-18' },
+      },
+    ]);
+    assert.deepEqual(
+      unverified.map((hole) => `${hole.symbol} on ${hole.chain}`),
+      ['USDC on ton'],
+    );
+
+    // No declaration at all: an oversight is not an answer, so it must still surface.
+    const undeclared = openCuratedWork(['ton'], []);
+    assert.deepEqual(
+      undeclared.map((hole) => `${hole.symbol} on ${hole.chain}`),
+      ['USDC on ton'],
+    );
+    assert.equal(undeclared[0]!.reason, null, 'and it carries no reason, because there is none');
+
+    // The closed kind is the only one filtered out.
+    const closed = openCuratedWork(['ton'], [
+      {
+        chain: 'ton',
+        symbol: 'USDC',
+        kind: 'not_issued',
+        reason: 'Circle does not issue USDC on TON, per their own multi-chain list.',
+        source: { url: 'https://example.test/', checkedOn: '2026-08-18' },
+      },
+    ]);
+    assert.deepEqual(closed, []);
+  });
+
+  test('every curated address names the page it was read from', () => {
+    /**
+     * The claim "verified against the issuer's own documentation" is worth nothing if the
+     * page is not recorded: nobody can re-check it, and after a year nobody remembers whether
+     * anybody checked at all.
+     *
+     * A block explorer is explicitly not an acceptable source. Its search ranks by activity,
+     * and a well-funded copycat outranks the real contract.
+     */
+    for (const asset of CURATED_ASSETS) {
+      assert.match(asset.source.url, /^https:\/\//, `${asset.symbol} on ${asset.chain}`);
+      assert.match(asset.source.checkedOn, /^\d{4}-\d{2}-\d{2}$/);
+      for (const explorer of ['etherscan', 'bscscan', 'polygonscan', 'tronscan', 'solscan', 'tonviewer']) {
+        assert.ok(
+          !asset.source.url.includes(explorer),
+          `${asset.symbol} on ${asset.chain} cites ${explorer}; explorers rank by activity`,
+        );
+      }
+    }
+  });
+
+  test('a token somebody other than the issuer stands behind says so', () => {
+    /**
+     * Three of our entries are bridged, and none of them is a Tether or Circle liability:
+     * Binance-Peg BSC-USD and USDC on BNB Chain, and bridged USDT on Polygon. Both issuers
+     * omit those chains from their own supported lists, which is how we know.
+     *
+     * They are perfectly usable and merchants accept them. But they fail differently — a
+     * bridged token depends on its custodian as well as on the issuer's reserves — and a
+     * merchant choosing what to accept is entitled to know which they are taking.
+     */
+    const bridged = bridgedAssets().map((asset) => `${asset.symbol} on ${asset.chain}`);
+    assert.deepEqual(bridged.sort(), ['USDC on bsc', 'USDT on bsc', 'USDT on polygon']);
+
+    for (const asset of bridgedAssets()) {
+      // The note has to say it in words too: the flag drives a badge, the note is what an
+      // operator reads when they ask why.
+      assert.match(asset.note, /Binance-Peg|Bridged|bridged/);
+    }
+  });
+
+  test('a native stablecoin is one its own issuer mints there', () => {
+    // The converse, so the flag cannot quietly become decorative: anything marked native and
+    // carrying a contract must cite the issuer's own page, not a chain's.
+    for (const asset of CURATED_ASSETS) {
+      if (asset.issuer !== 'native' || asset.kind === 'native') continue;
+      assert.ok(
+        asset.source.url.includes('tether.to') || asset.source.url.includes('circle.com'),
+        `${asset.symbol} on ${asset.chain} claims native issuance but cites ${asset.source.url}`,
+      );
     }
   });
 

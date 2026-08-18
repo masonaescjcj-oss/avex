@@ -746,6 +746,11 @@ function stripLeadingZeros(digits) {
     return trimmed.length > 0 ? trimmed : '0';
 }
 
+/** Issuer pages the addresses below were read from. */
+const TETHER = 'https://tether.to/en/supported-protocols/';
+const CIRCLE = 'https://developers.circle.com/stablecoins/usdc-contract-addresses';
+const BINANCE_PEG = 'https://www.binance.com/en/blog/ecosystem/introducing-binancepegged-tokens-421499824684903156';
+const CHECKED = '2026-08-18';
 const CURATED_ASSETS = [
     // ── BNB Smart Chain — the first chain to go live ──────────────────────────
     {
@@ -754,7 +759,9 @@ const CURATED_ASSETS = [
         decimals: 18,
         kind: 'erc20',
         contract: '0x55d398326f99059fF775485246999027B3197955',
-        note: 'Binance-Peg BSC-USD. Note 18 decimals, not the 6 used on Ethereum.',
+        note: 'Binance-Peg BSC-USD, not a Tether issuance — Tether lists no BNB Chain contract. Note 18 decimals, not the 6 used on Ethereum.',
+        issuer: 'bridged',
+        source: { url: BINANCE_PEG, checkedOn: CHECKED },
     },
     {
         symbol: 'USDC',
@@ -762,9 +769,13 @@ const CURATED_ASSETS = [
         decimals: 18,
         kind: 'erc20',
         contract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
-        note: 'Binance-Peg USD Coin, 18 decimals.',
+        note: 'Binance-Peg USD Coin, not a Circle issuance — Circle lists no BNB Chain contract. 18 decimals.',
+        issuer: 'bridged',
+        source: { url: BINANCE_PEG, checkedOn: CHECKED },
     },
-    { symbol: 'BNB', chain: 'bsc', decimals: 18, kind: 'native', note: 'Native gas asset.' },
+    { symbol: 'BNB', chain: 'bsc', decimals: 18, kind: 'native', note: 'Native gas asset.',
+        issuer: 'native',
+        source: { url: 'https://docs.bnbchain.org/', checkedOn: CHECKED } },
     // ── Ethereum ─────────────────────────────────────────────────────────────
     {
         symbol: 'USDT',
@@ -772,7 +783,9 @@ const CURATED_ASSETS = [
         decimals: 6,
         kind: 'erc20',
         contract: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-        note: 'Tether USD. Issuer can freeze balances; disclosed rather than disqualifying.',
+        note: 'Tether USD, issued by Tether. Issuer can freeze balances; disclosed rather than disqualifying.',
+        issuer: 'native',
+        source: { url: TETHER, checkedOn: CHECKED },
     },
     {
         symbol: 'USDC',
@@ -781,8 +794,12 @@ const CURATED_ASSETS = [
         kind: 'erc20',
         contract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
         note: 'Circle USD Coin. Upgradeable proxy by design.',
+        issuer: 'native',
+        source: { url: CIRCLE, checkedOn: CHECKED },
     },
-    { symbol: 'ETH', chain: 'ethereum', decimals: 18, kind: 'native', note: 'Native gas asset.' },
+    { symbol: 'ETH', chain: 'ethereum', decimals: 18, kind: 'native', note: 'Native gas asset.',
+        issuer: 'native',
+        source: { url: 'https://ethereum.org/en/developers/docs/', checkedOn: CHECKED } },
     // ── Polygon PoS ──────────────────────────────────────────────────────────
     {
         symbol: 'USDT',
@@ -790,7 +807,9 @@ const CURATED_ASSETS = [
         decimals: 6,
         kind: 'erc20',
         contract: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
-        note: 'Bridged Tether USD on Polygon PoS.',
+        note: 'Bridged Tether USD on Polygon PoS. Tether does not list Polygon among its supported chains, so this is a bridged representation rather than a Tether issuance.',
+        issuer: 'bridged',
+        source: { url: TETHER, checkedOn: CHECKED },
     },
     {
         symbol: 'USDC',
@@ -798,21 +817,31 @@ const CURATED_ASSETS = [
         decimals: 6,
         kind: 'erc20',
         contract: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
-        note: 'Native Circle USDC on Polygon, not the older bridged USDC.e.',
+        note: 'Native Circle USDC on Polygon PoS, not the older bridged USDC.e.',
+        issuer: 'native',
+        source: { url: CIRCLE, checkedOn: CHECKED },
     },
-    { symbol: 'POL', chain: 'polygon', decimals: 18, kind: 'native', note: 'Native gas asset.' },
+    { symbol: 'POL', chain: 'polygon', decimals: 18, kind: 'native', note: 'Native gas asset.',
+        issuer: 'native',
+        source: { url: 'https://docs.polygon.technology/', checkedOn: CHECKED } },
     // ── TON ──────────────────────────────────────────────────────────────────
-    { symbol: 'TON', chain: 'ton', decimals: 9, kind: 'native', note: 'Native asset.' },
+    { symbol: 'TON', chain: 'ton', decimals: 9, kind: 'native', note: 'Native asset.',
+        issuer: 'native',
+        source: { url: 'https://docs.ton.org/', checkedOn: CHECKED } },
     {
         symbol: 'USDT',
         chain: 'ton',
         decimals: 6,
         kind: 'jetton',
         contract: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
-        note: 'Tether USD jetton on TON.',
+        note: 'Tether USD jetton on TON, issued by Tether.',
+        issuer: 'native',
+        source: { url: TETHER, checkedOn: CHECKED },
     },
     // ── Solana ───────────────────────────────────────────────────────────────
-    { symbol: 'SOL', chain: 'solana', decimals: 9, kind: 'native', note: 'Native asset.' },
+    { symbol: 'SOL', chain: 'solana', decimals: 9, kind: 'native', note: 'Native asset.',
+        issuer: 'native',
+        source: { url: 'https://solana.com/docs', checkedOn: CHECKED } },
     {
         symbol: 'USDC',
         chain: 'solana',
@@ -820,6 +849,8 @@ const CURATED_ASSETS = [
         kind: 'spl',
         contract: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
         note: 'Circle USDC SPL mint.',
+        issuer: 'native',
+        source: { url: CIRCLE, checkedOn: CHECKED },
     },
     {
         symbol: 'USDT',
@@ -827,10 +858,14 @@ const CURATED_ASSETS = [
         decimals: 6,
         kind: 'spl',
         contract: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
-        note: 'Tether USD SPL mint.',
+        note: 'Tether USD SPL mint, issued by Tether.',
+        issuer: 'native',
+        source: { url: TETHER, checkedOn: CHECKED },
     },
     // ── TRON — built last, but the registry entry is settled ─────────────────
-    { symbol: 'TRX', chain: 'tron', decimals: 6, kind: 'native', note: 'Native asset.' },
+    { symbol: 'TRX', chain: 'tron', decimals: 6, kind: 'native', note: 'Native asset.',
+        issuer: 'native',
+        source: { url: 'https://developers.tron.network/', checkedOn: CHECKED } },
     {
         symbol: 'USDT',
         chain: 'tron',
@@ -838,42 +873,66 @@ const CURATED_ASSETS = [
         kind: 'trc20',
         contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
         note: 'Tether USD TRC-20, the highest-volume stablecoin contract anywhere.',
+        issuer: 'native',
+        source: { url: TETHER, checkedOn: CHECKED },
     },
 ];
 /**
- * What a complete catalogue would carry on every chain.
+ * What a complete catalogue would carry on every chain, if the issuers offered it.
  *
- * Written down so that "missing" and "deliberately absent" are different states. Without
- * it, a chain quietly lacking USDC looks identical to a chain where we decided against it,
- * and the only way to tell is for somebody to notice — usually a merchant.
+ * Written down so that "missing" and "does not exist" are different states. Without it, a
+ * chain lacking USDC looks the same whether nobody added it or the issuer never minted
+ * there — and the first is a task while the second is a fact.
  */
 const EXPECTED_STABLECOINS = ['USDT', 'USDC'];
 const CURATED_GAPS = [
     {
-        chain: 'ton',
-        symbol: 'USDC',
-        kind: 'jetton',
-        reason: 'Circle issues USDC on TON, but its jetton master address is not recorded here. ' +
-            'Add it through the admin catalogue once the address has been read off Circle’s own ' +
-            'documentation — not from memory, and not from a block explorer’s search results, ' +
-            'which rank by activity and will happily put a copycat first.',
-    },
-    {
         chain: 'tron',
         symbol: 'USDC',
-        kind: 'trc20',
-        reason: 'Circle issues USDC as a TRC-20 contract, but its address is not recorded here. ' +
-            'Same rule: verify it against Circle’s own documentation before adding it, because a ' +
-            'curated entry is approved for every merchant with no review behind it.',
+        kind: 'not_issued',
+        /**
+         * Circle wound this down deliberately, and said so.
+         *
+         * Which makes it the most dangerous kind of absence: USDC on TRON *used to* exist, so
+         * an address for it is findable, still has a contract on chain, and would probe
+         * perfectly well. Adding it would give merchants a token whose issuer has stopped
+         * minting and stopped redeeming — worth nothing that Circle will honour.
+         */
+        reason: 'Circle discontinued USDC on TRON: minting stopped in February 2024 and the ' +
+            'wind-down for transfers and redemption ran through February 2025. Contracts from ' +
+            'before then are still on chain and still findable, which is exactly why this must ' +
+            'not be added — the issuer no longer redeems them.',
+        source: {
+            url: 'https://www.circle.com/blog/circle-is-discontinuing-support-for-usdc-on-the-tron-blockchain',
+            checkedOn: CHECKED,
+        },
+    },
+    {
+        chain: 'ton',
+        symbol: 'USDC',
+        kind: 'not_issued',
+        reason: 'Circle does not issue USDC on TON. TON is absent from Circle’s own list of chains ' +
+            'carrying native USDC, so any USDC-labelled jetton there is somebody else’s bridged ' +
+            'representation rather than a Circle liability.',
+        source: { url: 'https://www.circle.com/multi-chain-usdc', checkedOn: CHECKED },
     },
 ];
 /**
- * Which of the expected stablecoins each chain is missing, and whether that is on purpose.
+ * Which of the expected stablecoins each chain is missing, and what kind of absence it is.
  *
- * Returns one row per hole. A hole with a declared gap is a decision; one without is an
- * oversight, and the test beside this refuses to let the second kind exist quietly.
+ * Returns one row per hole. A hole with no declaration is an oversight, and the test beside
+ * this refuses to let that exist quietly — but a declared `not_issued` is an answer, not a
+ * backlog item, and callers are expected to render the two differently.
  */
-function curatedCoverage(chains) {
+function curatedCoverage(chains, 
+/**
+ * Injectable so the undeclared case can be reached.
+ *
+ * With the real list every hole happens to be declared, which makes "an undeclared hole is
+ * treated as work" untestable against production data — and that is the branch whose
+ * failure is silent: an oversight would simply stop appearing.
+ */
+gaps = CURATED_GAPS) {
     const holes = [];
     for (const chain of chains) {
         const carried = new Set(CURATED_ASSETS.filter((asset) => asset.chain === chain).map((asset) => asset.symbol.toUpperCase()));
@@ -883,11 +942,32 @@ function curatedCoverage(chains) {
             holes.push({
                 chain,
                 symbol,
-                declared: CURATED_GAPS.find((gap) => gap.chain === chain && gap.symbol.toUpperCase() === symbol) ?? null,
+                declared: gaps.find((gap) => gap.chain === chain && gap.symbol.toUpperCase() === symbol) ?? null,
             });
         }
     }
     return holes;
+}
+/**
+ * Holes somebody still has to close: it exists and we have not verified the address.
+ *
+ * Separated from the full coverage list because these are the only ones worth putting in
+ * front of an operator. Telling somebody to go and add USDC on TRON — which Circle stopped
+ * issuing — is worse than saying nothing: it sends them looking for an address that is
+ * findable and wrong.
+ */
+function openCuratedWork(chains, gaps = CURATED_GAPS) {
+    return curatedCoverage(chains, gaps)
+        .filter((hole) => hole.declared === null || hole.declared.kind === 'unverified')
+        .map((hole) => ({
+        chain: hole.chain,
+        symbol: hole.symbol,
+        reason: hole.declared?.reason ?? null,
+    }));
+}
+/** Curated assets whose token somebody other than the issuer stands behind. */
+function bridgedAssets() {
+    return CURATED_ASSETS.filter((asset) => asset.issuer === 'bridged');
 }
 /** Curated entry for a chain and contract, or null. Case-insensitive. */
 function findCuratedAsset(chain, contract) {
@@ -1396,6 +1476,7 @@ function previewAssets() {
             curated: true,
             verdict: 'approved',
             listed: !closedChains.has(asset.chain),
+            issuer: asset.issuer,
             requiresFixedRate: !priced.has(asset.symbol),
             enabled: on,
             pricingMode: on ? 'fiat' : null,
@@ -1417,6 +1498,8 @@ function previewAssets() {
             curated: false,
             verdict: 'review',
             listed: true,
+            // Null, not a guess: their own token has no issuer we can speak for.
+            issuer: null,
             requiresFixedRate: true,
             enabled: false,
             pricingMode: null,
@@ -2110,8 +2193,25 @@ function matchPreview(method, url, routes = previewRoutes()) {
           h('span', { class: 'mono asset-symbol', text: asset.symbol }),
           h('span', { class: 'pill', 'data-tone': stance.tone, text: stance.label }),
           asset.curated ? null : h('span', { class: 'pill', 'data-tone': 'dead', text: 'your token' }),
+          /**
+           * Who stands behind the token, when it is not the issuer whose name is on it.
+           *
+           * "USDT on BNB Chain" is Binance-Peg BSC-USD: a Binance liability, not a Tether
+           * one. Perfectly usable, and merchants accept it — but it depends on a custodian as
+           * well as on Tether's reserves, and a merchant choosing what to take is entitled to
+           * know which promise they are accepting. `native` gets no badge: a badge on
+           * everything is a badge nobody reads.
+           */
+          asset.issuer === 'bridged'
+            ? h('span', { class: 'pill', 'data-tone': 'warn', text: 'bridged' })
+            : null,
         ]),
         h('p', { class: 'note asset-hint', text: stance.hint }),
+        asset.issuer === 'bridged'
+          ? h('p', { class: 'note asset-hint', text:
+              'Wrapped by a third party rather than issued by ' + asset.symbol + '’s own issuer ' +
+              'on this chain. It spends and settles normally; it just depends on the wrapper too.' })
+          : null,
         asset.contract
           ? h('p', { class: 'note mono asset-contract', text: asset.contract })
           : h('p', { class: 'note asset-contract', text: 'native asset' }),

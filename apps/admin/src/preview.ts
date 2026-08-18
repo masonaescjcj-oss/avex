@@ -49,6 +49,8 @@ export function previewCatalogue(): readonly unknown[] {
     requiresFixedRate: !priced.has(asset.symbol),
     priced: priced.has(asset.symbol),
     note: asset.note,
+    issuer: asset.issuer,
+    source: asset.source,
     submittedByOrganizationId: null,
     enabledByMerchants: inUse[`${asset.chain}:${asset.symbol}`] ?? 0,
     createdAt: ago(60 * 24 * 210),
@@ -70,6 +72,9 @@ export function previewCatalogue(): readonly unknown[] {
       requiresFixedRate: true,
       priced: false,
       note: null,
+      // Null, not a guess: a merchant's own submission has no issuer we can speak for.
+      issuer: null,
+      source: null,
       submittedByOrganizationId: ORG_A,
       enabledByMerchants: 0,
       createdAt: ago(60 * 26),
@@ -289,7 +294,13 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
          * reason it is shown rather than left silent.
          */
         gaps: curatedCoverage(['bsc', 'ethereum', 'polygon', 'ton', 'solana', 'tron']).map(
-          (hole) => ({ chain: hole.chain, symbol: hole.symbol, reason: hole.declared?.reason ?? null }),
+          (hole) => ({
+            chain: hole.chain,
+            symbol: hole.symbol,
+            kind: hole.declared?.kind ?? null,
+            reason: hole.declared?.reason ?? null,
+            source: hole.declared?.source ?? null,
+          }),
         ),
       }),
     ],

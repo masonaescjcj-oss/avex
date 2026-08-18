@@ -191,21 +191,53 @@ describe('staff panel', { skip: playwright ? false : 'playwright is not installe
     await context.close();
   });
 
-  test('a stablecoin the catalogue lacks is named rather than left absent', async () => {
+  test('a stablecoin the issuer never minted reads as an answer, not a task', async () => {
     /**
-     * An absence has no row to render, so it can only be shown deliberately. Without this a
-     * chain missing USDC looks exactly like a chain where we decided against it, and the
-     * only person who finds out is a merchant who cannot enable it.
+     * The most important thing on this section, and the least obvious. USDC on TRON *used to*
+     * exist — Circle stopped minting it in February 2024 — so its contract is still on chain,
+     * still findable, and would probe perfectly well. Showing it as "missing, go and add it"
+     * is how somebody ends up approving a token whose issuer no longer redeems it.
+     *
+     * So it renders as a statement with the issuer's reason, and not in the same notice as
+     * things that genuinely are outstanding work.
      */
     const { page, context } = await open();
     await section(page, 'Currencies');
 
-    const notice = await text(page, '#view .notice.warn');
-    assert.match(notice, /Not in the catalogue/);
-    assert.match(notice, /USDC on ton/);
-    assert.match(notice, /USDC on tron/);
-    // And it says what would close it, because "not yet" is a note to nobody.
-    assert.match(notice, /issuer/);
+    const notices = await page.$$eval('#view .notice', (nodes) =>
+      nodes.map((node) => node.textContent.replace(/\s+/g, ' ').trim()),
+    );
+    const closed = notices.find((notice) => /Not offered by the issuer/.test(notice));
+    assert.ok(closed, notices.join(' || '));
+    assert.match(closed, /USDC on ton/);
+    assert.match(closed, /USDC on tron/);
+    // The counter-intuitive part is spelled out rather than summarised.
+    assert.match(closed, /discontinued|does not issue/i);
+
+    // And it is not in the "worth adding" notice, because there is nothing to add.
+    assert.ok(!notices.some((notice) => /Missing and worth adding/.test(notice)));
+    await context.close();
+  });
+
+  test('the catalogue says who stands behind each token', async () => {
+    /**
+     * Three curated entries are bridged and none is a Tether or Circle liability. Both
+     * issuers omit those chains from their own supported lists, which is how we know — and a
+     * bridged token depends on its custodian as well as on the issuer's reserves.
+     */
+    const { page, context } = await open();
+    await section(page, 'Currencies');
+
+    const bridged = await page.$$eval('#view tbody tr', (rows) =>
+      rows
+        .filter((row) => [...row.querySelectorAll('.tag')].some((tag) => tag.textContent === 'bridged'))
+        .map((row) => row.querySelector('td')?.textContent?.trim().split('\n')[0]),
+    );
+    assert.ok(bridged.length >= 3, `expected the Binance-Peg rows: ${bridged.join(', ')}`);
+
+    // And the note behind the badge is available on hover rather than only in the code.
+    const title = await page.$eval('#view .tag.warn', (node) => node.getAttribute('title'));
+    assert.match(title ?? '', /Peg|Bridged|bridged/);
     await context.close();
   });
 

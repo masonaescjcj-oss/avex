@@ -1035,8 +1035,25 @@
           h('span', { class: 'mono asset-symbol', text: asset.symbol }),
           h('span', { class: 'pill', 'data-tone': stance.tone, text: stance.label }),
           asset.curated ? null : h('span', { class: 'pill', 'data-tone': 'dead', text: 'your token' }),
+          /**
+           * Who stands behind the token, when it is not the issuer whose name is on it.
+           *
+           * "USDT on BNB Chain" is Binance-Peg BSC-USD: a Binance liability, not a Tether
+           * one. Perfectly usable, and merchants accept it — but it depends on a custodian as
+           * well as on Tether's reserves, and a merchant choosing what to take is entitled to
+           * know which promise they are accepting. `native` gets no badge: a badge on
+           * everything is a badge nobody reads.
+           */
+          asset.issuer === 'bridged'
+            ? h('span', { class: 'pill', 'data-tone': 'warn', text: 'bridged' })
+            : null,
         ]),
         h('p', { class: 'note asset-hint', text: stance.hint }),
+        asset.issuer === 'bridged'
+          ? h('p', { class: 'note asset-hint', text:
+              'Wrapped by a third party rather than issued by ' + asset.symbol + '’s own issuer ' +
+              'on this chain. It spends and settles normally; it just depends on the wrapper too.' })
+          : null,
         asset.contract
           ? h('p', { class: 'note mono asset-contract', text: asset.contract })
           : h('p', { class: 'note asset-contract', text: 'native asset' }),

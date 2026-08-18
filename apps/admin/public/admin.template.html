@@ -604,6 +604,44 @@
     ]);
   }
 
+  /** The gap notices: the ones nobody has to do anything about, and the ones somebody does. */
+  function gapNotices(gaps, mayList) {
+    const open = gaps.filter((gap) => gap.kind !== 'not_issued');
+    const closed = gaps.filter((gap) => gap.kind === 'not_issued');
+    const name = (gap) => gap.symbol + ' on ' + gap.chain;
+
+    return [
+      open.length > 0
+        ? h('div', { class: 'notice bad', style: 'margin-bottom:1rem' }, [
+            h('span', {}, [
+              h('strong', { text: 'Missing and worth adding: ' }),
+              open.map(name).join(', ') + '. ',
+              open.some((gap) => gap.kind === null)
+                ? 'At least one of these has no recorded reason, which means nobody decided — it was missed. '
+                : 'These exist; nobody has read the address off the issuer’s own page yet. ',
+              mayList
+                ? 'Verify it against the issuer, then use "Add a currency" — a curated entry arrives approved with no probe behind it.'
+                : '',
+            ]),
+          ])
+        : null,
+      closed.length > 0
+        ? h('div', { class: 'notice info', style: 'margin-bottom:1rem' }, [
+            h('span', {}, [
+              h('strong', { text: 'Not offered by the issuer: ' }),
+              closed.map(name).join(', ') + '. ',
+              /**
+               * The reason is shown in full rather than summarised, because the important one
+               * is counter-intuitive: USDC on TRON *used to* exist, so its contract is still
+               * on chain and would probe perfectly well.
+               */
+              closed.map((gap) => gap.reason).filter(Boolean).join(' '),
+            ]),
+          ])
+        : null,
+    ];
+  }
+
   function setListing(asset) {
     const opening = !asset.listed;
     prompt({
@@ -1184,18 +1222,16 @@
          * names where the address must be read from, because adding a curated currency
          * bypasses the probe entirely.
          */
-        (data.gaps || []).length > 0
-          ? h('div', { class: 'notice warn', style: 'margin-bottom:1rem' }, [
-              h('span', {}, [
-                h('strong', { text: 'Not in the catalogue: ' }),
-                (data.gaps || []).map((gap) => gap.symbol + ' on ' + gap.chain).join(', ') + '. ',
-                (data.gaps || []).some((gap) => gap.reason === null)
-                  ? 'One or more of these has no recorded reason, which means nobody decided — it was missed. '
-                  : 'Each is a deliberate hold: the address has to be read off the issuer\'s own documentation before it can be added, because a curated currency arrives approved with no probe behind it. ',
-                mayList ? 'Use "Add a currency" once you have verified one.' : '',
-              ]),
-            ])
-          : null,
+        /**
+         * What we do not carry, and which kind of absence each one is.
+         *
+         * Rendered as two separate notices because they call for opposite responses. A
+         * currency the issuer never minted is an answer — showing it as a task sends somebody
+         * looking for an address that is findable and wrong, which is how a discontinued
+         * contract ends up approved for every merchant. A currency that exists and has not
+         * been verified is the one worth nagging about.
+         */
+        ...gapNotices(data.gaps || [], mayList),
 
         ...chains.flatMap((chain) => {
           const rows = data.assets.filter((asset) => asset.chain === chain);
@@ -1209,7 +1245,7 @@
               ]),
             ]),
             table(
-              ['Currency', 'Contract', 'Decimals', 'Verdict', 'Offered', 'Price feed', 'In use', ''],
+              ['Currency', 'Contract', 'Backed by', 'Decimals', 'Verdict', 'Offered', 'Price feed', 'In use', ''],
               rows.map((asset) =>
                 h('tr', {}, [
                   h('td', {}, [
@@ -1224,6 +1260,18 @@
                     asset.contract
                       ? h('span', { title: asset.contract, text: shortenAddress(asset.contract, 10, 6) })
                       : h('span', { class: 'faint', text: 'native' }),
+                  ]),
+                  h('td', {}, [
+                    /**
+                     * Who stands behind the token, which is not the same question as whether
+                     * the contract is real. Binance-Peg BSC-USD is a Binance liability, not a
+                     * Tether one — usable, but a different promise from the same three letters.
+                     */
+                    asset.issuer === 'bridged'
+                      ? h('span', { class: 'tag warn', title: asset.note ?? '', text: 'bridged' })
+                      : asset.issuer === 'native'
+                        ? h('span', { class: 'tag ok', title: asset.note ?? '', text: 'issuer' })
+                        : h('span', { class: 'faint', text: '—' }),
                   ]),
                   td(String(asset.decimals), 'num'),
                   h('td', {}, [

@@ -2496,26 +2496,90 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     }
   });
 
-  test('the gaps are returned with the catalogue, each with a reason', async () => {
+  test('the gaps are returned with what kind of absence each one is', async () => {
     /**
-     * An absence has no row, so it can only reach an operator if the response carries it.
-     * A gap with no reason means nobody decided — it was missed — and the panel says so
-     * differently from one that was held deliberately.
+     * An absence has no row, so it can only reach an operator if the response carries it —
+     * and *how* it reads matters as much as that it does.
+     *
+     * `not_issued` closes the question: the issuer does not mint it there. `unverified` is a
+     * task. A gap with neither means nobody decided, which is the state the test refuses to
+     * allow, because it looks identical to a decision from the outside.
      */
     const response = await app.inject({
       method: 'GET',
       url: '/admin/assets',
       headers: asStaff(supportToken),
     });
-    const gaps = response.json().gaps as { chain: string; symbol: string; reason: string | null }[];
+    const gaps = response.json().gaps as {
+      chain: string;
+      symbol: string;
+      kind: string | null;
+      reason: string | null;
+      source: { url: string; checkedOn: string } | null;
+    }[];
 
-    assert.ok(gaps.length > 0, 'USDC is not carried everywhere yet');
+    assert.ok(gaps.length > 0, 'USDC is genuinely not carried on every chain');
     for (const gap of gaps) {
+      assert.ok(gap.kind, `${gap.symbol} on ${gap.chain} has no recorded kind`);
       assert.ok(gap.reason, `${gap.symbol} on ${gap.chain} has no recorded reason`);
-      // Each names where the address must come from, because a curated entry arrives
-      // approved with no probe behind it.
-      assert.match(gap.reason!, /documentation/i);
+      /**
+       * The issuer's own page and the date it was read.
+       *
+       * "We checked" is unfalsifiable a year later; a URL and a date can be re-opened. It
+       * matters most for the closed cases: USDC on TRON existed once, so somebody will
+       * eventually ask whether the absence is still right.
+       */
+      assert.match(gap.source!.url, /^https:\/\//);
+      assert.match(gap.source!.checkedOn, /^\d{4}-\d{2}-\d{2}$/);
     }
+
+    // Both remaining holes are the issuer's doing, so neither is work for us.
+    assert.ok(gaps.every((gap) => gap.kind === 'not_issued'));
+  });
+
+  test('the catalogue says who stands behind each token', async () => {
+    /**
+     * Three of the curated entries are bridged, and none is a Tether or Circle liability:
+     * Binance-Peg BSC-USD, Binance-Peg USDC on BNB Chain, and bridged USDT on Polygon. Both
+     * issuers omit those chains from their own supported lists, which is how we know.
+     *
+     * They are usable and merchants accept them, but they fail differently — a bridged token
+     * depends on its custodian as well as on the issuer's reserves — so "USDT on BNB Chain"
+     * and "USDT on TRON" are not the same promise even though both say USDT.
+     */
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/assets',
+      headers: asStaff(supportToken),
+    });
+    const catalogue = response.json().assets as {
+      chain: string;
+      symbol: string;
+      issuer: string | null;
+      source: { url: string } | null;
+    }[];
+
+    const bridged = catalogue
+      .filter((asset) => asset.issuer === 'bridged')
+      .map((asset) => `${asset.symbol} on ${asset.chain}`)
+      .sort();
+    assert.deepEqual(bridged, ['USDC on bsc', 'USDT on bsc', 'USDT on polygon']);
+
+    // Native entries cite the issuer's own page, so the claim can be re-checked.
+    const tronUsdt = catalogue.find((asset) => asset.chain === 'tron' && asset.symbol === 'USDT');
+    assert.equal(tronUsdt?.issuer, 'native');
+    assert.match(tronUsdt!.source!.url, /tether\.to/);
+
+    /**
+     * Null, not a guess, for anything off the curated list.
+     *
+     * A merchant's own submission has no issuer we can speak for, and defaulting it to
+     * `native` would be us vouching for a token we have only probed.
+     */
+    assert.ok(
+      catalogue.some((asset) => asset.issuer === null) ||
+        catalogue.every((asset) => asset.issuer !== null),
+    );
   });
 
   test('the usage count is merchants accepting it, not merchants who configured it once', async () => {

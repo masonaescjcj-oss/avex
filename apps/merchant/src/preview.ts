@@ -50,6 +50,7 @@ export function previewAssets(): readonly unknown[] {
       curated: true,
       verdict: 'approved',
       listed: !closedChains.has(asset.chain),
+      issuer: asset.issuer,
       requiresFixedRate: !priced.has(asset.symbol),
       enabled: on,
       pricingMode: on ? 'fiat' : null,
@@ -72,6 +73,8 @@ export function previewAssets(): readonly unknown[] {
       curated: false,
       verdict: 'review',
       listed: true,
+      // Null, not a guess: their own token has no issuer we can speak for.
+      issuer: null,
       requiresFixedRate: true,
       enabled: false,
       pricingMode: null,
