@@ -1,7 +1,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AVEX Pay</title>
-<meta name="description" content="A non-custodial crypto payment gateway. Your customers pay you directly; the deposit address can only ever reach your wallet. 0.5% and nothing else.">
+<meta name="description" content="A non-custodial crypto payment gateway. One integration, a hosted checkout, and payments that go straight to your own wallet.">
+<!--
+  Where the dashboard lives. Set per deployment; a relative path is the safe default, so a
+  deployment that forgets to set it still lands somebody on its own origin rather than
+  nowhere.
+-->
+<meta name="avex-dashboard" content="/dashboard">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -159,6 +165,10 @@
     font-weight: 600;
   }
   .btn-lime:hover { background: #D3FA5E; border-color: #D3FA5E; text-decoration: none; }
+  .btn-sm { padding: 0.4rem 0.85rem; font-size: var(--s-2); }
+  .btn-lg { padding: 0.7rem 1.35rem; font-size: var(--s0); }
+  /* Sign in is a link beside a button, not a second button: one primary action per view. */
+  .nav-auth { color: var(--ink) !important; font-size: var(--s-1); font-weight: 500; }
 
   /* ── the spec-sheet grid ──────────────────────────────────────────────── */
 
@@ -290,6 +300,7 @@
     margin: 1.25rem 0 0;
   }
   .hero-cta { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1.75rem; }
+  .hero-hint { font-size: var(--s-1); color: var(--faint); margin: 0.85rem 0 0; }
   .hero-facts {
     display: flex;
     flex-wrap: wrap;
@@ -437,6 +448,24 @@
   }
   /* Two, not `auto-fit`: four steps in three columns leaves a lone orphan on the second row. */
   @media (min-width: 52rem) { .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+  /**
+   * The same reasoning, for a grid of four cards.
+   *
+   * `auto-fit` gives three columns in this container, so the fourth card sits alone with two
+   * empty cells beside it — which reads as a section somebody abandoned halfway. Two columns
+   * fills exactly, and the cards are wide enough for a real sentence.
+   */
+  @media (min-width: 52rem) { .cards-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+  .cards-sub {
+    font-size: var(--s-2);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-top: 2.5rem;
+    margin-bottom: 0.7rem;
+  }
   .step {
     display: grid;
     grid-template-columns: 2rem minmax(0, 1fr);
@@ -527,27 +556,6 @@
   }
   .note strong { color: var(--ink); font-weight: 500; }
 
-  .split-demo {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-    gap: 0.5rem;
-  }
-  .split-cell {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: 0.85rem 1rem;
-  }
-  .split-cell b {
-    display: block;
-    font-family: var(--mono);
-    font-size: var(--s2);
-    font-weight: 500;
-    letter-spacing: -0.02em;
-  }
-  .split-cell[data-tone="lime"] b { color: var(--lime); }
-  .split-cell span { font-size: var(--s-2); color: var(--faint); }
-
   /* ── docs ─────────────────────────────────────────────────────────────── */
 
   .doc-block > * + * { margin-top: 0.85rem; }
@@ -570,19 +578,90 @@
   }
   .route em { font-style: normal; color: var(--muted); }
 
+  /* ── the closing invitation ───────────────────────────────────────────── */
+
+  /**
+   * The one place the page asks for something, so it is the one place with no other content.
+   *
+   * Centred, which nothing else here is. The whole page reads as a left-aligned datasheet,
+   * and breaking that alignment exactly once is what makes this read as the end rather than
+   * as another section.
+   */
+  .start { background: var(--card); }
+  .start-inner {
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: var(--s6) var(--gutter);
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+  }
+  .start-inner p { margin: 0; color: var(--muted); max-width: 52ch; }
+  .start-form {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+    width: 100%;
+    margin-top: 0.5rem;
+  }
+  .start-form input {
+    flex: 1 1 16rem;
+    min-width: 0;
+    font-family: var(--sans);
+    font-size: var(--s0);
+    background: var(--void);
+    border: 1px solid var(--line-2);
+    border-radius: var(--pill);
+    color: var(--ink);
+    padding: 0.7rem 1.1rem;
+  }
+  .start-form input::placeholder { color: var(--faint); }
+  .start-note { font-size: var(--s-1); }
+
+  /* Visible to a screen reader, absent from the layout. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
   footer {
     max-width: 84rem;
     margin: 0 auto;
-    padding: var(--s5) var(--gutter);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1.25rem 2.5rem;
-    align-items: baseline;
+    padding: var(--s5) var(--gutter) var(--s5);
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 2fr);
+    gap: 2rem clamp(1.5rem, 5vw, 4rem);
     font-size: var(--s-1);
     color: var(--faint);
   }
-  footer nav { display: flex; flex-wrap: wrap; gap: 1.25rem; margin-inline-start: auto; }
-  footer a { color: var(--muted); }
+  @media (max-width: 52rem) { footer { grid-template-columns: minmax(0, 1fr); } }
+  .foot-brand p { margin: 0.3rem 0 0; color: var(--faint); }
+  .foot-cta { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 1rem; }
+  .foot-cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 1.5rem;
+  }
+  .foot-col { display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start; }
+  .foot-h {
+    font-family: var(--mono);
+    font-size: var(--s-2);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 0.15rem;
+  }
+  .foot-col a { color: var(--muted); }
 
   [hidden] { display: none !important; }
 
@@ -599,10 +678,11 @@
 <header class="bar">
   <span class="wordmark">AVEX<span>Pay</span></span>
   <nav>
+    <a href="#products" data-optional>Products</a>
     <a href="#how">How it works</a>
-    <a href="#accept" data-optional>Currencies</a>
-    <a href="#pricing">Pricing</a>
-    <a href="#docs">Docs</a>
+    <a href="#docs">Developers</a>
+    <a class="nav-auth" data-dash="in" href="/dashboard">Sign in</a>
+    <a class="btn btn-lime btn-sm" data-dash="up" href="/dashboard?signup=1">Start now</a>
   </nav>
 </header>
 
@@ -610,20 +690,24 @@
 <div class="hero">
   <div class="hero-inner">
     <div class="rise">
-      <span class="eyebrow">Non-custodial payment gateway</span>
-      <h1>Your customers pay you.<br><em>We never hold it.</em></h1>
+      <span class="eyebrow">Payments infrastructure</span>
+      <h1>Take crypto payments.<br><em>Keep custody.</em></h1>
       <p class="hero-sub">
-        Every invoice gets its own deposit address, and that address is derived from your
-        payout wallet. It can only ever pay you. Not a policy — arithmetic.
+        One integration, every network we carry, and a hosted page your customer can pay
+        from on a phone. The money goes from their transfer to your own wallet — we are never
+        holding it, and there is no step where we could.
       </p>
       <div class="hero-cta">
-        <a class="btn btn-lime" href="#docs">Read the docs</a>
-        <a class="btn" href="#how">See how it works</a>
+        <a class="btn btn-lime btn-lg" data-dash="up" href="/dashboard?signup=1">Create an account</a>
+        <a class="btn btn-lg" data-dash="in" href="/dashboard">Sign in</a>
       </div>
+      <p class="hero-hint">
+        Test mode works immediately — no faucet, no testnet, nothing to fund.
+      </p>
       <div class="hero-facts">
-        <div class="hero-fact"><b id="fact-rate">0.5%</b><span>and nothing else</span></div>
-        <div class="hero-fact"><b id="fact-chains">6</b><span>chains</span></div>
-        <div class="hero-fact"><b>0</b><span>monthly fee</span></div>
+        <div class="hero-fact"><b id="fact-chains">6</b><span>networks, one API</span></div>
+        <div class="hero-fact"><b>0</b><span>of your money we hold</span></div>
+        <div class="hero-fact"><b>~15</b><span>lines to integrate</span></div>
       </div>
     </div>
 
@@ -649,15 +733,9 @@
                value="0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52">
       </div>
 
-      <div class="field-row">
-        <div class="field">
-          <label for="d-invoice">Invoice reference</label>
-          <input id="d-invoice" class="mono" spellcheck="false" autocomplete="off" value="order-1042">
-        </div>
-        <div class="field">
-          <label for="d-fee">Commission</label>
-          <input id="d-fee" class="mono" spellcheck="false" autocomplete="off" inputmode="numeric" value="50">
-        </div>
+      <div class="field">
+        <label for="d-invoice">Invoice reference</label>
+        <input id="d-invoice" class="mono" spellcheck="false" autocomplete="off" value="order-1042">
       </div>
 
       <div class="arrow-down">keccak256</div>
@@ -690,7 +768,7 @@
       </p>
       <p>
         A deposit address is computed from three things: the invoice, your payout wallet,
-        and the commission. Nothing is deployed there — the contract that will live at that
+        and our fee. Nothing is deployed there — the contract that will live at that
         address does not exist yet, and when it is created it can do exactly one thing,
         which is pay the wallet that went into the hash. <strong>Change the wallet and you
         get a different address.</strong> We cannot point yours somewhere else without
@@ -723,14 +801,14 @@
           <span class="step-n">04</span>
           <div>
             <h3>The split happens on chain</h3>
-            <p>Your wallet gets the payment less the commission; we get the commission. Same transaction, no intermediate balance.</p>
+            <p>Your wallet gets the payment less our fee, and we get the fee. Same transaction, no intermediate balance.</p>
           </div>
         </li>
       </ol>
 
       <figure>
-        <svg viewBox="0 0 780 250" role="img"
-             aria-label="A payer sends funds to a per-invoice address derived from the merchant's wallet and the commission. One settlement transaction creates the forwarder and splits the balance: the merchant receives the payment less the commission, AVEX receives the commission. AVEX holds no balance at any point.">
+        <svg viewBox="0 0 800 250" role="img"
+             aria-label="A payer sends funds to a per-invoice address derived from the merchant's wallet and the fee. One settlement transaction creates the forwarder and splits the balance: the merchant's wallet receives the payment less the fee, AVEX receives the fee. AVEX holds no balance at any point.">
           <defs>
             <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
@@ -744,7 +822,7 @@
           <rect x="1" y="16" width="150" height="30" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.35"></rect>
           <text x="76" y="35" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">your payout wallet</text>
           <rect x="1" y="54" width="150" height="30" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.35"></rect>
-          <text x="76" y="73" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">invoice + commission</text>
+          <text x="76" y="73" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">invoice + our fee</text>
 
           <line x1="153" y1="31" x2="238" y2="52" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#ah)"></line>
           <line x1="153" y1="69" x2="238" y2="58" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#ah)"></line>
@@ -759,7 +837,7 @@
           <rect x="244" y="128" width="150" height="30" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.35"></rect>
           <text x="319" y="147" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">your customer</text>
           <line x1="319" y1="126" x2="319" y2="84" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#ah)"></line>
-          <text x="330" y="108" font-family="IBM Plex Mono, monospace" font-size="10" fill="currentColor" fill-opacity="0.75">sends 100.00</text>
+          <text x="330" y="108" font-family="IBM Plex Mono, monospace" font-size="10" fill="currentColor" fill-opacity="0.75">sends the payment</text>
 
           <!-- settlement -->
           <line x1="398" y1="56" x2="470" y2="56" stroke="#C6F73F" stroke-opacity="0.9" marker-end="url(#ah-lime)"></line>
@@ -773,18 +851,20 @@
           <line x1="636" y1="42" x2="686" y2="26" stroke="#C6F73F" stroke-opacity="0.9" marker-end="url(#ah-lime)"></line>
           <line x1="636" y1="70" x2="686" y2="86" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#ah)"></line>
 
-          <text x="692" y="24" font-family="IBM Plex Mono, monospace" font-size="11" fill="#C6F73F">you</text>
-          <text x="692" y="38" font-family="IBM Plex Mono, monospace" font-size="10" fill="#C6F73F" fill-opacity="0.8">99.50</text>
-          <text x="692" y="84" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">AVEX</text>
-          <text x="692" y="98" font-family="IBM Plex Mono, monospace" font-size="10" fill="currentColor" fill-opacity="0.75">0.50</text>
+          <text x="692" y="24" font-family="IBM Plex Mono, monospace" font-size="11" fill="#C6F73F">your wallet</text>
+          <text x="692" y="38" font-family="IBM Plex Mono, monospace" font-size="10" fill="#C6F73F" fill-opacity="0.8">the payment,</text>
+          <text x="692" y="51" font-family="IBM Plex Mono, monospace" font-size="10" fill="#C6F73F" fill-opacity="0.8">less our fee</text>
+          <text x="692" y="88" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">AVEX</text>
+          <text x="692" y="102" font-family="IBM Plex Mono, monospace" font-size="10" fill="currentColor" fill-opacity="0.75">our fee</text>
 
           <!-- what is absent -->
           <line x1="20" y1="196" x2="760" y2="196" stroke="currentColor" stroke-opacity="0.18" stroke-dasharray="3 4"></line>
           <text x="20" y="220" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" fill-opacity="0.6">Absent from this diagram: an AVEX wallet holding your money. There is no step where it does.</text>
         </svg>
         <figcaption>
-          The commission is a constructor argument, so it is part of the address too. Settling
-          with a different rate would derive an address nobody funded.
+          Our fee is a constructor argument, so it is part of the address too. Settling on
+          different terms would derive an address nobody funded — which is why the terms you
+          were quoted are the terms that settle.
         </figcaption>
       </figure>
 
@@ -798,107 +878,84 @@
   </div>
 </section>
 
-<!-- ── currencies ─────────────────────────────────────────────────────── -->
-<section id="accept">
+<!-- ── products ───────────────────────────────────────────────────────── -->
+<section id="products">
   <div class="grid">
     <div class="rail">
-      <span class="rail-eyebrow">Chains</span>
-      <div class="rail-figure" id="rail-chains">6</div>
-      <p class="rail-note">Your customer picks the coin and the network. You do not have to guess.</p>
+      <span class="rail-eyebrow">Products</span>
+      <div class="rail-figure">4</div>
+      <p class="rail-note">Ways to get paid, sharing one account and one set of keys.</p>
     </div>
     <div class="body">
-      <h2>What you can accept</h2>
+      <h2>However you sell</h2>
       <p class="lede">
-        Stablecoins and native assets on six chains, plus Telegram Stars. Send one link and
-        the payer chooses; we price every option live and refuse to quote a rate we cannot
-        corroborate.
+        A hosted page, a link you send, an invoice inside your own app, or a plugin that needs
+        no code at all. Every one of them settles the same way and reports through the same
+        webhook, so adding a second is configuration rather than a second integration.
       </p>
 
-      <div class="scroll">
-        <table id="chain-table">
-          <thead>
-            <tr>
-              <th>Network</th>
-              <th>Stablecoins</th>
-              <th>Native</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+      <div class="cards cards-pair">
+        <div class="card">
+          <h3>Hosted checkout</h3>
+          <p>
+            Send your customer a link. They choose the currency and the network there, see a
+            QR and an address, and watch it confirm. Nothing to build and nothing to host.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Payment links</h3>
+          <p>
+            Type an amount in the dashboard and get a link. For a seller with no site, no
+            developer and one customer waiting — it works from a phone.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Your own payment page</h3>
+          <p>
+            Open an invoice through the API and render it yourself. You get the amount, the
+            address and the deadline; the payment flow stays inside your product.
+          </p>
+        </div>
+        <div class="card">
+          <h3>WooCommerce</h3>
+          <p>
+            Install, paste three values, done. An underpayment holds the order with the
+            shortfall recorded rather than failing it — real money arrived.
+          </p>
+        </div>
       </div>
 
-      <div class="cards">
+      <p class="cards-sub">And all four come with</p>
+
+      <div class="cards cards-pair">
         <div class="card">
-          <h3>Your own token</h3>
+          <h3>Receipts your customer keeps</h3>
           <p>
-            Issued something yourself? Submit the contract. We probe it, a human reviews it,
-            and you set the rate — because nothing on the market prices it.
+            Every payment gets a printable receipt carrying the transaction that proves it —
+            the one line on it nobody has to take our word for.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Test mode</h3>
+          <p>
+            Drive your handler end to end before you touch real money. The addresses are valid
+            on no network, so nothing can be sent to one by accident.
           </p>
         </div>
         <div class="card">
           <h3>Telegram Stars</h3>
           <p>
-            Stars paid to your bot land in your bot. There is no address and nothing for us
-            to hold, so AVEX is the record rather than the custodian — and takes no cut.
+            Selling inside a bot? Stars go to your bot and stay there. We keep the record and
+            take nothing, because there is nothing for us to take.
           </p>
         </div>
         <div class="card">
-          <h3>Bridged, where it is bridged</h3>
+          <h3>A dashboard that answers</h3>
           <p>
-            USDT on BNB Chain is Binance-Peg BSC-USD, not a Tether issuance. Usable, and
-            labelled — it depends on a custodian as well as on the issuer.
+            What arrived, what is short, what is waiting, and which currency stopped working
+            and why. Written for the moment something looks wrong.
           </p>
         </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── pricing ────────────────────────────────────────────────────────── -->
-<section id="pricing">
-  <div class="grid">
-    <div class="rail">
-      <span class="rail-eyebrow">Commission</span>
-      <div class="rail-figure" id="rail-rate">0.5%</div>
-      <p class="rail-note">Taken from the payment on chain. There is never an invoice from us.</p>
-    </div>
-    <div class="body">
-      <h2>0.5%, and nothing else</h2>
-      <p class="lede">
-        No monthly fee. No minimum. No setup cost. Nothing to pay in a month you took no
-        payments. Our cut comes out of each payment as it settles to you, which is why there
-        is no bill and nothing about your account with us can stop your checkout working.
-      </p>
-
-      <div class="split-demo" id="split-demo"></div>
-
-      <div class="scroll">
-        <table id="ladder-table">
-          <thead>
-            <tr>
-              <th>Rate</th>
-              <th>Applies</th>
-              <th class="right">Per $1,000</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-
-      <p>
-        The rate is reviewed when a month closes, on the volume you actually processed, and
-        it moves in both directions. <strong>You choose who pays it.</strong> Absorb it and
-        your customer sends your price; pass it on and they send your price plus the
-        commission, shown to them on the checkout as its own line. We receive the same
-        either way, so it is your pricing decision rather than ours.
-      </p>
-
-      <div class="note">
-        <strong>The rate cannot be raised behind your back.</strong> The contract that splits
-        the payment rejects anything above <span class="mono" id="ceiling">5%</span>, and the
-        rate is part of the deposit address — an invoice you have already been quoted cannot
-        settle at a different one. That is not a promise in a terms document; it is the
-        reason a changed rate produces an address nobody funded.
       </div>
     </div>
   </div>
@@ -1033,8 +1090,9 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
           </table>
         </div>
         <p>
-          There is no <code>402</code>. You cannot be behind on a commission that is deducted
-          from the payment, so nothing about billing can refuse you an invoice.
+          There is no <code>402</code>: nothing about your account with us can refuse you an
+          invoice. Your terms are on the dashboard, current, rather than in a page somebody
+          would have to remember to update.
         </p>
       </div>
 
@@ -1067,18 +1125,62 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
   </div>
 </section>
 
-<footer>
-  <div>
-    <span class="wordmark">AVEX<span>Pay</span></span>
-    <p style="margin:0.3rem 0 0;color:var(--faint)">Non-custodial by construction.</p>
+<!-- ── start ──────────────────────────────────────────────────────────── -->
+<section id="start" class="start">
+  <div class="start-inner">
+    <h2>Start in test mode, today</h2>
+    <p>
+      Create an account and you have a test key immediately. Drive your own webhook handler
+      end to end, then swap the key for a live one — nothing else in your code changes.
+    </p>
+    <!--
+      An email here, and the dashboard is where the account is actually made.
+      The address is carried across so nobody types it twice; if it is not usable we send
+      them anyway and let the dashboard ask.
+    -->
+    <form id="start-form" class="start-form">
+      <label class="sr-only" for="start-email">Your email</label>
+      <input id="start-email" type="email" inputmode="email" autocomplete="email"
+             placeholder="you@yourshop.com" spellcheck="false">
+      <button class="btn btn-lime btn-lg" type="submit">Create an account</button>
+    </form>
+    <p class="start-note">
+      Already have one? <a data-dash="in" href="/dashboard">Sign in to the dashboard</a>.
+    </p>
   </div>
-  <nav>
-    <a href="#how">How it works</a>
-    <a href="#accept">Currencies</a>
-    <a href="#pricing">Pricing</a>
-    <a href="#docs">Docs</a>
-    <a href="https://claude.ai/code/artifact/b67a62fc-1348-4f97-a97b-2fbd744b7309">API reference</a>
-  </nav>
+</section>
+
+<footer>
+  <div class="foot-brand">
+    <span class="wordmark">AVEX<span>Pay</span></span>
+    <p>Non-custodial by construction.</p>
+    <div class="foot-cta">
+      <a class="btn btn-lime btn-sm" data-dash="up" href="/dashboard?signup=1">Create an account</a>
+      <a class="btn btn-sm" data-dash="in" href="/dashboard">Sign in</a>
+    </div>
+  </div>
+  <div class="foot-cols">
+    <div class="foot-col">
+      <span class="foot-h">Product</span>
+      <a href="#products">Hosted checkout</a>
+      <a href="#products">Payment links</a>
+      <a href="#products">WooCommerce</a>
+      <a href="#products">Telegram Stars</a>
+    </div>
+    <div class="foot-col">
+      <span class="foot-h">Developers</span>
+      <a href="#docs">Quickstart</a>
+      <a href="#docs">Webhooks</a>
+      <a href="#docs">Test mode</a>
+      <a href="https://claude.ai/code/artifact/b67a62fc-1348-4f97-a97b-2fbd744b7309">API reference</a>
+    </div>
+    <div class="foot-col">
+      <span class="foot-h">How it works</span>
+      <a href="#how">Custody</a>
+      <a href="#how">Settlement</a>
+      <a href="#docs">Errors</a>
+    </div>
+  </div>
 </footer>
 
 <script>
@@ -1110,7 +1212,6 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
 
   const payout = el('d-payout');
   const invoice = el('d-invoice');
-  const fee = el('d-fee');
 
   /**
    * A stable invoice id from the reference the reader typed.
@@ -1136,30 +1237,32 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
     const note = el('d-note');
 
     const wallet = payout.value.trim();
-    const bps = Number(fee.value.trim());
 
     try {
       if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
         throw new Error('A payout wallet is 0x followed by 40 hex characters.');
       }
-      if (!Number.isInteger(bps) || bps < 0 || bps > MAX_FEE_BPS) {
-        throw new Error('A commission is a whole number of basis points, at most ' + MAX_FEE_BPS + '.');
-      }
 
+      /**
+       * Derived without a fee, and that is a display decision rather than a shortcut.
+       *
+       * The fee is genuinely part of the hash — the diagram below says so — but putting a
+       * rate in an input box here would be quoting terms on a page that cannot know them.
+       * What this panel exists to demonstrate is that the *wallet* is an input, and a fee of
+       * zero demonstrates it exactly as well.
+       */
       const derived = predictForwarder(
         CONFIG,
         invoiceIdFor(invoice.value.trim() || 'order-1042'),
         wallet,
-        bps === 0 ? NO_FEE : { feeDestination: '0x3333333333333333333333333333333333333333', feeBps: bps },
+        NO_FEE,
       );
 
       address.textContent = toChecksumAddress(derived);
       error.hidden = true;
       note.textContent =
-        bps === 0
-          ? 'Nothing is deployed here yet. It already commits to your wallet, and to taking nothing.'
-          : 'Nothing is deployed here yet. It already commits to your wallet and to ' +
-            (bps / 100).toFixed(2).replace(/\.?0+$/, '') + '%.';
+        'Nothing is deployed here yet. It already commits to your wallet — change the wallet ' +
+        'above and watch the address change with it.';
     } catch (problem) {
       /**
        * The address is cleared rather than left showing the last good one.
@@ -1175,110 +1278,50 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
     }
   }
 
-  for (const input of [payout, invoice, fee]) input.addEventListener('input', derive);
+  for (const input of [payout, invoice]) input.addEventListener('input', derive);
   derive();
 
-  // ── what the product actually supports ────────────────────────────────────
+  // ── the handoff to the dashboard ──────────────────────────────────────────
 
   /**
-   * Every figure below comes from the product's own modules.
+   * The site links to the dashboard rather than hosting its own sign-in.
    *
-   * A marketing page is the surface nobody tests against reality, which makes it the one
-   * where a claim quietly stops being true. "Six chains" outlives a chain being dropped;
-   * a currency table typed by hand outlives anything.
+   * Two copies of an auth form is two places for a session bug to live, and the dashboard
+   * already has one that is tested. What the site contributes is carrying an email across so
+   * nobody types it twice.
+   *
+   * The hrefs in the markup are same-origin paths, so the page works as shipped. This only
+   * rewrites them when a deployment names a dashboard somewhere else.
    */
-  const rows = chainRows();
+  const DASHBOARD = (document.querySelector('meta[name="avex-dashboard"]')?.content ?? '').trim();
+  const links = dashboardLinks(DASHBOARD);
 
-  el('rail-chains').textContent = String(rows.length);
-  el('fact-chains').textContent = String(rows.length);
-
-  const chainBody = el('chain-table').querySelector('tbody');
-  for (const row of rows) {
-    const tr = document.createElement('tr');
-
-    const network = document.createElement('td');
-    network.className = 'mono';
-    network.textContent = row.label;
-
-    const stables = document.createElement('td');
-    for (const coin of row.stablecoins) {
-      const pill = document.createElement('span');
-      pill.className = 'pill';
-      // Bridged is marked; native carries no badge, because a badge on everything is a
-      // badge nobody reads and it is the exception that carries the information.
-      if (coin.issuer === 'bridged') {
-        pill.dataset.tone = 'warn';
-        pill.textContent = coin.symbol + ' · bridged';
-        pill.title = 'Wrapped by a third party rather than issued on this chain by ' + coin.symbol + "'s own issuer.";
-      } else {
-        pill.dataset.tone = 'good';
-        pill.textContent = coin.symbol;
-      }
-      stables.append(pill, document.createTextNode(' '));
-    }
-
-    const native = document.createElement('td');
-    native.className = 'mono';
-    native.textContent = row.native;
-
-    tr.append(network, stables, native);
-    chainBody.append(tr);
+  for (const anchor of document.querySelectorAll('[data-dash]')) {
+    anchor.href = anchor.dataset.dash === 'up' ? links.signUp : links.signIn;
   }
 
-  // ── the ladder ────────────────────────────────────────────────────────────
+  el('start-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    /**
+     * A refused address sends them to the dashboard anyway.
+     *
+     * The dashboard will ask for it again, which is a better failure than an error message
+     * on a marketing page — the reader came here to start, and stopping them to correct a
+     * field we were only going to pass along is friction for nothing.
+     */
+    location.href = signUpWithEmail(DASHBOARD, el('start-email').value);
+  });
 
-  const entry = LADDER[0];
-  el('fact-rate').textContent = percentOf(entry.bps);
-  el('rail-rate').textContent = percentOf(entry.bps);
-  el('ceiling').textContent = percentOf(MAX_FEE_BPS);
+  // ── the count of networks, from the chain registry ────────────────────────
+
+  /**
+   * The one figure on the page, and it is derived.
+   *
+   * A count read from the registry outlives a chain being added or dropped; a number typed
+   * into the copy does not, and nobody reviews a marketing page against the product. Which is
+   * why the prose around it says "every network we carry" rather than naming a figure twice.
+   */
+  el('fact-chains').textContent = String(networkCount(SUPPORTED_CHAINS));
   el('doc-window').textContent = String(SIGNATURE_WINDOW_SECONDS);
-
-  const ladderBody = el('ladder-table').querySelector('tbody');
-  for (const rung of LADDER) {
-    const tr = document.createElement('tr');
-    if (rung === entry) tr.dataset.current = 'true';
-
-    const rate = document.createElement('td');
-    rate.className = 'mono';
-    rate.textContent = percentOf(rung.bps);
-
-    const applies = document.createElement('td');
-    applies.textContent =
-      rung.fromUsdMicros === 0n
-        ? 'From your first payment'
-        : 'Over ' + roundUsd(rung.fromUsdMicros) + ' processed in a month';
-
-    const per = document.createElement('td');
-    per.className = 'mono right';
-    per.textContent = split(1000, rung.bps).fee;
-
-    tr.append(rate, applies, per);
-    ladderBody.append(tr);
-  }
-
-  /**
-   * The split on a worked example, computed rather than written out.
-   *
-   * A hundred-dollar order is the figure everyone checks the arithmetic on, and doing that
-   * arithmetic in the HTML is the first thing to go stale after a repricing.
-   */
-  const worked = split(100, entry.bps);
-  const cells = [
-    ['Your customer sends', '$100.00', null],
-    ['You receive', worked.net, 'lime'],
-    ['We receive', worked.fee, null],
-    ['You owe us', 'nothing', null],
-  ];
-  for (const [label, value, tone] of cells) {
-    const cell = document.createElement('div');
-    cell.className = 'split-cell';
-    if (tone) cell.dataset.tone = tone;
-    const b = document.createElement('b');
-    b.textContent = value;
-    const span = document.createElement('span');
-    span.textContent = label;
-    cell.append(b, span);
-    el('split-demo').append(cell);
-  }
 })();
 </script>

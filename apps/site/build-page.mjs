@@ -1,10 +1,9 @@
 /**
  * Inline the compiled modules into the public site.
  *
- * The site makes claims about the product — which chains, which rate, which contracts —
- * and the only way those claims cannot drift is for the page to read them from the same
- * modules the product does. So `CURATED_ASSETS`, the commission ladder and the real
- * CREATE2 derivation are injected here rather than transcribed into the HTML.
+ * The site makes few claims, and the ones it makes are read from the same modules the
+ * product does rather than transcribed into the HTML — the network count from the chain
+ * registry, and the CREATE2 derivation from the code that ships.
  *
  * The keccak and create2 modules are the load-bearing ones: the hero derives a genuine
  * deposit address in the browser with the same code that derives it on the server. A
@@ -24,7 +23,7 @@ const core = join(here, '..', '..', 'packages', 'core', 'dist');
 const MODULES = [
   join(core, 'crypto', 'keccak256.js'),
   join(core, 'chains', 'evm', 'create2.js'),
-  join(core, 'assets', 'registry.js'),
+  join(core, 'chains', 'registry.js'),
   join(here, 'dist', 'facts.js'),
 ];
 const MARKER = '/* @inject:modules */';
@@ -81,10 +80,35 @@ const inlined = stripped.map((entry) => entry.source).join('\n\n');
  * shipped page while the module's own tests kept passing. The assertion afterwards is
  * what would have caught it.
  */
-const output = template.replace(MARKER, () => inlined);
+let output = template.replace(MARKER, () => inlined);
 if (!output.includes(inlined)) {
   console.error('inlining altered the injected source; refusing to write a corrupt page');
   process.exit(1);
+}
+
+/**
+ * Point the sign-in and sign-up links at wherever this build's panel is.
+ *
+ * The template ships `/dashboard`, which is right for a deployment that serves both from one
+ * origin. A preview or a demo puts the panel somewhere else entirely, and the page reads it
+ * from one `<meta>` — so overriding that here beats editing anchors, all six of which would
+ * otherwise have to agree.
+ */
+const DASHBOARD_META = /(<meta name="avex-dashboard" content=")[^"]*(">)/;
+if (!DASHBOARD_META.test(output)) {
+  console.error('the template no longer names a dashboard; the auth links would be hardcoded');
+  process.exit(1);
+}
+
+const dashboard = process.env.AVEX_DASHBOARD_URL?.trim();
+if (dashboard) {
+  // A quote would end the attribute and the rest would be read as markup.
+  if (/["'<>\s]/.test(dashboard)) {
+    console.error(`AVEX_DASHBOARD_URL is not usable in an attribute: ${dashboard}`);
+    process.exit(1);
+  }
+  output = output.replace(DASHBOARD_META, (_, open, close) => `${open}${dashboard}${close}`);
+  console.log(`dashboard links point at ${dashboard}`);
 }
 
 const target = join(here, 'public', 'index.html');

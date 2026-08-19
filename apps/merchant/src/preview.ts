@@ -194,6 +194,23 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
 
   return new Map<string, PreviewRoute>([
     ['GET /v1/auth/me', ok({ email: 'you@example.com', userId: 'preview-user' })],
+
+    /**
+     * The two calls that get somebody *in*, rather than the ones the dashboard makes once it
+     * is already there.
+     *
+     * The landing page's "create an account" button sends people to the form, so the form has
+     * to be walkable in a preview — otherwise the only way into the preview is the one path a
+     * real visitor never takes, and the screen they were actually sent to goes untested.
+     *
+     * The signup answer is the real one's shape: no session, and no hint about whether the
+     * address was already taken.
+     */
+    ['POST /v1/auth/signup', { status: 201, body: { emailVerificationRequired: true } }],
+    [
+      'POST /v1/auth/login',
+      ok({ status: 'ok', token: 'preview', expiresAt: '2027-01-01T00:00:00.000Z' }),
+    ],
     [
       'GET /v1/organizations',
       ok({ organizations: [{ id: 'preview-org', name: 'Kian Digital', slug: 'kian-digital' }] }),

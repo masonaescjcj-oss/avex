@@ -5,16 +5,20 @@ import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 /**
- * The site's claims against the product's own constants.
+ * The site's claims against the product itself.
  *
  * A different job from `src/facts.test.ts`, which checks that the derivation is sane. This
- * one crosses the boundary: it reads the API's fee-plan service and the forwarder contract
- * as text and refuses to let the page's numbers disagree with them.
+ * one crosses the boundary: it reads the API's routes, the forwarder's callers and the
+ * WooCommerce plugin as text and refuses to let the page disagree with them.
  *
  * That is worth a test of its own because the failure is invisible from inside either side.
- * Reprice the commission in `fee-plan-service.ts` and every test in this repository still
- * passes while the front page quotes the old rate — and the front page is the one document
- * a customer will hold us to.
+ * Widen the webhook tolerance in the plugin and every test in this repository still passes
+ * while the page documents the old window — and the page is the one document an integrator
+ * will hold us to.
+ *
+ * Two of the claims here are about what the page must *not* say. It names no currency and
+ * quotes no rate: both belong to the account, not to the marketing, and a figure printed
+ * here is a figure we would have to keep true forever.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -24,56 +28,89 @@ const read = (path) => readFileSync(join(repo, path), 'utf8');
 const page = readFileSync(join(here, '..', 'public', 'index.html'), 'utf8');
 const facts = read('apps/site/src/facts.ts');
 
+/**
+ * The page as a reader sees it.
+ *
+ * The script carries four of the product's own modules inlined, and the stylesheet is full
+ * of percentages — so anything asking "does the copy say X" has to strip both first, or it
+ * is asking about source code.
+ */
+const copy = page
+  .replace(/<script[\s\S]*?<\/script>/g, '')
+  .replace(/<style[\s\S]*?<\/style>/g, '')
+  .replace(/<!--[\s\S]*?-->/g, '');
+
 describe('the site does not outlive the product', () => {
-  test('the commission ladder matches the service that charges it', () => {
+  test('the page names no currency', () => {
     /**
-     * Parsed out of `FEE_TIERS` rather than compared against a copy, because a copy is the
-     * thing that drifts. The service declares its tiers cheapest-first; the site lists them
-     * entry-first, so the comparison sorts both.
+     * Which coins and networks we take is a property of an account, changed from the admin
+     * panel on an afternoon's notice — and a merchant chooses their own subset on top of
+     * that. Printing a list here makes the front page wrong the first time either changes,
+     * silently, in the direction that loses a sale.
+     *
+     * The one place issuer names survive is the note about what non-custody does *not*
+     * protect a merchant from, which names Tether and Circle to say they can freeze an
+     * address. That is a limitation we state rather than a menu, so this test looks for
+     * ticker symbols and for the table that used to list them.
      */
-    const service = read('apps/api/src/domain/fee-plan-service.ts');
-    const tiers = [...service.matchAll(/fromUsdMicros:\s*([\d_]+)n,\s*bps:\s*(\d+)/g)].map(
-      (match) => ({
-        fromUsdMicros: BigInt(match[1].replaceAll('_', '')),
-        bps: Number(match[2]),
-      }),
-    );
-    assert.ok(tiers.length >= 3, 'FEE_TIERS could not be read; this test needs updating');
+    for (const symbol of ['USDT', 'USDC', 'USDD', 'TRX', 'MATIC', 'BNB', 'SOL']) {
+      assert.ok(
+        !new RegExp(`\\b${symbol}\\b`).test(copy),
+        `the page names ${symbol}; supported currencies belong in the dashboard`,
+      );
+    }
+    assert.ok(!copy.includes('chain-table'), 'the currency table is back');
 
-    const onSite = [...facts.matchAll(/bps:\s*(\d+),\s*fromUsdMicros:\s*([\d_]+)n/g)].map(
-      (match) => ({
-        bps: Number(match[1]),
-        fromUsdMicros: BigInt(match[2].replaceAll('_', '')),
-      }),
-    );
-
-    const key = (tier) => `${tier.bps}@${tier.fromUsdMicros}`;
-    assert.deepEqual(
-      onSite.map(key).sort(),
-      tiers.map(key).sort(),
-      'the site quotes a different ladder from the one the API charges',
-    );
+    /**
+     * The count is fine — it is a fact about the integration rather than a promise about a
+     * coin — but it belongs in the one element the script fills. Spelled out in prose it
+     * becomes a second copy that goes wrong the first time a chain is added, and the meta
+     * description is the copy nobody thinks to check.
+     */
+    assert.match(copy, /id="fact-chains"/);
+    const spelled = /\b(three|four|five|six|seven|eight|nine|ten)\s+networks?\b/i;
+    assert.ok(!spelled.test(copy), 'a network count is written out in the copy');
+    const [, description] = page.match(/name="description" content="([^"]*)"/);
+    assert.ok(!spelled.test(description), 'a network count is written into the meta description');
   });
 
-  test('the entry rate on the page is the rate a new merchant gets', () => {
-    // The single most quoted number on the site, and the one a customer will hold us to.
-    const service = read('apps/api/src/domain/fee-plan-service.ts');
-    const [, defaultBps] = service.match(/export const DEFAULT_FEE_BPS = (\d+);/);
-    const entry = facts.match(/bps:\s*(\d+),\s*fromUsdMicros:\s*0n/);
-    assert.equal(entry[1], defaultBps);
+  test('the page quotes no rate', () => {
+    /**
+     * The commission is a number in an agreement and on a dashboard, not on a landing page.
+     * A page that quotes it has to be redeployed in step with `FEE_TIERS`, and the version a
+     * customer screenshotted is the version they will argue from.
+     *
+     * Saying a fee exists is honest and stays; saying what it is does not.
+     */
+    const figures = [...copy.matchAll(/[^<>]{0,40}%[^<>]{0,20}/g)].map((match) => match[0].trim());
+    assert.deepEqual(figures, [], 'a percentage is printed in the copy');
+    assert.ok(!/basis points|\bbps\b/i.test(copy), 'the copy talks in basis points');
+    assert.ok(!/\bid="(fact-rate|rail-rate|ceiling)"/.test(page), 'a rate element is back');
+    for (const removed of ['ladder-table', 'split-demo', 'd-fee']) {
+      assert.ok(!page.includes(`id="${removed}"`), `#${removed} is back on the page`);
+    }
   });
 
-  test('the ceiling the page cites is the one the contract enforces', () => {
+  test('the figure beside the products is the number of products', () => {
     /**
-     * The page tells a sceptical reader that the rate cannot be raised behind their back
-     * because the contract rejects anything above it. If that number were wrong the claim
-     * would be false in the direction that matters.
+     * The rail says how many ways there are to get paid, and the grid below it lists them.
+     * Two numbers in one section, one of them typed — this is the test that keeps them the
+     * same number when a fifth is added.
+     *
+     * Only the first row counts: the second is what every one of them comes with, not another
+     * way to be paid.
      */
-    const contract = read('contracts/Forwarder.sol');
-    const [, ceiling] = contract.match(/MAX_FEE_BPS\s*=\s*(\d+)/);
-    const core = read('packages/core/src/chains/evm/create2.ts');
-    assert.match(core, new RegExp(`export const MAX_FEE_BPS = ${ceiling};`));
-    assert.match(page, /id="ceiling"/);
+    const section = page.match(/<section id="products">[\s\S]*?<\/section>/)[0];
+    const [, figure] = section.match(/<div class="rail-figure">(\d+)<\/div>/);
+    const [firstRow] = [...section.matchAll(/<div class="cards[^"]*">([\s\S]*?)\n      <\/div>/g)];
+    assert.ok(firstRow, 'the products grid could not be read; this test needs updating');
+    const ways = [...firstRow[1].matchAll(/<h3>/g)].length;
+    assert.equal(Number(figure), ways, 'the rail figure and the grid disagree');
+
+    // And the same number again, spelled out, introducing what they all come with.
+    const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'];
+    const [, spelled] = section.match(/<p class="cards-sub">And all (\w+) come with<\/p>/);
+    assert.equal(spelled, WORDS[ways], 'the subhead names a different number of products');
   });
 
   test('the figures rendered without JavaScript are right too', () => {
@@ -82,37 +119,31 @@ describe('the site does not outlive the product', () => {
      * JavaScript off — or one who sees the page before the script runs — reads the real
      * figure rather than a dash. Which means those fallbacks are claims in their own right,
      * and this is what stops them being the stale copy nobody remembers to update.
-     *
-     * The alternative would have been to leave them blank and let the page flash. On a
-     * pricing page the flash is worse: the number a reader half-sees is the number they
-     * remember.
      */
-    const service = read('apps/api/src/domain/fee-plan-service.ts');
-    const contract = read('contracts/Forwarder.sol');
     const signature = read('integrations/woocommerce/includes/class-avex-signature.php');
-
-    const percent = (bps) => `${(bps / 100).toFixed(2).replace(/\.?0+$/, '')}%`;
     const fallback = (id) => {
       const match = page.match(new RegExp(`id="${id}"[^>]*>([^<]*)<`));
       assert.ok(match, `#${id} is not in the page`);
       return match[1].trim();
     };
 
-    const [, defaultBps] = service.match(/export const DEFAULT_FEE_BPS = (\d+);/);
-    assert.equal(fallback('fact-rate'), percent(Number(defaultBps)));
-    assert.equal(fallback('rail-rate'), percent(Number(defaultBps)));
-
-    const [, ceiling] = contract.match(/MAX_FEE_BPS\s*=\s*(\d+)/);
-    assert.equal(fallback('ceiling'), percent(Number(ceiling)));
-
     const [, tolerance] = signature.match(/TOLERANCE_SECONDS\s*=\s*(\d+)/);
     assert.equal(fallback('doc-window'), tolerance);
 
-    // The chain count, from the list the product actually carries.
-    const registry = read('packages/core/src/assets/registry.ts');
-    const chains = new Set([...registry.matchAll(/chain: '(\w+)'/g)].map((match) => match[1]));
+    /**
+     * The network count, from the list the product actually carries.
+     *
+     * `SUPPORTED_CHAINS` is `Object.keys(CHAINS)`, so the count is the number of top-level
+     * keys in that record — read out of the source rather than copied, because a copy is the
+     * thing that drifts when a seventh chain lands.
+     */
+    const registry = read('packages/core/src/chains/registry.ts');
+    const [, record] = registry.match(
+      /export const CHAINS[\s\S]*?= \{([\s\S]*?)\n\};/,
+    );
+    const chains = new Set([...record.matchAll(/^ {2}(\w+): \{/gm)].map((match) => match[1]));
+    assert.ok(chains.size >= 4, 'CHAINS could not be read; this test needs updating');
     assert.equal(fallback('fact-chains'), String(chains.size));
-    assert.equal(fallback('rail-chains'), String(chains.size));
   });
 
   test('the webhook window the docs quote is the one the receivers enforce', () => {
@@ -150,17 +181,6 @@ describe('the site does not outlive the product', () => {
     assert.match(page, /There is no <code>402<\/code>/);
   });
 
-  test('the currency table is built from the curated list, not written out', () => {
-    /**
-     * The check that matters most on this page, because a hand-written table is how the
-     * preview panels ended up showing three chains out of six. If the markup ever carries a
-     * hardcoded row the count stops tracking the product.
-     */
-    assert.match(page, /chainRows\(\)/);
-    const tbody = page.match(/<table id="chain-table">[\s\S]*?<tbody><\/tbody>/);
-    assert.ok(tbody, 'the table body should be empty in the markup and filled from the module');
-  });
-
   test('the derivation is the real one, not a stand-in', () => {
     /**
      * The page's central claim is that the deposit address commits to the merchant's wallet,
@@ -177,18 +197,80 @@ describe('the site does not outlive the product', () => {
   test('the page never shows a factory address as if it were deployed', () => {
     // The demo needs a factory to hash against, and it is a stand-in. It must not appear
     // anywhere a reader would read it as ours.
-    const visible = page.replace(/<script[\s\S]*?<\/script>/g, '');
     assert.ok(
-      !visible.includes('0x5FbDB2315678afecb367f032d93F642f64180aa3'),
+      !copy.includes('0x5FbDB2315678afecb367f032d93F642f64180aa3'),
       'the placeholder factory must stay inside the script',
     );
   });
 });
 
+describe('the way in', () => {
+  test('every route to the panel is one anchor away from being redeployed elsewhere', () => {
+    /**
+     * The site does not host its own sign-in; it hands off to the panel. Every such anchor
+     * carries `data-dash`, and the script rewrites all of them from one `<meta>` — so moving
+     * the panel is one line, and a link left hardcoded is a link that keeps pointing at the
+     * old deployment. This is the test that catches the one somebody adds by hand.
+     */
+    assert.match(page, /<meta name="avex-dashboard" content="[^"]+">/);
+
+    const anchors = [...page.matchAll(/<a\b[^>]*data-dash="(in|up)"[^>]*>/g)];
+    assert.ok(anchors.length >= 5, `only ${anchors.length} auth links; the nav, hero and footer all need them`);
+    for (const [tag] of anchors) {
+      // A fallback href, so the links work before the script runs and if it never does.
+      assert.match(tag, /href="\/[^"]*"/, tag);
+    }
+    assert.ok(anchors.some(([, kind]) => kind === 'in'), 'nothing signs in');
+    assert.ok(anchors.some(([, kind]) => kind === 'up'), 'nothing signs up');
+
+    // And the rewriting is real: the module's own function, not a string built in the page.
+    assert.match(page, /export function dashboardLinks|function dashboardLinks/);
+    assert.match(page, /dashboardLinks\(DASHBOARD\)/);
+  });
+
+  test('the email a visitor types is carried to the panel rather than dropped', () => {
+    // A form that collects an address and then asks for it again on the next screen is a
+    // form that loses people at the second ask.
+    assert.match(page, /id="start-form"/);
+    assert.match(page, /id="start-email"/);
+    assert.match(page, /signUpWithEmail\(DASHBOARD, el\('start-email'\)\.value\)/);
+    assert.match(facts, /export function signUpWithEmail/);
+    // And it is labelled, even though the label is not drawn.
+    assert.match(page, /class="sr-only" for="start-email"/);
+  });
+
+  test('the panel reads back what the site sent it', () => {
+    /**
+     * The handoff is only half in this repository's site. `signUpWithEmail` writes
+     * `?signup=1&email=…`; if the panel ignores those the visitor lands on a sign-in form
+     * with an empty field, which looks like the account they just made did not exist.
+     */
+    const panel = read('apps/merchant/public/merchant.template.html');
+    assert.match(
+      panel,
+      /const entry = new URLSearchParams\(location\.search\);/,
+      'the panel does not read its query at all',
+    );
+    assert.match(
+      panel,
+      /entry\.get\('signup'\) === '1'/,
+      'the panel does not open its signup view from the query',
+    );
+    assert.match(
+      panel,
+      /entry\.get\('email'\)/,
+      'the panel does not read the address the site sent',
+    );
+    // And the two names have to be the ones the site writes.
+    assert.match(facts, /'signup=1'/);
+    assert.match(facts, /email=\$\{encodeURIComponent/);
+  });
+});
+
 describe('the page holds together', () => {
   test('it declares its charset before anything else', () => {
-    // Without it the em dashes and the currency figures come out as mojibake, which is the
-    // page's credibility gone in the first paragraph.
+    // Without it the em dashes come out as mojibake, which is the page's credibility gone in
+    // the first paragraph.
     assert.match(page.slice(0, 200), /<meta charset="utf-8">/);
   });
 
@@ -230,5 +312,17 @@ describe('the page holds together', () => {
      * get white text on white.
      */
     assert.match(page, /body \{[^}]*background: var\(--void\)/);
+  });
+
+  test('no stylesheet rule is left addressing something the page removed', () => {
+    /**
+     * Dead CSS is not a bug on its own; it is the fossil that makes the next person think a
+     * table or a demo is still there and write markup for it. The pricing sections went, so
+     * their rules go too.
+     */
+    const [, style] = page.match(/<style>([\s\S]*?)<\/style>/);
+    for (const gone of ['.split-demo', '.ladder', '#chain-table']) {
+      assert.ok(!style.includes(gone), `${gone} is styled but nothing uses it`);
+    }
   });
 });

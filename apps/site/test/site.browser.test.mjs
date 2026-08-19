@@ -74,13 +74,13 @@ describe('avex.pay', { skip: playwright ? false : 'playwright is not installed' 
   test('the page loads with nothing thrown', async () => {
     /**
      * Worth its own test because the script is four modules concatenated into one scope: a
-     * single name collision is a SyntaxError that empties the address panel, the currency
-     * table and the pricing ladder at once, leaving the static fallbacks looking plausible.
-     * That happened on the first build.
+     * single name collision is a SyntaxError that empties the address panel and leaves every
+     * dashboard link pointing at whatever the markup happened to hardcode. That happened on
+     * the first build, and the static fallbacks looked plausible throughout.
      */
     const { page, context, errors } = await open();
     assert.deepEqual(errors, []);
-    assert.match(await text(page, 'h1'), /Your customers pay you/);
+    assert.match(await text(page, 'h1'), /Take crypto payments\./);
     await context.close();
   });
 
@@ -101,14 +101,15 @@ describe('avex.pay', { skip: playwright ? false : 'playwright is not installed' 
     assert.match(second, /^0x[0-9a-fA-F]{40}$/);
     assert.notEqual(second, first, 'the payout wallet must change the deposit address');
 
-    // And so is the commission, because it is a constructor argument.
-    await page.fill('#d-fee', '40');
+    // The invoice reference too, so two orders never share a deposit address.
+    await page.fill('#d-invoice', 'order-9999');
     await page.waitForTimeout(150);
-    assert.notEqual(await text(page, '#d-address'), second);
+    const third = await text(page, '#d-address');
+    assert.notEqual(third, second, 'the invoice reference must change the deposit address');
 
     // Same inputs, same address: a reader who types the original back must see it return.
     await page.fill('#d-payout', '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52');
-    await page.fill('#d-fee', '50');
+    await page.fill('#d-invoice', 'order-1042');
     await page.waitForTimeout(150);
     assert.equal(await text(page, '#d-address'), first);
     await context.close();
@@ -139,58 +140,96 @@ describe('avex.pay', { skip: playwright ? false : 'playwright is not installed' 
     await context.close();
   });
 
-  test('a commission above the contract ceiling is refused', async () => {
-    // The forwarder reverts above it, so an address derived at that rate could take a payment
-    // and never be deployable. The panel refuses rather than showing one.
-    const { page, context } = await open();
-    await page.fill('#d-fee', '900');
-    await page.waitForTimeout(150);
-
-    assert.equal(await text(page, '#d-address'), '—');
-    assert.match(await text(page, '#d-error'), /at most 500/);
-    await context.close();
-  });
-
-  test('the currency table lists every chain, with bridged marked', async () => {
-    const { page, context } = await open();
-    const rows = await page.$$eval('#chain-table tbody tr', (nodes) =>
-      nodes.map((node) => node.textContent.replace(/\s+/g, ' ').trim()),
-    );
-    assert.equal(rows.length, 6, rows.join(' | '));
-    assert.ok(rows.some((row) => /TRON/.test(row) && /USDT/.test(row)));
-    // BNB Chain's stablecoins are Binance-Peg, and the table says so rather than calling
-    // them plain USDT.
-    assert.ok(rows.some((row) => /BNB Chain/.test(row) && /bridged/.test(row)));
-    // TRON's USDT is Tether's own, so it carries no badge.
-    const tron = rows.find((row) => /TRON/.test(row));
-    assert.ok(!/bridged/.test(tron), tron);
-    await context.close();
-  });
-
-  test('the pricing ladder marks the rate a new merchant is on', async () => {
-    // Three rungs is a table; which one applies to the reader is the information.
-    const { page, context } = await open();
-    const current = await page.$$eval('#ladder-table tbody tr[data-current="true"]', (nodes) =>
-      nodes.map((node) => node.textContent.replace(/\s+/g, ' ').trim()),
-    );
-    assert.equal(current.length, 1);
-    assert.match(current[0], /0\.5%/);
-    assert.match(current[0], /From your first payment/);
-    await context.close();
-  });
-
-  test('the worked example adds up', async () => {
+  test('every way into the panel resolves to the panel this deployment names', async () => {
     /**
-     * $100 in, $99.50 out, $0.50 to us. A reader checks this arithmetic before they read
-     * anything else on the pricing section, and getting it wrong costs more trust than any
-     * other error on the page.
+     * The nav, the hero, the CTA band and the footer all offer the same two doors, and the
+     * markup hardcodes `/dashboard` only so they work before the script runs. What ships is
+     * whatever the `<meta>` names — so this checks the rewriting actually happened on every
+     * one of them, which is the failure mode a static read of the HTML cannot see.
      */
     const { page, context } = await open();
-    const demo = await text(page, '#split-demo');
-    assert.match(demo, /\$100\.00/);
-    assert.match(demo, /\$99\.50/);
-    assert.match(demo, /\$0\.50/);
-    assert.match(demo, /nothing/);
+
+    const meta = await page.$eval('meta[name="avex-dashboard"]', (node) => node.content);
+    assert.ok(meta.length > 0, 'the page names no panel');
+
+    const links = await page.$$eval('[data-dash]', (nodes) =>
+      nodes.map((node) => ({ kind: node.dataset.dash, href: node.getAttribute('href') })),
+    );
+    assert.ok(links.length >= 5, `only ${links.length} auth links`);
+    for (const { kind, href } of links) {
+      assert.ok(href.startsWith(meta), `${kind} link points at ${href}, not at ${meta}`);
+      if (kind === 'up') assert.match(href, /[?&]signup=1/, href);
+      else assert.ok(!/signup=/.test(href), `a sign-in link asks for signup: ${href}`);
+    }
+    assert.ok(links.some((link) => link.kind === 'in'));
+    assert.ok(links.some((link) => link.kind === 'up'));
+    await context.close();
+  });
+
+  test('the email a visitor types arrives at the panel with them', async () => {
+    /**
+     * The point of asking for an address on the landing page is that the panel does not have
+     * to ask again. If the handoff drops it the visitor types it twice, which is where a
+     * signup funnel loses people — and it would drop it silently, because navigating still
+     * works.
+     */
+    const { page, context } = await open();
+    // The panel is not served in this test; catching the navigation is what we are asserting.
+    await page.route('https://avex.test/dashboard*', (route) =>
+      route.fulfill({ body: '<title>panel</title>', contentType: 'text/html' }),
+    );
+
+    await page.fill('#start-email', 'shop@example.com');
+    await page.click('#start-form button[type="submit"]');
+    await page.waitForURL(/\/dashboard/);
+
+    const url = new URL(page.url());
+    assert.equal(url.searchParams.get('signup'), '1');
+    assert.equal(url.searchParams.get('email'), 'shop@example.com');
+    await context.close();
+  });
+
+  test('a malformed address is caught here rather than at the panel', async () => {
+    /**
+     * The field is `type="email"`, so the browser refuses the submit itself and says why,
+     * next to the box — which is a better correction than a round trip that lands on a panel
+     * with an empty field and no explanation.
+     *
+     * Worth asserting because the handler behind it would happily navigate: `signUpWithEmail`
+     * drops an address it cannot use and sends the visitor on. That fallback is for the paths
+     * validation does not cover, and this test is what says which of the two a person meets.
+     */
+    const { page, context } = await open();
+    const before = page.url();
+
+    await page.fill('#start-email', 'not-an-address');
+    await page.click('#start-form button[type="submit"]');
+    await page.waitForTimeout(300);
+
+    assert.equal(page.url(), before, 'a malformed address was carried to the panel');
+    assert.equal(
+      await page.$eval('#start-email', (node) => node.checkValidity()),
+      false,
+      'the field reports itself as valid',
+    );
+    await context.close();
+  });
+
+  test('the products section says what you can sell with, not what you can be paid in', async () => {
+    /**
+     * Which currencies an account takes is decided in the panel and changes without a
+     * redeploy. A card naming one is a promise the front page cannot keep, so the grid is
+     * checked here in the rendered text rather than only in the markup.
+     */
+    const { page, context } = await open();
+    const products = await text(page, '#products');
+    for (const capability of ['Hosted checkout', 'Payment links', 'WooCommerce', 'Telegram Stars']) {
+      assert.ok(products.includes(capability), `${capability} is missing`);
+    }
+    for (const symbol of ['USDT', 'USDC', 'TRX', 'BNB', 'SOL']) {
+      assert.ok(!new RegExp(`\\b${symbol}\\b`).test(products), `${symbol} is named on the page`);
+    }
+    assert.ok((await page.$$('#products .card')).length >= 6);
     await context.close();
   });
 

@@ -133,6 +133,15 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       if (method === 'POST' && path.endsWith('/v1/auth/login')) {
         return route.fulfill(json(overrides.login ?? { token: 'sess_abc' }));
       }
+      if (method === 'POST' && path.endsWith('/v1/auth/signup')) {
+        posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
+        /**
+         * The API answers the same way whether the address was free or already taken, so
+         * this stub does too. A stub that distinguished them would let the page grow a
+         * branch the real API can never take.
+         */
+        return route.fulfill(json(overrides.signup ?? { emailVerificationRequired: true }, 201));
+      }
       if (method === 'POST' && path.endsWith('/v1/auth/mfa')) {
         return route.fulfill(json({ token: 'sess_abc' }));
       }
@@ -188,7 +197,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       return route.fulfill(json({}));
     });
 
-    await page.goto(PAGE);
+    await page.goto(overrides.query ? `${PAGE}?${overrides.query}` : PAGE);
     if (!overrides.staySignedOut) {
       await page.fill('#auth-email', 'owner@example.test');
       await page.fill('#auth-password', 'a-sufficiently-long-password');
@@ -217,6 +226,38 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
+  test('nothing belonging to a signed-in account is on the sign-in screen', async () => {
+    /**
+     * A `hidden` attribute does nothing when the stylesheet gives the element a display, and
+     * this page shipped exactly that: `.whoami` is `display: flex`, so a "Sign out" button sat
+     * on the sign-in screen of a page nobody was signed in to.
+     *
+     * Measured as rendered height, because the attribute was set correctly the whole time —
+     * a probe reading `.hidden` reported success while the button was on screen.
+     */
+    const { page, context } = await open({ staySignedOut: true });
+    for (const selector of ['#whoami', '#sign-out', '#app', '#tabs', '#preview-banner']) {
+      assert.equal(await shown(page, selector), false, `${selector} is visible before sign-in`);
+    }
+    await context.close();
+  });
+
+  test('every element the page hides is actually hidden', async () => {
+    /**
+     * The general form of the bug above, asked of the whole document rather than one element:
+     * if anything carries `hidden` and still occupies space, the `[hidden]` rule has been
+     * out-specified by something declared after it.
+     */
+    const { page, context } = await open({ staySignedOut: true });
+    const leaking = await page.$$eval('[hidden]', (nodes) =>
+      nodes
+        .filter((node) => node.getBoundingClientRect().height > 0)
+        .map((node) => node.id || node.className || node.tagName),
+    );
+    assert.deepEqual(leaking, []);
+    await context.close();
+  });
+
   test('a password alone asks for the authenticator rather than failing', async () => {
     /**
      * The API returns no session when a second factor is needed. Treating that as a wrong
@@ -238,6 +279,124 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.equal(await shown(page, '#app'), true);
     assert.equal(await shown(page, '#auth-panel'), false);
     assert.equal(await text(page, '#whoami-org'), 'Example Store');
+    await context.close();
+  });
+
+  test('the site can open this page straight on the signup form', async () => {
+    /**
+     * The landing page's "create an account" button arrives here with `?signup=1`. If the
+     * query were ignored the visitor would land on a sign-in form after clicking a button
+     * that said the opposite, and conclude the account they meant to make already failed.
+     */
+    const { page, context } = await open({ staySignedOut: true, query: 'signup=1' });
+    assert.equal(await text(page, '#auth-title'), 'Create an account');
+    assert.equal(await shown(page, '#auth-org-row'), true, 'a new account needs a name');
+    assert.equal(await text(page, '#auth-submit'), 'Create an account');
+    await context.close();
+  });
+
+  test('an address typed on the site is not asked for a second time', async () => {
+    // Which is the whole reason the site asks for it at all.
+    const { page, context } = await open({
+      staySignedOut: true,
+      query: 'signup=1&email=shop%2Btest%40example.com',
+    });
+    assert.equal(await page.$eval('#auth-email', (node) => node.value), 'shop+test@example.com');
+    await context.close();
+  });
+
+  test('the form is sign-in until something says otherwise', async () => {
+    // The default has to be the common case: most arrivals here already have an account.
+    const { page, context } = await open({ staySignedOut: true });
+    assert.equal(await text(page, '#auth-title'), 'Sign in');
+    assert.equal(await shown(page, '#auth-org-row'), false);
+    await context.close();
+  });
+
+  test('creating an account signs you in and says the address needs confirming', async () => {
+    /**
+     * Two requests, in order: the account, then a session for it. Stopping after the first
+     * would leave somebody who just signed up staring at a sign-in form — the single worst
+     * moment to ask for a password they set four seconds ago.
+     */
+    const { page, context, posts } = await open({ staySignedOut: true, query: 'signup=1' });
+    await page.fill('#auth-org', 'Example Store');
+    await page.fill('#auth-email', 'new@example.test');
+    await page.fill('#auth-password', 'a-sufficiently-long-password');
+    await page.click('#auth-submit');
+    await page.waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 5000 });
+
+    const signup = posts.find((post) => post.path.endsWith('/v1/auth/signup'));
+    assert.ok(signup, 'no account was created');
+    assert.equal(signup.body.organizationName, 'Example Store');
+    assert.equal(signup.body.email, 'new@example.test');
+
+    assert.equal(await shown(page, '#app'), true);
+    // And the one thing they still have to do is on screen, not in an email they may miss.
+    assert.match(await text(page, '#flash'), /[Cc]onfirm your email/);
+    await context.close();
+  });
+
+  test('a signup the API would not let in returns to sign-in without saying who has an account', async () => {
+    /**
+     * The signup response is identical for a free address and a taken one — deliberately, so
+     * the form is not a way to enumerate customers. The page must not undo that by inferring
+     * from the failed login and saying "that address is taken".
+     */
+    const { page, context } = await open({
+      staySignedOut: true,
+      query: 'signup=1',
+      login: { status: 'mfa_required' },
+    });
+    await page.fill('#auth-org', 'Example Store');
+    await page.fill('#auth-email', 'taken@example.test');
+    await page.fill('#auth-password', 'a-sufficiently-long-password');
+    await page.click('#auth-submit');
+    await page.waitForFunction(
+      () => document.getElementById('auth-title')?.textContent === 'Sign in',
+      { timeout: 5000 },
+    );
+
+    const message = await text(page, '#auth-error');
+    assert.match(message, /Check your email/);
+    assert.ok(!/already (has|have) an account|taken|exists/i.test(message), message);
+    assert.equal(await shown(page, '#app'), false);
+    await context.close();
+  });
+
+  test('switching to signup drops a half-typed authenticator code', async () => {
+    /**
+     * A new account has no second factor, so the row cannot apply — and a code left in the
+     * field would be sent with the signup, where it means nothing. Leaving the row on screen
+     * would also ask for something that does not exist yet.
+     */
+    const { page, context } = await open({ staySignedOut: true, login: { status: 'mfa_required' } });
+    await page.fill('#auth-email', 'owner@example.test');
+    await page.fill('#auth-password', 'a-sufficiently-long-password');
+    await page.click('#auth-submit');
+    await page.waitForFunction(() => document.getElementById('auth-mfa-row')?.hidden === false, { timeout: 5000 });
+    await page.fill('#auth-code', '123456');
+
+    await page.click('#auth-switch');
+    assert.equal(await shown(page, '#auth-mfa-row'), false);
+    assert.equal(await page.$eval('#auth-code', (node) => node.value), '');
+    await context.close();
+  });
+
+  test('signing out offers sign-in, not a second account', async () => {
+    // Somebody who signed out wants back in. Leaving the form on "create an account" — which
+    // is where they may have started — reads as their account having been lost.
+    const { page, context } = await open({ staySignedOut: true, query: 'signup=1' });
+    await page.fill('#auth-org', 'Example Store');
+    await page.fill('#auth-email', 'new@example.test');
+    await page.fill('#auth-password', 'a-sufficiently-long-password');
+    await page.click('#auth-submit');
+    await page.waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 5000 });
+
+    await page.click('#sign-out');
+    await page.waitForFunction(() => document.getElementById('app')?.hidden === true, { timeout: 5000 });
+    assert.equal(await text(page, '#auth-title'), 'Sign in');
+    assert.equal(await shown(page, '#auth-org-row'), false);
     await context.close();
   });
 
@@ -685,6 +844,48 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       await page.waitForTimeout(120);
       assert.equal(await shown(page, '#flash'), false, `${label} flashed an error`);
     }
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('a preview reached from the landing page opens on the form and walks through it', async () => {
+    /**
+     * The site's "create an account" button carries `?signup=1`. A preview that answered it by
+     * opening already signed in would skip the one screen the visitor clicked towards — so the
+     * demo would show every part of the product except the door.
+     *
+     * Driven end to end here, through the page's own fetch, because the preview's whole point
+     * is that no code path differs from the real thing.
+     */
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(String(error)));
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push('console: ' + message.text());
+    });
+    await page.route(`${PAGE}*`, (route) =>
+      route.fulfill({ path: pageFile, contentType: 'text/html' }),
+    );
+    // Anything that escapes the stub is a failure, not a silent network call.
+    await page.route('**/v1/**', (route) => route.abort());
+
+    await page.goto(`${PAGE}?preview=1&signup=1&email=shop%40example.com`);
+    await page.waitForTimeout(200);
+
+    assert.equal(await shown(page, '#auth-panel'), true, 'the form should be on screen');
+    assert.equal(await shown(page, '#app'), false, 'the preview signed itself in');
+    assert.equal(await text(page, '#auth-title'), 'Create an account');
+    assert.equal(await page.$eval('#auth-email', (node) => node.value), 'shop@example.com');
+    // The warning comes before the form, not after somebody has filled it in.
+    assert.equal(await shown(page, '#preview-banner'), true);
+
+    await page.fill('#auth-org', 'Example Store');
+    await page.fill('#auth-password', 'a-sufficiently-long-password');
+    await page.click('#auth-submit');
+    await page.waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 6000 });
+
+    assert.equal(await shown(page, '#app'), true);
     assert.deepEqual(errors, []);
     await context.close();
   });

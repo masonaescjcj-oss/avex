@@ -1,143 +1,99 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { SUPPORTED_CHAINS, type CuratedAsset } from '@avex/core';
+import { SUPPORTED_CHAINS } from '@avex/core';
 
-import { LADDER, SIGNATURE_WINDOW_SECONDS, chainRows, percentOf, roundUsd, split } from './facts.js';
+import { SIGNATURE_WINDOW_SECONDS, dashboardLinks, networkCount, signUpWithEmail } from './facts.js';
 
 /**
- * The facts the site states.
+ * The few facts the site states.
  *
- * A marketing page is the one surface nobody tests against reality, which makes it the
- * surface where a claim quietly stops being true. Every figure the page shows is derived
- * here, and these tests are what stop the derivation drifting from the product — the
- * separate suite that compares the *page* against the API's own constants lives in
- * `test/claims.test.mjs`.
+ * Deliberately few: the site names no currencies and quotes no rate, because both belong in
+ * the dashboard where they are current by construction. What is left is a count, a window,
+ * and the handoff to the panel.
  */
 
-describe('what the site says you can accept', () => {
-  test('every supported chain appears, with its native asset', () => {
-    /**
-     * A chain missing from this table is a chain a reader concludes we do not support, which
-     * is the same commercial outcome as not supporting it. And a row with no native asset is
-     * a chain that cannot pay anyone, so an empty string there would be a visible hole.
-     */
-    const rows = chainRows();
-    assert.equal(rows.length, SUPPORTED_CHAINS.length);
-
-    for (const chain of SUPPORTED_CHAINS) {
-      const row = rows.find((entry) => entry.chain === chain);
-      assert.ok(row, `${chain} is missing from the site`);
-      assert.ok(row!.native.length > 0, `${chain} shows no native asset`);
-    }
+describe('what the site claims about reach', () => {
+  test('the network count comes from the product, not from the copy', () => {
+    // "Six networks" survives a chain being added or dropped; a typed number does not.
+    assert.equal(networkCount(), SUPPORTED_CHAINS.length);
   });
 
-  test('a chain reads by its own name, not our identifier', () => {
-    // "bsc" is what our database calls it. Nobody outside this codebase does.
-    const rows = chainRows();
-    assert.equal(rows.find((row) => row.chain === 'bsc')?.label, 'BNB Chain');
-    assert.equal(rows.find((row) => row.chain === 'ton')?.label, 'TON');
+  test('the count is whatever the list holds', () => {
+    assert.equal(networkCount(['bsc', 'ton']), 2);
+    assert.equal(networkCount([]), 0);
   });
 
-  test('the chains most readers came for are first', () => {
-    /**
-     * Ordered by the stablecoin volume each chain actually carries rather than
-     * alphabetically. Alphabetical would put BNB Chain above TRON, and TRON is the one a
-     * reader scanning for "can I take USDT" is looking for.
-     */
-    const order = chainRows().map((row) => row.chain);
-    assert.equal(order[0], 'tron');
-    assert.ok(order.indexOf('tron') < order.indexOf('polygon'));
-  });
-
-  test('a bridged stablecoin is labelled and a native one is not', () => {
-    /**
-     * "USDT on BNB Chain" is Binance-Peg BSC-USD, not a Tether issuance. Saying so on the
-     * marketing page rather than only in the dashboard is the harder version of the claim,
-     * and the right one: a merchant chooses what to accept before they ever sign up.
-     */
-    const rows = chainRows();
-    const bsc = rows.find((row) => row.chain === 'bsc')!;
-    assert.ok(bsc.stablecoins.every((coin) => coin.issuer === 'bridged'));
-
-    const tron = rows.find((row) => row.chain === 'tron')!;
-    assert.equal(tron.stablecoins.find((coin) => coin.symbol === 'USDT')?.issuer, 'native');
-  });
-
-  test('stablecoins are ordered predictably inside a chain', () => {
-    // So the table does not reshuffle when the curated list is reordered.
-    const rows = chainRows();
-    for (const row of rows) {
-      const symbols = row.stablecoins.map((coin) => coin.symbol);
-      assert.deepEqual(symbols, [...symbols].sort());
-    }
-  });
-
-  test('a chain carrying only its native asset still gets a row', () => {
-    /**
-     * Not a hypothetical: a new chain arrives with its gas asset before any stablecoin is
-     * verified on it, and dropping it from the table would mean the site under-reports the
-     * product for exactly as long as that takes.
-     */
-    const rows = chainRows([
-      { symbol: 'SOL', chain: 'solana', decimals: 9, kind: 'native', note: 'x', issuer: 'native', source: { url: 'https://example.test/', checkedOn: '2026-08-18' } },
-    ] as unknown as readonly CuratedAsset[]);
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0]!.native, 'SOL');
-    assert.deepEqual(rows[0]!.stablecoins, []);
+  test('the webhook window is the one the receivers enforce', () => {
+    assert.equal(SIGNATURE_WINDOW_SECONDS, 300);
   });
 });
 
-describe('what the site says it costs', () => {
-  test('the ladder runs from the entry rate downwards', () => {
-    // Entry first, because that is the rate a reader will be on. A table that opened with
-    // 0.4% would be quoting a price almost nobody starts at.
-    assert.deepEqual(
-      LADDER.map((rung) => rung.bps),
-      [50, 45, 40],
-    );
-    assert.equal(LADDER[0]!.fromUsdMicros, 0n);
-  });
-
-  test('the worked example is computed, not typed', () => {
+describe('handing somebody to the dashboard', () => {
+  test('sign in and sign up are the same place, arrived at differently', () => {
     /**
-     * $100 is the figure everyone checks the arithmetic on, and arithmetic done by hand in
-     * the HTML is the first thing to go stale after a repricing.
+     * The site does not host its own auth form. Two copies is two places for a session bug
+     * to live, and the dashboard already has one that is tested.
      */
-    assert.deepEqual(split(100, 50), { fee: '$0.50', net: '$99.50' });
-    assert.deepEqual(split(1000, 45), { fee: '$4.50', net: '$995.50' });
-    assert.deepEqual(split(100, 40), { fee: '$0.40', net: '$99.60' });
+    const links = dashboardLinks('https://dashboard.avex.example');
+    assert.equal(links.signIn, 'https://dashboard.avex.example');
+    assert.equal(links.signUp, 'https://dashboard.avex.example?signup=1');
   });
 
-  test('the split floors the fee, exactly as the contract does', () => {
+  test('a trailing slash does not become a double one', () => {
+    // Otherwise the link is `https://host//?signup=1`, which works and looks broken.
+    assert.equal(dashboardLinks('https://d.example/').signIn, 'https://d.example');
+    assert.equal(dashboardLinks('https://d.example///').signUp, 'https://d.example?signup=1');
+  });
+
+  test('an empty base falls back to a same-origin path', () => {
+    // So a deployment that forgets to set it gets a working relative link rather than `?signup=1`
+    // resolving against the site root.
+    assert.equal(dashboardLinks('').signIn, '/dashboard');
+    assert.equal(dashboardLinks('   ').signUp.startsWith('   '), false);
+  });
+
+  test('an email is carried across so nobody types it twice', () => {
+    const link = signUpWithEmail('https://d.example', 'ali@shop.example');
+    assert.equal(link, 'https://d.example?signup=1&email=ali%40shop.example');
+  });
+
+  test('an address with characters that need encoding survives', () => {
+    // A `+` in a query string means a space. Left unencoded it silently changes the address.
+    const link = signUpWithEmail('https://d.example', 'ali+orders@shop.example');
+    assert.match(link, /email=ali%2Borders%40shop\.example$/);
+  });
+
+  test('an unusable address is dropped rather than passed on', () => {
     /**
-     * `Forwarder._feeOn` rounds down, which favours the merchant. A marketing page rounding
-     * the other way would be quoting a fee a fraction higher than the one taken — small,
-     * and the kind of small that reads as dishonest when somebody notices.
+     * The dashboard asks for it again, which is the right failure: carrying half an address
+     * across would prefill a field with something that cannot be submitted, and the reader
+     * would have to work out what is wrong with what they are looking at.
      */
-    assert.equal(split(0.001, 50).fee, '$0.00');
-    // 0.5% of $19.99 is $0.09995, which floors to nine and a half cents, not ten.
-    assert.equal(split(19.99, 50).fee, '$0.09');
+    for (const bad of ['', '   ', 'ali', 'ali@', '@shop.example', 'ali@shop', 'a b@c.example']) {
+      assert.equal(signUpWithEmail('https://d.example', bad), 'https://d.example?signup=1');
+    }
   });
 
-  test('a rate reads without trailing zeros', () => {
-    assert.equal(percentOf(50), '0.5%');
-    assert.equal(percentOf(45), '0.45%');
-    assert.equal(percentOf(40), '0.4%');
-    assert.equal(percentOf(500), '5%');
-    assert.equal(percentOf(0), '0%');
+  test('surrounding whitespace is trimmed, not treated as invalid', () => {
+    // Pasting an address out of an email client brings a space with it more often than not.
+    assert.match(signUpWithEmail('https://d.example', '  ali@shop.example  '), /email=ali%40shop/);
   });
 
-  test('thresholds read as round money', () => {
-    // "$50,000 a month" is the sentence. "50000000000 micro-dollars" is our unit.
-    assert.equal(roundUsd(50_000_000_000n), '$50,000');
-    assert.equal(roundUsd(250_000_000_000n), '$250,000');
-    assert.equal(roundUsd(0n), '$0');
-  });
+  test('a dashboard that already has a query keeps it', () => {
+    /**
+     * The preview build of the panel lives at `?preview=1`, and a deployment could put it
+     * behind a tenant parameter. A second `?` does not error — it makes the rest of the query
+     * one parameter named `preview=1?signup`, so the page silently ignores everything the
+     * site tried to hand it.
+     */
+    const links = dashboardLinks('https://d.example/panel?preview=1');
+    assert.equal(links.signIn, 'https://d.example/panel?preview=1');
+    assert.equal(links.signUp, 'https://d.example/panel?preview=1&signup=1');
 
-  test('the signature window the docs quote is a real number of seconds', () => {
-    // Quoted in the webhook example, where being wrong would have integrators rejecting
-    // deliveries we consider valid.
-    assert.equal(SIGNATURE_WINDOW_SECONDS, 300);
+    const withEmail = signUpWithEmail('https://d.example/panel?preview=1', 'ali@shop.example');
+    assert.equal(withEmail, 'https://d.example/panel?preview=1&signup=1&email=ali%40shop.example');
+    // One question mark, whatever the base looked like.
+    assert.equal(withEmail.split('?').length, 2);
   });
 });

@@ -216,7 +216,6 @@
   .banner[data-kind="error"] { background: var(--coral-wash); border-color: var(--coral); color: var(--ink); }
   .banner[data-kind="ok"] { background: var(--teal-wash); border-color: var(--teal); color: var(--ink); }
   .banner[data-kind="warn"] { background: var(--amber-wash); border-color: var(--amber); color: var(--ink); }
-  .banner[hidden] { display: none; }
   #submit-result { white-space: pre-wrap; }
 
   .group-head {
@@ -290,9 +289,17 @@
 
   .empty { color: var(--muted); font-size: var(--s-1); padding: 0.75rem 0; }
 
-  /* Author `display` beats the user-agent `[hidden]` rule, so anything that sets one
-     needs saying twice. This bit has bitten this project before. */
-  .view[hidden], form[hidden], .panel[hidden], .row[hidden] { display: none; }
+  /**
+   * Author `display` beats the user-agent `[hidden]` rule, so a `hidden` attribute on
+   * anything this stylesheet gives a display to does nothing at all.
+   *
+   * A bare attribute selector, declared after every rule that sets a display: same
+   * specificity as a single class, so it wins on order — and the next element to be hidden is
+   * covered without anybody remembering to add it to a list. The enumerated version this
+   * replaces had already missed `.whoami`, which put a "Sign out" button on the sign-in
+   * screen of a page nobody was signed in to.
+   */
+  [hidden] { display: none; }
 
   .view { display: flex; flex-direction: column; }
 </style>
@@ -307,12 +314,39 @@
     </div>
   </header>
 
-  <!-- ── sign in ──────────────────────────────────────────────────────── -->
+  <!--
+    First on the page, before even the sign-in form, and not dismissible.
+
+    A dashboard full of plausible figures that somebody takes for their own account is worse
+    than no preview — and a preview reached from the landing page opens on the form, so a
+    warning placed after it would arrive after the decision it is warning about.
+  -->
+  <div class="banner" id="preview-banner" data-kind="warn" hidden>
+    <strong>Preview.</strong>
+    Every figure on this page is made up and nothing can be changed. It is the real
+    dashboard driven by canned answers instead of a server, so what you click is what
+    ships — but this is not an account.
+  </div>
+
+  <!--
+    ── sign in, or start ──────────────────────────────────────────────────
+
+    One form for both, because they ask for almost the same things and two forms is two
+    places for the session handling to diverge. The mode is a variable the site can set:
+    `?signup=1` opens on "create an account", and `?email=` fills the address the visitor
+    already typed there so nobody types it twice.
+  -->
   <section class="panel" id="auth-panel">
-    <div class="panel-head"><h1>Sign in</h1></div>
+    <div class="panel-head">
+      <h1 id="auth-title">Sign in</h1>
+      <button class="ghost" type="button" id="auth-switch">Create an account</button>
+    </div>
     <div class="panel-body">
       <div class="banner" id="auth-error" data-kind="error" hidden></div>
       <form id="auth-form">
+        <div class="row" id="auth-org-row" hidden>
+          <label>Business name<input id="auth-org" autocomplete="organization" maxlength="120"></label>
+        </div>
         <div class="row">
           <label>Email<input type="email" id="auth-email" autocomplete="username" required></label>
           <label>Password<input type="password" id="auth-password" autocomplete="current-password" required></label>
@@ -322,23 +356,13 @@
         </div>
         <div class="row"><button class="primary" type="submit" id="auth-submit">Sign in</button></div>
       </form>
-      <p class="note">
+      <p class="note" id="auth-note">
         This dashboard holds your session in memory only, so closing the tab signs you
         out. That is deliberate: a token in browser storage survives an XSS.
       </p>
     </div>
   </section>
 
-  <!--
-    Said before anything else on the page, and not dismissible. A dashboard full of
-    plausible figures that somebody takes for their own account is worse than no preview.
-  -->
-  <div class="banner" id="preview-banner" data-kind="warn" hidden>
-    <strong>Preview.</strong>
-    Every figure on this page is made up and nothing can be changed. It is the real
-    dashboard driven by canned answers instead of a server, so what you click is what
-    ships — but this is not an account.
-  </div>
 
   <!-- ── the dashboard ────────────────────────────────────────────────── -->
   <div id="app" hidden>
@@ -677,7 +701,64 @@
     }
   }
 
-  // ── sign in ───────────────────────────────────────────────────────────────
+  // ── sign in, or start ─────────────────────────────────────────────────────
+
+  /**
+   * The two ways in, on one form.
+   *
+   * The site sends people here rather than hosting its own sign-in — two copies of an auth
+   * form is two places for a session bug to live. It hands over what it knows in the query:
+   * `?signup=1` means the visitor clicked "create an account", and `?email=` is the address
+   * they already typed. Asking for that address a second time is where a signup funnel
+   * loses people.
+   *
+   * Only the query is read, and only these two keys — nothing here trusts it further than
+   * choosing which heading to draw and which field to prefill.
+   */
+  const entry = new URLSearchParams(location.search);
+  const SIGN_IN_NOTE = el('auth-note').textContent;
+  const SIGN_UP_NOTE =
+    'You get a test key immediately and nothing you do in test mode touches real money. ' +
+    'Your session lives in memory only, so closing the tab signs you out.';
+
+  let mode = entry.get('signup') === '1' ? 'signup' : 'signin';
+
+  const handedOver = (entry.get('email') ?? '').trim();
+  if (handedOver) el('auth-email').value = handedOver;
+
+  function renderAuthMode() {
+    const signingUp = mode === 'signup';
+    el('auth-title').textContent = signingUp ? 'Create an account' : 'Sign in';
+    el('auth-submit').textContent = signingUp ? 'Create an account' : 'Sign in';
+    el('auth-switch').textContent = signingUp ? 'I already have an account' : 'Create an account';
+    el('auth-note').textContent = signingUp ? SIGN_UP_NOTE : SIGN_IN_NOTE;
+
+    el('auth-org-row').hidden = !signingUp;
+    el('auth-org').required = signingUp;
+    // The browser's own password manager needs to know which of the two this is, or it
+    // offers to fill a new account with an old password.
+    el('auth-password').autocomplete = signingUp ? 'new-password' : 'current-password';
+    el('auth-password').minLength = signingUp ? 10 : 1;
+
+    /**
+     * A second factor belongs to signing in. A new account has none yet, so leaving the row
+     * visible after a switch would ask for a code that cannot exist — and the value would
+     * be sent with the signup.
+     */
+    if (signingUp) {
+      el('auth-mfa-row').hidden = true;
+      el('auth-code').value = '';
+    }
+    el('auth-error').hidden = true;
+  }
+
+  el('auth-switch').addEventListener('click', () => {
+    mode = mode === 'signup' ? 'signin' : 'signup';
+    renderAuthMode();
+    (mode === 'signup' && !el('auth-email').value ? el('auth-email') : el('auth-password')).focus();
+  });
+
+  renderAuthMode();
 
   el('auth-form').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -686,16 +767,55 @@
     error.hidden = true;
     button.disabled = true;
 
+    const email = el('auth-email').value.trim();
+    const password = el('auth-password').value;
+
     try {
+      if (mode === 'signup') {
+        await api('/v1/auth/signup', {
+          method: 'POST',
+          body: JSON.stringify({ email, password, organizationName: el('auth-org').value.trim() }),
+        });
+
+        /**
+         * The signup response is identical whether the address was free or already had an
+         * account — deliberately, so the form cannot be used to discover who has one. Which
+         * means the page does not know either, and signing in is the only way to find out.
+         *
+         * A refusal is therefore reported as the ambiguity it is. Saying "that address is
+         * taken" here would leak exactly what the API declined to.
+         */
+        const created = await api('/v1/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ email, password }),
+        }).catch(() => null);
+
+        if (!created || !created.token) {
+          mode = 'signin';
+          renderAuthMode();
+          error.textContent =
+            'Check your email — we have sent you a link. If you already had an account, ' +
+            'sign in with its password.';
+          error.dataset.kind = 'warn';
+          error.hidden = false;
+          return;
+        }
+
+        token = created.token;
+        await start();
+        flash('Account created. Confirm your email address from the link we sent you.', 'warn');
+        return;
+      }
+
       const code = el('auth-code').value.trim();
       const outcome = code
         ? await api('/v1/auth/mfa', {
             method: 'POST',
-            body: JSON.stringify({ email: el('auth-email').value.trim(), password: el('auth-password').value, code }),
+            body: JSON.stringify({ email, password, code }),
           })
         : await api('/v1/auth/login', {
             method: 'POST',
-            body: JSON.stringify({ email: el('auth-email').value.trim(), password: el('auth-password').value }),
+            body: JSON.stringify({ email, password }),
           });
 
       /**
@@ -738,6 +858,9 @@
     el('app').hidden = true;
     el('whoami').hidden = true;
     el('auth-panel').hidden = false;
+    // Somebody who signed out wants to sign back in, not to make a second account.
+    mode = 'signin';
+    renderAuthMode();
   });
 
   // ── tabs ──────────────────────────────────────────────────────────────────
@@ -1608,7 +1731,7 @@
    * API — a preview built by short-circuiting the page's own logic would be showing a
    * version of the dashboard that has never been exercised.
    */
-  if (new URLSearchParams(location.search).get('preview') === '1') {
+  if (entry.get('preview') === '1') {
     const routes = previewRoutes();
     window.fetch = async (input, init) => {
       const url = typeof input === 'string' ? input : input.url;
@@ -1627,10 +1750,22 @@
     };
 
     el('preview-banner').hidden = false;
-    // A token so `api()` sends an Authorization header, exactly as it would signed in.
-    // The stub ignores it; the page must not take a different path because of it.
-    token = 'preview';
-    void start().catch((problem) => flash('Preview failed to load: ' + problem.message, 'error'));
+
+    /**
+     * `?signup=1` alongside it means the visitor came from the landing page's button, so the
+     * preview opens where they were sent — on the form — and the stubbed signup carries them
+     * through it. Arriving already signed in would skip the one screen they clicked towards.
+     *
+     * Without it there is nothing to demonstrate at the door, so the preview opens inside.
+     */
+    if (mode === 'signup') {
+      el('auth-email').focus();
+    } else {
+      // A token so `api()` sends an Authorization header, exactly as it would signed in.
+      // The stub ignores it; the page must not take a different path because of it.
+      token = 'preview';
+      void start().catch((problem) => flash('Preview failed to load: ' + problem.message, 'error'));
+    }
   }
 
   renderTabs();

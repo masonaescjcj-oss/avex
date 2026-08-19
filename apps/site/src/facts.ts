@@ -1,127 +1,76 @@
-import { CURATED_ASSETS, type CuratedAsset } from '@avex/core';
+import { SUPPORTED_CHAINS } from '@avex/core';
 
 /**
- * The facts the site states, read from the product rather than transcribed.
+ * The few facts the site states, read from the product rather than transcribed.
  *
  * A marketing page is the one surface nobody tests against reality, so it is the surface
- * where a claim quietly stops being true. "Six chains" survives a chain being removed;
- * "0.5%" survives a repricing; a currency table typed out by hand survives anything.
+ * where a claim quietly stops being true. There are deliberately very few claims left here:
+ * the site does not list which currencies we accept and does not quote a rate — both are
+ * things a merchant sees inside the dashboard, where they are current by construction and
+ * cannot be a screenshot of last quarter.
  *
- * So every figure on the page that describes the product comes from here, and here reads
- * the same modules the gateway does. What is left in the HTML is prose — which is allowed
- * to be persuasive, but is not allowed to be the source of a number.
+ * What remains is a count and a window, and both come from the code that owns them.
  */
 
-/** The commission ladder, mirroring `FEE_TIERS` in the API's fee-plan service. */
-export const LADDER: readonly { readonly bps: number; readonly fromUsdMicros: bigint }[] = [
-  { bps: 50, fromUsdMicros: 0n },
-  { bps: 45, fromUsdMicros: 50_000_000_000n },
-  { bps: 40, fromUsdMicros: 250_000_000_000n },
-];
+/** How many networks a merchant can be paid on. A capability, not a currency list. */
+export function networkCount(chains: readonly string[] = SUPPORTED_CHAINS): number {
+  return chains.length;
+}
 
 /**
- * The on-chain ceiling is not re-declared here.
+ * How long a webhook signature stays valid, mirroring the receivers that enforce it.
  *
- * `create2.ts` already exports `MAX_FEE_BPS`, mirroring `Forwarder.MAX_FEE_BPS`, and the
- * page reads that one. Declaring a second copy is what broke the first build of this page:
- * the inliner concatenates every module into one scope, so two constants of the same name
- * are a `SyntaxError` that takes the whole script down — the address panel, the currency
- * table and the ladder all at once, with only the static HTML fallbacks left showing.
+ * Quoted in the developer section, where being wrong in either direction is a bug in
+ * somebody else's integration: too large and they accept deliveries we reject, too small and
+ * they reject ones we consider valid.
  */
-
-/** How long a webhook signature stays valid, mirroring the plugin's tolerance. */
 export const SIGNATURE_WINDOW_SECONDS = 300;
 
-/** Chain identifiers as a reader would recognise them. */
-const CHAIN_LABELS: Readonly<Record<string, string>> = {
-  bsc: 'BNB Chain',
-  ethereum: 'Ethereum',
-  polygon: 'Polygon',
-  ton: 'TON',
-  tron: 'TRON',
-  solana: 'Solana',
-};
-
-export interface ChainRow {
-  readonly chain: string;
-  readonly label: string;
-  /** The chain's own gas asset, which every chain has exactly one of. */
-  readonly native: string;
-  /** Stablecoins, with who stands behind each — the distinction three letters hide. */
-  readonly stablecoins: readonly {
-    readonly symbol: string;
-    readonly issuer: 'native' | 'bridged';
-  }[];
+/**
+ * Where the dashboard lives, and how the site hands somebody to it.
+ *
+ * The site does not host its own sign-in. Two copies of an auth form is two places for a
+ * session bug to live, and the dashboard already has one that is tested — so these are
+ * links, and the only thing the site contributes is carrying an email across so nobody
+ * types it twice.
+ */
+export function dashboardLinks(base: string): {
+  readonly signIn: string;
+  readonly signUp: string;
+} {
+  /**
+   * Whitespace first, then the trailing slash.
+   *
+   * The base arrives from a `<meta>` tag, where a stray newline from a template is ordinary.
+   * Left in, it becomes part of the href — the link still resolves, against a path with a
+   * space in it, and only the 404 says so.
+   */
+  const trimmed = base.trim().replace(/\/+$/, '') || '/dashboard';
+  return { signIn: trimmed, signUp: withParam(trimmed, 'signup=1') };
 }
 
 /**
- * What a merchant can accept, per chain.
+ * Add one parameter to a URL that may already have a query.
  *
- * Ordered by how much stablecoin volume each chain actually carries rather than
- * alphabetically, because the first row is the one most readers are looking for.
+ * The dashboard is not always at a bare path: a preview build carries `?preview=1`, and a
+ * deployment could put it behind a tenant parameter. Gluing on a second `?` turns the whole
+ * query into one unreadable parameter, and the failure is silent — the link still opens, on
+ * a page that ignores everything the site tried to tell it.
  */
-const CHAIN_ORDER = ['tron', 'ethereum', 'bsc', 'solana', 'ton', 'polygon'];
-
-export function chainRows(assets: readonly CuratedAsset[] = CURATED_ASSETS): readonly ChainRow[] {
-  const chains = [...new Set(assets.map((asset) => asset.chain))];
-
-  return chains
-    .map((chain) => {
-      const onChain = assets.filter((asset) => asset.chain === chain);
-      const native = onChain.find((asset) => asset.kind === 'native');
-
-      return {
-        chain,
-        label: CHAIN_LABELS[chain] ?? chain,
-        // Every supported chain has exactly one, and a chain without it cannot pay anyone —
-        // so an empty string here would be a visible hole rather than a silent one.
-        native: native?.symbol ?? '',
-        stablecoins: onChain
-          .filter((asset) => asset.kind !== 'native')
-          .map((asset) => ({ symbol: asset.symbol, issuer: asset.issuer }))
-          .sort((left, right) => left.symbol.localeCompare(right.symbol)),
-      };
-    })
-    .sort((left, right) => {
-      const rank = (chain: string) => {
-        const index = CHAIN_ORDER.indexOf(chain);
-        return index === -1 ? CHAIN_ORDER.length : index;
-      };
-      return rank(left.chain) - rank(right.chain) || left.label.localeCompare(right.label);
-    });
-}
-
-/** Basis points as a percentage, without trailing zeros: 45 → "0.45%". */
-export function percentOf(bps: number): string {
-  return `${(bps / 100).toFixed(2).replace(/\.?0+$/, '')}%`;
-}
-
-/** Micro-dollars as a round figure for prose: 50000000000n → "$50,000". */
-export function roundUsd(micros: bigint): string {
-  const whole = micros / 1_000_000n;
-  return `$${whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+function withParam(url: string, param: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}${param}`;
 }
 
 /**
- * What the merchant keeps and what we take, on a given amount.
+ * The sign-up link for a given email, or the plain one when it is not usable.
  *
- * Computed rather than written out because the page shows it on a worked example, and a
- * worked example with the arithmetic done by hand is the first thing to go stale after a
- * repricing.
+ * Deliberately permissive about what an address looks like — one `@` with something either
+ * side. A stricter test rejects real addresses, and the cost of being wrong here is only
+ * that the dashboard asks for the address again rather than pre-filling it.
  */
-export function split(
-  amountUsd: number,
-  bps: number,
-): { readonly fee: string; readonly net: string } {
-  const micros = BigInt(Math.round(amountUsd * 1_000_000));
-  const fee = (micros * BigInt(bps)) / 10_000n;
-  const money = (value: bigint) =>
-    `$${(value / 1_000_000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${(
-      (value % 1_000_000n) /
-      10_000n
-    )
-      .toString()
-      .padStart(2, '0')}`;
-
-  return { fee: money(fee), net: money(micros - fee) };
+export function signUpWithEmail(base: string, email: string): string {
+  const { signUp } = dashboardLinks(base);
+  const trimmed = email.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return signUp;
+  return withParam(signUp, `email=${encodeURIComponent(trimmed)}`);
 }
