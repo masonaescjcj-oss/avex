@@ -207,6 +207,12 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
      * address was already taken.
      */
     ['POST /v1/auth/signup', { status: 201, body: { emailVerificationRequired: true } }],
+    /**
+     * And the link the signup email carries, so the confirmation screen is reachable in a
+     * preview too. The token is not checked here — what a preview has to show is the page
+     * somebody lands on, and that page is the same one either way.
+     */
+    ['POST /v1/auth/verify-email', ok({ verified: true })],
     [
       'POST /v1/auth/login',
       ok({ status: 'ok', token: 'preview', expiresAt: '2027-01-01T00:00:00.000Z' }),

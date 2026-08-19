@@ -246,7 +246,24 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
 
     // The verification token leaves through the mailer, never the API response.
     assert.ok(!JSON.stringify(body).includes('token'));
-    assert.equal(mailer.sent.at(-1)?.to, ownerEmail);
+    const mail = mailer.sent.at(-1);
+    assert.equal(mail?.to, ownerEmail);
+
+    /**
+     * And the link in it has to land on a page that exists.
+     *
+     * The token is reachable only through this mail, so the link is the only way it can ever
+     * be spent — and the dashboard is one page that reads what to do from its query. This
+     * pointed at `/verify-email` for a while, a path nothing serves, which meant every real
+     * signup ended on a 404 with the address left unconfirmed.
+     */
+    const [, link] = mail!.body.match(/(https?:\/\/\S+)/) ?? [];
+    assert.ok(link, `no link in the verification mail: ${mail!.body}`);
+    const url = new URL(link);
+    assert.equal(url.pathname, '/dashboard');
+    const carried = url.searchParams.get('verify');
+    assert.ok(carried && carried.length >= 16, `the link carries no token: ${link}`);
+    assert.ok(!link.includes('/verify-email'), 'the link points at a path nothing serves');
   });
 
   test('a duplicate signup is indistinguishable from a new one', async () => {

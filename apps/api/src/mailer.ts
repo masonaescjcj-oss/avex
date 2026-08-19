@@ -40,11 +40,19 @@ export class ConsoleMailer implements Mailer {
     this.log(`[mail] to=${to} subject="${subject}"\n${body}`);
   }
 
+  /**
+   * The link has to land on a page that exists.
+   *
+   * The dashboard is one page and reads what it should do from its query — `?signup=1` opens
+   * the signup form, `?verify=` spends a token — so this points there rather than at a
+   * `/verify-email` route nothing serves. It pointed at one for a while, and the effect was
+   * that every real signup ended on a 404 with the address left unconfirmed.
+   */
   async sendEmailVerification(email: string, token: string): Promise<void> {
     this.record(
       email,
       'Confirm your email address',
-      `Confirm your email to finish setting up AVEX Pay:\n${this.appUrl}/verify-email?token=${token}`,
+      `Confirm your email to finish setting up AVEX Pay:\n${this.appUrl}/dashboard?verify=${encodeURIComponent(token)}`,
     );
   }
 
@@ -52,7 +60,7 @@ export class ConsoleMailer implements Mailer {
     this.record(
       email,
       'Someone tried to sign up with your email',
-      `Someone attempted to create an AVEX Pay account with this address. If it was you, sign in instead: ${this.appUrl}/login`,
+      `Someone attempted to create an AVEX Pay account with this address. If it was you, sign in instead: ${this.appUrl}/dashboard`,
     );
   }
 
@@ -77,7 +85,9 @@ export class ConsoleMailer implements Mailer {
         `Takes effect: ${details.effectiveAt.toISOString()}`,
         '',
         'If you did not request this, cancel it now and change your password:',
-        `${this.appUrl}/settings/payouts`,
+        // Straight to the tab that cancels it. This notice is the only thing standing between
+        // a stolen session and a redirected payout, so it does not get to say "go and find it".
+        `${this.appUrl}/dashboard?tab=payouts`,
       ].join('\n'),
     );
   }

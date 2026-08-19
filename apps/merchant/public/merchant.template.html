@@ -300,9 +300,17 @@
    * replaces had already missed `.whoami`, which put a "Sign out" button on the sign-in
    * screen of a page nobody was signed in to.
    */
-  [hidden] { display: none; }
-
   .view { display: flex; flex-direction: column; }
+
+  /**
+   * Last rule in the stylesheet, and it has to stay last.
+   *
+   * A bare attribute selector has the same specificity as a single class, so it wins only on
+   * order — put it before `.view { display: flex }` and every hidden view is visible again. It
+   * was, for one commit: the dashboard opened on the payouts tab with the overview still
+   * stacked underneath it.
+   */
+  [hidden] { display: none; }
 </style>
 
 <div class="page">
@@ -727,6 +735,15 @@
   const handedOver = (entry.get('email') ?? '').trim();
   if (handedOver) el('auth-email').value = handedOver;
 
+  /**
+   * Read here, spent at the end of the script.
+   *
+   * Preview mode needs to know about it before it decides whether to open signed in, and that
+   * decision happens further down — but the request itself has to wait until after preview has
+   * replaced `fetch`, or it would leave the page.
+   */
+  const verification = (entry.get('verify') ?? '').trim();
+
   function renderAuthMode() {
     const signingUp = mode === 'signup';
     el('auth-title').textContent = signingUp ? 'Create an account' : 'Sign in';
@@ -847,6 +864,57 @@
     }
   });
 
+  /**
+   * The confirmation link from the signup email lands here.
+   *
+   * Signing up sends a token by email and the API will not hand it back over HTTP, so the
+   * only way it can be spent is a link — and a link has to land on a page that exists. Before
+   * this it pointed at `/verify-email`, a path nothing serves, so every real signup ended at a
+   * 404 and the address stayed unconfirmed with nobody able to say why.
+   *
+   * It does not sign anybody in. The token proves an address, not a session; treating it as
+   * one would mean a forwarded email is a way into somebody's dashboard.
+   *
+   * Called at the very end of the script rather than here, because preview mode replaces
+   * `fetch` down there — starting the request before that would reach the network from a page
+   * whose whole point is that it does not.
+   */
+  async function spendVerificationToken(verification) {
+    mode = 'signin';
+    renderAuthMode();
+
+    const banner = el('auth-error');
+    const show = (message, kind) => {
+      banner.textContent = message;
+      banner.dataset.kind = kind;
+      banner.hidden = false;
+    };
+
+    try {
+      const outcome = await api('/v1/auth/verify-email', {
+        method: 'POST',
+        body: JSON.stringify({ token: verification }),
+      });
+      if (outcome?.verified === true) {
+        show('Email confirmed. Sign in and you are set up.', 'ok');
+      } else {
+        // A 200 that does not say `verified` is a shape change upstream, not a bad token.
+        show('We could not confirm that link. Sign in and ask for a new one.', 'warn');
+      }
+    } catch (problem) {
+      /**
+       * The API's own words for an expired or spent link, because it is the one that knows
+       * which. Anything else — offline, a 500 — says so rather than blaming the link.
+       */
+      show(
+        problem.code === 'invalid_token'
+          ? problem.message
+          : 'Could not reach us to confirm that link. Try it again in a moment.',
+        'warn',
+      );
+    }
+  }
+
   el('sign-out').addEventListener('click', async () => {
     try {
       await api('/v1/auth/logout', { method: 'POST' });
@@ -891,6 +959,21 @@
         }),
       ),
     );
+  }
+
+  /**
+   * Which tab to open on, from the query.
+   *
+   * So an email about a payout change can land on the payouts tab rather than on the overview
+   * with "go and find it" left implied — that mail exists to be acted on quickly, and it says
+   * to cancel the change now.
+   *
+   * Checked against `VIEWS` rather than trusted: `show()` reaches for `view-<id>` and an
+   * unknown id would throw on null, taking the whole dashboard down over a mistyped link.
+   */
+  function requestedView() {
+    const asked = entry.get('tab');
+    return VIEWS.some(([id]) => id === asked) ? asked : 'overview';
   }
 
   function show(id) {
@@ -1721,7 +1804,7 @@
     el('whoami').hidden = false;
     el('auth-panel').hidden = true;
     el('app').hidden = false;
-    show('overview');
+    show(requestedView());
   }
 
   /**
@@ -1753,13 +1836,14 @@
     el('preview-banner').hidden = false;
 
     /**
-     * `?signup=1` alongside it means the visitor came from the landing page's button, so the
-     * preview opens where they were sent — on the form — and the stubbed signup carries them
-     * through it. Arriving already signed in would skip the one screen they clicked towards.
+     * `?signup=1` alongside it means the visitor came from the landing page's button, and
+     * `?verify=` means they came from the confirmation email — either way the screen they were
+     * sent to is at the door, so that is where the preview opens. Arriving already signed in
+     * would put the dashboard over the top of the one message they came to read.
      *
-     * Without it there is nothing to demonstrate at the door, so the preview opens inside.
+     * With neither there is nothing to demonstrate at the door, so the preview opens inside.
      */
-    if (mode === 'signup') {
+    if (mode === 'signup' || verification) {
       el('auth-email').focus();
     } else {
       // A token so `api()` sends an Authorization header, exactly as it would signed in.
@@ -1770,5 +1854,10 @@
   }
 
   renderTabs();
+
+  // Last, so a preview has already replaced `fetch` and this goes to the stub.
+  if (verification) {
+    void spendVerificationToken(verification);
+  }
 })();
 </script>

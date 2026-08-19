@@ -133,6 +133,12 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       if (method === 'POST' && path.endsWith('/v1/auth/login')) {
         return route.fulfill(json(overrides.login ?? { token: 'sess_abc' }));
       }
+      if (method === 'POST' && path.endsWith('/v1/auth/verify-email')) {
+        posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
+        return route.fulfill(
+          overrides.verify ?? json({ verified: true }),
+        );
+      }
       if (method === 'POST' && path.endsWith('/v1/auth/signup')) {
         posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
         /**
@@ -262,20 +268,27 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
-  test('every element the page hides is actually hidden', async () => {
+  test('every element the page hides is actually hidden, signed out and in', async () => {
     /**
      * The general form of the bug above, asked of the whole document rather than one element:
      * if anything carries `hidden` and still occupies space, the `[hidden]` rule has been
      * out-specified by something declared after it.
+     *
+     * Both states, because the first version of this test only checked the sign-in screen —
+     * where every view is inside a hidden `#app` and therefore has no height whatever the rules
+     * say. It passed for that reason while `.view { display: flex }`, declared after the
+     * `[hidden]` rule, kept the overview stacked under whichever tab was open.
      */
-    const { page, context } = await open({ staySignedOut: true });
-    const leaking = await page.$$eval('[hidden]', (nodes) =>
-      nodes
-        .filter((node) => node.getBoundingClientRect().height > 0)
-        .map((node) => node.id || node.className || node.tagName),
-    );
-    assert.deepEqual(leaking, []);
-    await context.close();
+    for (const staySignedOut of [true, false]) {
+      const { page, context } = await open({ staySignedOut });
+      const leaking = await page.$$eval('[hidden]', (nodes) =>
+        nodes
+          .filter((node) => node.getBoundingClientRect().height > 0)
+          .map((node) => node.id || node.className || node.tagName),
+      );
+      assert.deepEqual(leaking, [], staySignedOut ? 'signed out' : 'signed in');
+      await context.close();
+    }
   });
 
   test('a password alone asks for the authenticator rather than failing', async () => {
@@ -403,6 +416,95 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
+  test('the link from the signup email confirms the address and says so', async () => {
+    /**
+     * The token leaves the API only by email — it is never in a response — so a link is the
+     * only way it can be spent, and the link has to land somewhere. It used to point at
+     * `/verify-email`, a path nothing serves, so every real signup ended on a 404 with the
+     * address unconfirmed and nobody able to say why.
+     */
+    const { page, context, posts } = await open({
+      staySignedOut: true,
+      query: 'verify=tok_abc123',
+    });
+    await page.waitForFunction(
+      () => document.getElementById('auth-error')?.hidden === false,
+      { timeout: 5000 },
+    );
+
+    const spent = posts.find((post) => post.path.endsWith('/v1/auth/verify-email'));
+    assert.ok(spent, 'the token was never spent');
+    assert.equal(spent.body.token, 'tok_abc123');
+
+    assert.match(await text(page, '#auth-error'), /confirmed/i);
+    assert.equal(await page.$eval('#auth-error', (node) => node.dataset.kind), 'ok');
+    // The form they need next, not the one they came from.
+    assert.equal(await text(page, '#auth-title'), 'Sign in');
+    await context.close();
+  });
+
+  test('confirming an address does not sign anybody in', async () => {
+    /**
+     * The token proves an address, not a session. Treating it as one would make a forwarded
+     * email a way into somebody's dashboard — and forwarding a "confirm your email" message to
+     * a colleague is an ordinary thing to do.
+     */
+    const { page, context } = await open({ staySignedOut: true, query: 'verify=tok_abc123' });
+    await page.waitForFunction(
+      () => document.getElementById('auth-error')?.hidden === false,
+      { timeout: 5000 },
+    );
+    assert.equal(await shown(page, '#app'), false, 'a verification link opened the dashboard');
+    assert.equal(await shown(page, '#auth-panel'), true);
+    await context.close();
+  });
+
+  test('a spent or expired link is explained in the API\'s own words', async () => {
+    // It is the side that knows which of the two happened. Inventing a message here would mean
+    // guessing, and the guess is what the reader would act on.
+    const { page, context } = await open({
+      staySignedOut: true,
+      query: 'verify=tok_stale',
+      verify: {
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: 'invalid_token',
+          message: 'This verification link is invalid or has expired. Request a new one.',
+        }),
+      },
+    });
+    await page.waitForFunction(
+      () => document.getElementById('auth-error')?.hidden === false,
+      { timeout: 5000 },
+    );
+
+    assert.match(await text(page, '#auth-error'), /invalid or has expired/);
+    assert.equal(await page.$eval('#auth-error', (node) => node.dataset.kind), 'warn');
+    assert.equal(await shown(page, '#app'), false);
+    await context.close();
+  });
+
+  test('a link that cannot be checked does not blame the link', async () => {
+    /**
+     * Offline, or a 500. Telling somebody their link is bad when we could not read it sends
+     * them to request another one that will look just as broken.
+     */
+    const { page, context } = await open({
+      staySignedOut: true,
+      query: 'verify=tok_abc123',
+      verify: { status: 503, contentType: 'application/json', body: JSON.stringify({}) },
+    });
+    await page.waitForFunction(
+      () => document.getElementById('auth-error')?.hidden === false,
+      { timeout: 5000 },
+    );
+    const message = await text(page, '#auth-error');
+    assert.match(message, /could not reach us/i);
+    assert.ok(!/expired|invalid/i.test(message), message);
+    await context.close();
+  });
+
   test('signing out offers sign-in, not a second account', async () => {
     // Somebody who signed out wants back in. Leaving the form on "create an account" — which
     // is where they may have started — reads as their account having been lost.
@@ -427,6 +529,38 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await page.click('#sign-out');
     await page.waitForFunction(() => document.getElementById('app')?.hidden === true, { timeout: 5000 });
     assert.equal(await shown(page, '#auth-panel'), true);
+    await context.close();
+  });
+
+  test('an email can send a merchant straight to the tab it is about', async () => {
+    /**
+     * The payout-change notice says to cancel the change now. Landing on the overview and
+     * leaving "find the payouts tab" implied is the wrong shape for the one mail that stands
+     * between a stolen session and a redirected payout.
+     */
+    const { page, context } = await open({ query: 'tab=payouts' });
+    const current = await page.$eval('nav.tabs button[aria-current="page"]', (node) =>
+      node.textContent.trim(),
+    );
+    assert.equal(current, 'Payouts');
+    assert.equal(await shown(page, '#view-payouts'), true);
+    assert.equal(await shown(page, '#view-overview'), false);
+    await context.close();
+  });
+
+  test('a tab nobody has falls back to the overview instead of breaking the page', async () => {
+    /**
+     * `show()` reaches for `view-<id>`, so an id from the query that names no view would throw
+     * on null and take the whole dashboard down — over a mistyped link, which is the one thing
+     * a link in an email reliably becomes.
+     */
+    const { page, context, errors } = await open({ query: 'tab=settlements' });
+    const current = await page.$eval('nav.tabs button[aria-current="page"]', (node) =>
+      node.textContent.trim(),
+    );
+    assert.equal(current, 'Overview');
+    assert.equal(await shown(page, '#view-overview'), true);
+    assert.deepEqual(errors, []);
     await context.close();
   });
 
@@ -906,6 +1040,38 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await page.waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 6000 });
 
     assert.equal(await shown(page, '#app'), true);
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('a preview reached from the confirmation email shows the message, not the dashboard', async () => {
+    /**
+     * Every other preview opens signed in, and this one must not: the dashboard would render
+     * straight over the one line the visitor came to read, and the preview would be showing
+     * every part of the product except the screen the email points at.
+     *
+     * The bug was exactly that, and no test caught it — the other verification tests stub the
+     * API themselves and never enter preview mode at all.
+     */
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(String(error)));
+    await page.route(`${PAGE}*`, (route) =>
+      route.fulfill({ path: pageFile, contentType: 'text/html' }),
+    );
+    // Anything that escapes the stub is a failure, not a silent network call.
+    await page.route('**/v1/**', (route) => route.abort());
+
+    await page.goto(`${PAGE}?preview=1&verify=tok_abc123`);
+    await page.waitForFunction(
+      () => document.getElementById('auth-error')?.hidden === false,
+      { timeout: 6000 },
+    );
+
+    assert.equal(await shown(page, '#app'), false, 'the preview opened signed in');
+    assert.match(await text(page, '#auth-error'), /confirmed/i);
+    assert.equal(await shown(page, '#preview-banner'), true);
     assert.deepEqual(errors, []);
     await context.close();
   });
