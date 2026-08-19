@@ -226,6 +226,26 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
+  test('the mark is drawn rather than fetched', async () => {
+    /**
+     * This page is one file and reaches no host at all, so the logo has to be inline — two
+     * arches, which is less markup than the base64 of a picture of two arches. Decorative,
+     * because the word AVEX is in the text beside it.
+     */
+    const { page, context } = await open({ staySignedOut: true });
+    const mark = await page.$eval('.brand-mark', (node) => ({
+      tag: node.tagName.toLowerCase(),
+      hidden: node.getAttribute('aria-hidden'),
+      paths: node.querySelectorAll('path').length,
+      width: Math.round(node.getBoundingClientRect().width),
+    }));
+    assert.equal(mark.tag, 'svg');
+    assert.equal(mark.hidden, 'true');
+    assert.equal(mark.paths, 2, 'the mark is two arches');
+    assert.ok(mark.width >= 20, `the mark rendered ${mark.width}px wide`);
+    await context.close();
+  });
+
   test('nothing belonging to a signed-in account is on the sign-in screen', async () => {
     /**
      * A `hidden` attribute does nothing when the stylesheet gives the element a display, and

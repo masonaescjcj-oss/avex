@@ -77,12 +77,13 @@
     margin-bottom: 1.25rem;
   }
   .brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 800; font-size: var(--s1); }
-  .brand-mark {
-    width: 1.75rem; height: 1.75rem; border-radius: var(--r-sm);
-    background: var(--lime); color: var(--lime-ink);
-    display: grid; place-items: center;
-    font-family: var(--mono); font-weight: 700; flex: none;
-  }
+  /**
+   * The mark, drawn rather than fetched.
+   *
+   * This page reaches no host at all — it is one file — so a logo has to be inline. Two arches
+   * is less markup than the base64 of a picture of two arches, and it stays sharp at any size.
+   */
+  .brand-mark { width: 1.75rem; height: 1.75rem; flex: none; display: block; }
   .brand-pay { color: var(--lime); }
 
   .whoami { display: flex; align-items: center; gap: 0.625rem; font-size: var(--s-1); color: var(--muted); }
@@ -306,7 +307,7 @@
 
 <div class="page">
   <header class="top">
-    <div class="brand"><span class="brand-mark">A</span>AVEX <span class="brand-pay">Pay</span></div>
+    <div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--void)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>AVEX <span class="brand-pay">Pay</span></div>
     <div class="whoami" id="whoami" hidden>
       <span id="whoami-org"></span>
       <code id="whoami-mode"></code>

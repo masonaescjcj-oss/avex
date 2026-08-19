@@ -136,12 +136,41 @@
     font-weight: 800;
     font-size: var(--s1);
     letter-spacing: -0.03em;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    white-space: nowrap;
   }
   .wordmark span { color: var(--lime); }
+
+  /**
+   * The mark, drawn rather than fetched.
+   *
+   * An artifact may reach no host but Google Fonts, so a logo file would have to be a data
+   * URI — and at this size the shape is two arches, which is less markup than the base64 of a
+   * PNG of two arches. Scales to any size and stays sharp; `flex: none` because a flex row
+   * will otherwise squash it before it squashes the text beside it.
+   */
+  .mark { width: 1.55em; height: 1.55em; flex: none; display: block; }
+
   .bar nav { margin-inline-start: auto; display: flex; gap: 1.25rem; align-items: center; }
-  .bar nav a { color: var(--muted); font-size: var(--s-1); }
+  .bar nav a { color: var(--muted); font-size: var(--s-1); white-space: nowrap; }
   .bar nav a:hover { color: var(--ink); text-decoration: none; }
-  @media (max-width: 46rem) { .bar nav a[data-optional] { display: none; } }
+
+  /**
+   * On a phone the bar carries the two doors and nothing else.
+   *
+   * Five items in one row at 390px wrapped "Start now" onto two lines and pushed the wordmark
+   * into the links — the header was the first thing on the page and the first thing that
+   * looked broken. The section links are not lost: they are in the footer, and this is a page
+   * a reader scrolls rather than navigates.
+   */
+  @media (max-width: 46rem) {
+    .bar { gap: 0.6rem; padding-inline: var(--gutter); }
+    .bar nav { gap: 0.9rem; }
+    .bar nav a[data-optional] { display: none; }
+    .wordmark { font-size: var(--s0); }
+  }
 
   .btn {
     display: inline-flex;
@@ -676,11 +705,11 @@
 </style>
 
 <header class="bar">
-  <span class="wordmark">AVEX<span>Pay</span></span>
+  <span class="wordmark"><svg class="mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--void)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>AVEX<span>Pay</span></span>
   <nav>
     <a href="#products" data-optional>Products</a>
-    <a href="#how">How it works</a>
-    <a href="#docs">Developers</a>
+    <a href="#how" data-optional>How it works</a>
+    <a href="#docs" data-optional>Developers</a>
     <a class="nav-auth" data-dash="in" href="/dashboard">Sign in</a>
     <a class="btn btn-lime btn-sm" data-dash="up" href="/dashboard?signup=1">Start now</a>
   </nav>
@@ -814,7 +843,7 @@
               <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
             </marker>
             <marker id="ah-lime" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="#C6F73F"></path>
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--lime)"></path>
             </marker>
           </defs>
 
@@ -830,8 +859,8 @@
 
           <!-- the derived address -->
           <rect x="244" y="34" width="150" height="44" rx="10" fill="none" stroke="#C6F73F" stroke-width="1.5"></rect>
-          <text x="319" y="52" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="#C6F73F">deposit address</text>
-          <text x="319" y="68" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="#C6F73F" fill-opacity="0.8">nothing deployed</text>
+          <text x="319" y="52" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--lime)">deposit address</text>
+          <text x="319" y="68" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--lime)" fill-opacity="0.8">nothing deployed</text>
 
           <!-- payer -->
           <rect x="244" y="128" width="150" height="30" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.35"></rect>
@@ -841,7 +870,7 @@
 
           <!-- settlement -->
           <line x1="398" y1="56" x2="470" y2="56" stroke="#C6F73F" stroke-opacity="0.9" marker-end="url(#ah-lime)"></line>
-          <text x="434" y="46" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="#C6F73F">sweep</text>
+          <text x="434" y="46" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--lime)">sweep</text>
 
           <rect x="476" y="20" width="158" height="72" rx="10" fill="none" stroke="currentColor" stroke-opacity="0.35"></rect>
           <text x="555" y="44" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">one transaction</text>
@@ -851,9 +880,9 @@
           <line x1="636" y1="42" x2="686" y2="26" stroke="#C6F73F" stroke-opacity="0.9" marker-end="url(#ah-lime)"></line>
           <line x1="636" y1="70" x2="686" y2="86" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#ah)"></line>
 
-          <text x="692" y="24" font-family="IBM Plex Mono, monospace" font-size="11" fill="#C6F73F">your wallet</text>
-          <text x="692" y="38" font-family="IBM Plex Mono, monospace" font-size="10" fill="#C6F73F" fill-opacity="0.8">the payment,</text>
-          <text x="692" y="51" font-family="IBM Plex Mono, monospace" font-size="10" fill="#C6F73F" fill-opacity="0.8">less our fee</text>
+          <text x="692" y="24" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--lime)">your wallet</text>
+          <text x="692" y="38" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--lime)" fill-opacity="0.8">the payment,</text>
+          <text x="692" y="51" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--lime)" fill-opacity="0.8">less our fee</text>
           <text x="692" y="88" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">AVEX</text>
           <text x="692" y="102" font-family="IBM Plex Mono, monospace" font-size="10" fill="currentColor" fill-opacity="0.75">our fee</text>
 
@@ -1152,7 +1181,7 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
 
 <footer>
   <div class="foot-brand">
-    <span class="wordmark">AVEX<span>Pay</span></span>
+    <span class="wordmark"><svg class="mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--void)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>AVEX<span>Pay</span></span>
     <p>Non-custodial by construction.</p>
     <div class="foot-cta">
       <a class="btn btn-lime btn-sm" data-dash="up" href="/dashboard?signup=1">Create an account</a>

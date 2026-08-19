@@ -81,7 +81,19 @@
     padding-bottom: 1rem;
     border-bottom: 1px solid var(--line);
   }
-  .brand { font-size: var(--s1); font-weight: 800; letter-spacing: -0.02em; }
+  .brand {
+    font-size: var(--s1); font-weight: 800; letter-spacing: -0.02em;
+    display: flex; align-items: center; gap: 0.45rem;
+  }
+  /**
+   * The mark, in the palette's own tokens rather than in hex.
+   *
+   * This page prints, and printing swaps the whole palette: `--lime` becomes black and
+   * `--void` becomes white. A mark written in hex would put a lime block on a customer's
+   * printed receipt — a grey smear on a laser printer, and ink spent on decoration. Written
+   * in tokens it inverts with everything else: black square, white arches.
+   */
+  .brand-mark { width: 1.6rem; height: 1.6rem; flex: none; display: block; }
   .brand-pay { color: var(--lime); }
   .doc-label {
     font-family: var(--mono);
@@ -247,7 +259,7 @@
   <div id="content" hidden>
     <header class="top">
       <div>
-        <div class="brand">AVEX<span class="brand-pay">Pay</span></div>
+        <div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--void)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>AVEX<span class="brand-pay">Pay</span></div>
         <div class="doc-label">Payment receipt</div>
       </div>
       <div style="text-align:end">

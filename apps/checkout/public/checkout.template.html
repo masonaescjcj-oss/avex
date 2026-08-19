@@ -93,19 +93,14 @@
     font-size: var(--s1);
     letter-spacing: -0.01em;
   }
-  .brand-mark {
-    width: 1.75rem;
-    height: 1.75rem;
-    border-radius: var(--r-sm);
-    background: var(--lime);
-    color: var(--lime-ink);
-    display: grid;
-    place-items: center;
-    font-family: var(--mono);
-    font-size: var(--s0);
-    font-weight: 700;
-    flex: none;
-  }
+  /**
+   * The mark, drawn rather than fetched.
+   *
+   * This page is one file and reaches no host, so a logo has to be inline — and two arches is
+   * less markup than the base64 of a picture of two arches. It is also the one page a customer
+   * sees, which is the page where a logo that failed to load would matter most.
+   */
+  .brand-mark { width: 1.75rem; height: 1.75rem; flex: none; display: block; }
   .brand-pay { color: var(--lime); }
 
   .invoice-ref {
@@ -704,7 +699,7 @@
 
   <header class="masthead">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true">A</span>
+      <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--void)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>
       <span>AVEX <span class="brand-pay">Pay</span></span>
     </div>
     <div class="invoice-ref">Invoice <code id="invoice-ref">#INV-8F2C41</code></div>

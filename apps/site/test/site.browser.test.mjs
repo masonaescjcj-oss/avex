@@ -293,6 +293,87 @@ describe('avex.pay', { skip: playwright ? false : 'playwright is not installed' 
     await context.close();
   });
 
+  test('the header is one row on a phone, with both doors on it', async () => {
+    /**
+     * Five items in that row wrapped: "Start now" broke onto two lines and the wordmark ran
+     * into the section links, so the first thing on the page was the first thing that looked
+     * broken. The section links come off below 46rem — they are in the footer, and this is a
+     * page a reader scrolls rather than navigates — but the two doors never do, because
+     * getting somebody into the panel is what the header is for.
+     *
+     * Asserted as geometry rather than as CSS, because the bug was geometry: every rule
+     * involved was doing exactly what it said.
+     */
+    const { page, context } = await open({ width: 390, height: 844 });
+
+    const bar = await page.$eval('.bar', (node) => {
+      const box = node.getBoundingClientRect();
+      return { height: Math.round(box.height), right: Math.round(box.right) };
+    });
+    assert.ok(bar.height <= 80, `the header is ${bar.height}px tall, so it has wrapped`);
+
+    const visible = await page.$$eval('.bar .wordmark, .bar nav > *', (nodes) =>
+      nodes
+        .map((node) => {
+          const box = node.getBoundingClientRect();
+          return {
+            label: node.textContent.replace(/\s+/g, ' ').trim(),
+            height: Math.round(box.height),
+            right: Math.round(box.right),
+            left: Math.round(box.left),
+          };
+        })
+        .filter((item) => item.height > 0),
+    );
+
+    const labels = visible.map((item) => item.label);
+    assert.deepEqual(labels, ['AVEXPay', 'Sign in', 'Start now'], labels.join(' | '));
+    for (const item of visible) {
+      // A wrapped control is roughly twice as tall as an unwrapped one.
+      assert.ok(item.height <= 44, `"${item.label}" is ${item.height}px tall; it has wrapped`);
+      assert.ok(item.right <= 390, `"${item.label}" runs off the screen`);
+      assert.ok(item.left >= 0, `"${item.label}" starts off the screen`);
+    }
+    await context.close();
+  });
+
+  test('the header still carries the section links on a desktop', async () => {
+    // The mobile rule hides them by attribute, which is exactly the kind of rule that gets
+    // written without a min-width and takes the desktop nav with it.
+    const { page, context } = await open();
+    const labels = await page.$$eval('.bar nav a', (nodes) =>
+      nodes.filter((node) => node.getBoundingClientRect().height > 0).map((node) => node.textContent.trim()),
+    );
+    assert.deepEqual(labels, ['Products', 'How it works', 'Developers', 'Sign in', 'Start now']);
+    await context.close();
+  });
+
+  test('the mark is drawn, and it is drawn the same on the panel', async () => {
+    /**
+     * The logo is inline SVG because an artifact may reach no host but Google Fonts — a file
+     * would have to be a data URI, and at this size the arches are less markup than the base64
+     * of a picture of them. It renders at whatever size, which is the other reason.
+     *
+     * Decorative, not labelled: the word AVEX is in the text beside it, and a screen reader
+     * announcing "AVEX AVEXPay" is worse than one announcing the wordmark once.
+     */
+    const { page, context } = await open();
+    const marks = await page.$$eval('.mark', (nodes) =>
+      nodes.map((node) => ({
+        hidden: node.getAttribute('aria-hidden'),
+        paths: node.querySelectorAll('path').length,
+        width: Math.round(node.getBoundingClientRect().width),
+      })),
+    );
+    assert.equal(marks.length, 2, 'the mark belongs in the header and the footer');
+    for (const mark of marks) {
+      assert.equal(mark.hidden, 'true');
+      assert.equal(mark.paths, 2, 'the mark is two arches');
+      assert.ok(mark.width >= 16, `the mark rendered ${mark.width}px wide`);
+    }
+    await context.close();
+  });
+
   test('the derivation panel is usable on a phone', async () => {
     // It is the hero. A hero that only works on a desktop is a hero most readers never see.
     const { page, context } = await open({ width: 390, height: 844 });
