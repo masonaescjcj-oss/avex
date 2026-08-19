@@ -5,6 +5,7 @@ import type { AssetService } from '../domain/asset-service.js';
 import { PayoutAddressError } from '../domain/payout-service.js';
 import type { PayoutAddressService } from '../domain/payout-service.js';
 import type { InviteService } from '../domain/invite-service.js';
+import type { MembershipService } from '../domain/membership-service.js';
 import { assetErrorResponse } from './routes/assets.js';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
@@ -98,6 +99,7 @@ export interface AppContext {
   readonly assets: AssetService;
   readonly payouts: PayoutAddressService;
   readonly invites: InviteService;
+  readonly memberships: MembershipService;
   readonly staffAuth: StaffAuthService;
   readonly admin: AdminService;
   readonly settlements: SettlementStore;

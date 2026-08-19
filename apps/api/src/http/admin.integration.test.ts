@@ -22,6 +22,7 @@ import { AdminService } from '../domain/admin-service.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
 import { InviteService } from '../domain/invite-service.js';
+import { MembershipService } from '../domain/membership-service.js';
 import { AuthService } from '../domain/auth-service.js';
 import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
@@ -188,6 +189,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       minPriceSources: DEFAULT_AGGREGATION.minSources,
       payouts: new PayoutAddressService(db, audit, mailer),
       invites: new InviteService(db, audit),
+      memberships: new MembershipService(db, audit, mailer),
       assets: new AssetService(db, audit, new ContractProbe(offlineCaller), ['USDT']),
       prices: new PriceService([fakeSource('a'), fakeSource('b')], {
         aggregation: DEFAULT_AGGREGATION,

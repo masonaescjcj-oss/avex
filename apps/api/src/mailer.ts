@@ -26,6 +26,19 @@ export interface Mailer {
     details: { organizationName: string; role: Role; token: string; expiresAt: Date },
   ): Promise<void>;
   /**
+   * Sent to somebody who was removed from an organisation by somebody else.
+   *
+   * Without it they find out from a 404, which reads as the product being broken
+   * rather than as a decision having been made. Not sent when they left of their
+   * own accord: nobody needs an email about something they just did.
+   */
+  sendMembershipRevoked(email: string, details: { organizationId: string }): Promise<void>;
+  /** Sent when somebody else changes what a member is allowed to do. */
+  sendRoleChanged(
+    email: string,
+    details: { organizationId: string; from: Role; to: Role },
+  ): Promise<void>;
+  /**
    * Sent to every member when a payout address change is queued — the delay only
    * protects a merchant who is told about it.
    */
@@ -89,6 +102,41 @@ export class ConsoleMailer implements Mailer {
         `${this.appUrl}/dashboard?invite=${encodeURIComponent(details.token)}`,
         '',
         `This invitation expires ${details.expiresAt.toISOString()}.`,
+      ].join('\n'),
+    );
+  }
+
+  async sendMembershipRevoked(email: string, details: { organizationId: string }): Promise<void> {
+    this.record(
+      email,
+      'Your access to an AVEX Pay organisation was removed',
+      [
+        'Your membership of an organisation on AVEX Pay has been removed, so you no longer',
+        'have access to its dashboard.',
+        '',
+        // The one thing they might reasonably want to check: their own account is intact.
+        'Your account itself is unchanged. If this was not expected, speak to whoever runs',
+        `that organisation. Reference: ${details.organizationId}`,
+      ].join('\n'),
+    );
+  }
+
+  async sendRoleChanged(
+    email: string,
+    details: { organizationId: string; from: Role; to: Role },
+  ): Promise<void> {
+    this.record(
+      email,
+      'What you can do on AVEX Pay has changed',
+      [
+        `Your role changed from ${details.from} to ${details.to}.`,
+        '',
+        // Both ends, because "you are now an admin" reads as a promotion either way and the
+        // recipient is the person best placed to notice if it was not.
+        'If that is not what you expected, speak to whoever runs that organisation.',
+        `Reference: ${details.organizationId}`,
+        '',
+        `${this.appUrl}/dashboard?tab=team`,
       ].join('\n'),
     );
   }

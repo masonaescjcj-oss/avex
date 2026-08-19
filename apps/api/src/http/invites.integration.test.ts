@@ -24,6 +24,7 @@ import { CheckoutService } from '../domain/checkout-service.js';
 import { DepositAddressDeriver } from '../domain/deposit-address.js';
 import { FeePlanService } from '../domain/fee-plan-service.js';
 import { InviteService } from '../domain/invite-service.js';
+import { MembershipService } from '../domain/membership-service.js';
 import { InvoiceCreationService } from '../domain/invoice-creation.js';
 import { MerchantService } from '../domain/merchant-service.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
@@ -194,6 +195,7 @@ describe('member invitations', { skip: databaseUrl ? false : 'DATABASE_URL not s
       assets: new AssetService(db, audit, new ContractProbe(offlineCaller), ['USDT']),
       payouts: new PayoutAddressService(db, audit, mailer),
       invites,
+      memberships: new MembershipService(db, audit, mailer),
       auth: new AuthService(db, audit, {
         sessionTtlMs: 60 * 60 * 1000,
         emailTokenTtlMs: 60 * 60 * 1000,

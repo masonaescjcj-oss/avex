@@ -99,12 +99,14 @@ const ahead = (minutes: number) => new Date(NOW + minutes * 60_000).toISOString(
 
 const MEMBERS = [
   {
+    userId: 'preview-you',
     email: 'you@example.com',
     role: 'owner',
     twoFactorEnabled: true,
     joinedAt: '2026-02-04T09:00:00.000Z',
   },
   {
+    userId: 'preview-reza',
     email: 'reza@example.com',
     role: 'developer',
     /**

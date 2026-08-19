@@ -86,8 +86,8 @@ const FIXTURE = {
   deliveries: { deliveries: [] },
   members: {
     data: [
-      { email: 'owner@example.test', role: 'owner', twoFactorEnabled: true, joinedAt: '2026-02-04T09:00:00.000Z' },
-      { email: 'reza@example.test', role: 'developer', twoFactorEnabled: false, joinedAt: '2026-06-18T11:30:00.000Z' },
+      { userId: 'u-owner', email: 'owner@example.test', role: 'owner', twoFactorEnabled: true, joinedAt: '2026-02-04T09:00:00.000Z' },
+      { userId: 'u-reza', email: 'reza@example.test', role: 'developer', twoFactorEnabled: false, joinedAt: '2026-06-18T11:30:00.000Z' },
     ],
   },
   /** One invitation still live, one nobody acted on — the state that used to be invisible. */
@@ -200,6 +200,13 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         );
       }
 
+      if (method === 'PATCH') {
+        posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
+        return route.fulfill(
+          overrides.roleChange ?? json({ status: 'changed', from: 'developer', to: 'admin' }),
+        );
+      }
+
       if (method === 'PUT') {
         posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
         return route.fulfill({ status: 204, body: '' });
@@ -242,6 +249,11 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
       if (method === 'DELETE') {
         posts.push({ path, body: null });
+        if (path.includes('/members/')) {
+          return route.fulfill(
+            overrides.removeMember ?? json({ status: 'removed', apiKeysUnaffected: true }),
+          );
+        }
         return route.fulfill({ status: 204, body: '' });
       }
 
@@ -636,11 +648,23 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * boundary before "on" and failed for a reason that had nothing to do with the page.
      */
     const rows = await page.$$eval('#member-table tbody tr', (nodes) =>
-      nodes.map((node) => [...node.children].map((cell) => cell.textContent.trim())),
+      nodes.map((node) => ({
+        email: node.children[0].textContent.trim(),
+        /**
+         * The picker's value when there is one, the badge's text when there is not.
+         *
+         * A cell holding a `<select>` has every option in its `textContent`, so reading the
+         * cell as a string gives "viewerdeveloperadminowner" — which is what this asserted
+         * before roles became editable.
+         */
+        role: node.children[1].querySelector('select')?.value
+          ?? node.children[1].textContent.trim(),
+        twoFactor: node.children[2].textContent.trim(),
+      })),
     );
     assert.equal(rows.length, 2, JSON.stringify(rows));
-    assert.deepEqual(rows[0].slice(0, 3), ['owner@example.test', 'owner', 'on']);
-    assert.deepEqual(rows[1].slice(0, 3), ['reza@example.test', 'developer', 'off']);
+    assert.deepEqual(rows[0], { email: 'owner@example.test', role: 'owner', twoFactor: 'on' });
+    assert.deepEqual(rows[1], { email: 'reza@example.test', role: 'developer', twoFactor: 'off' });
     await context.close();
   });
 
@@ -779,6 +803,189 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     const deleted = posts.find((post) => post.path.includes('/invites/inv-live'));
     assert.ok(deleted, JSON.stringify(posts.map((p) => p.path)));
     assert.match(await text(page, '#flash'), /no longer works/i);
+    await context.close();
+  });
+
+  test('the only owner has no role picker and no way out, with the reason on screen', async () => {
+    /**
+     * The invariant, drawn before anybody tries rather than as an error afterwards. An
+     * organisation with no owner is one whose payout address can never be changed again — by
+     * anybody, including us — so a control that would reach that state is not offered.
+     *
+     * The server refuses either way. This is about whether the page teaches the rule or teaches
+     * that it is unreliable.
+     */
+    const { page, context } = await open({ query: 'tab=team' });
+    const owner = await page.$eval('#member-table tbody tr:first-child', (node) => ({
+      role: node.children[1].textContent.trim(),
+      hasPicker: node.querySelector('select') !== null,
+      action: node.children[4].textContent.trim(),
+      hasButton: node.querySelector('button') !== null,
+      reason: node.children[4].querySelector('[title]')?.getAttribute('title') ?? '',
+    }));
+
+    assert.equal(owner.role, 'owner');
+    assert.equal(owner.hasPicker, false, 'the only owner must not be demotable from here');
+    assert.equal(owner.hasButton, false, 'the only owner must not be removable from here');
+    assert.match(owner.action, /only owner/i);
+    assert.match(owner.reason, /payout address can never be changed/i);
+    await context.close();
+  });
+
+  test('changing somebody\'s role posts it and says when it applies', async () => {
+    /**
+     * "Applies to their next request" is the true statement, and it is worth making: the role
+     * is read from the memberships table per request, so there is no sign-out to wait for and
+     * no cache to explain.
+     */
+    const { page, context, posts } = await open({ query: 'tab=team' });
+    await page.selectOption('#member-table tbody tr:nth-child(2) select', 'admin');
+    await page.waitForFunction(() => document.getElementById('flash')?.hidden === false, { timeout: 5000 });
+
+    const patched = posts.find((post) => post.path.includes('/members/u-reza'));
+    assert.ok(patched, JSON.stringify(posts.map((p) => p.path)));
+    assert.equal(patched.body.role, 'admin');
+    const message = await text(page, '#flash');
+    assert.match(message, /reza@example\.test/);
+    assert.match(message, /next request/i);
+    await context.close();
+  });
+
+  test('a refused role change puts the picker back rather than showing the new value', async () => {
+    /**
+     * A picker left showing a role the server refused is the page telling somebody a change
+     * happened when it did not — and the next person to read that row believes it.
+     */
+    const { page, context } = await open({
+      query: 'tab=team',
+      roleChange: {
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'last_owner', message: 'This is the only owner.' }),
+      },
+    });
+    await page.selectOption('#member-table tbody tr:nth-child(2) select', 'admin');
+    await page.waitForFunction(() => document.getElementById('flash')?.hidden === false, { timeout: 5000 });
+
+    assert.match(await text(page, '#flash'), /only owner/i);
+    const shown_ = await page.$eval('#member-table tbody tr:nth-child(2) select', (node) => node.value);
+    assert.equal(shown_, 'developer', 'the picker kept a value the server refused');
+    await context.close();
+  });
+
+  test('removing somebody asks first, and says their API keys still work', async () => {
+    /**
+     * The keys part is the bit an operator assumes wrongly. Keys belong to the organisation,
+     * not to the person who typed them in — revoking them on departure would take production
+     * down as a side effect of an HR action — so the confirmation says so rather than leaving
+     * somebody to assume access is gone.
+     */
+    const { page, context, posts } = await open({ query: 'tab=team' });
+
+    const asked = [];
+    page.on('dialog', (dialog) => {
+      asked.push(dialog.message());
+      void dialog.accept();
+    });
+
+    await page.click('#member-table tbody tr:nth-child(2) button');
+    await page.waitForFunction(() => document.getElementById('flash')?.hidden === false, { timeout: 5000 });
+
+    assert.equal(asked.length, 1, JSON.stringify(asked));
+    assert.match(asked[0], /reza@example\.test/);
+    assert.match(asked[0], /lose access/i);
+
+    assert.ok(posts.some((post) => post.path.includes('/members/u-reza')), JSON.stringify(posts));
+    const message = await text(page, '#flash');
+    assert.match(message, /API keys they created still work/i);
+    await context.close();
+  });
+
+  test('declining the confirmation removes nobody', async () => {
+    // The only destructive button on the page. A confirmation that fires the request anyway is
+    // worse than none, because it teaches people to click through it.
+    const { page, context, posts } = await open({ query: 'tab=team' });
+    page.on('dialog', (dialog) => void dialog.dismiss());
+
+    await page.click('#member-table tbody tr:nth-child(2) button');
+    await page.waitForTimeout(300);
+
+    assert.ok(!posts.some((post) => post.path.includes('/members/u-reza')), JSON.stringify(posts));
+    assert.equal(await shown(page, '#flash'), false);
+    await context.close();
+  });
+
+  test('your own row says Leave, not Remove', async () => {
+    /**
+     * A row of identical buttons is how somebody removes themselves by accident, and the two
+     * acts are not the same act. Needs a second owner in the fixture, or the invariant hides
+     * the control entirely — which is the previous test.
+     */
+    const { page, context } = await open({
+      query: 'tab=team',
+      members: {
+        data: [
+          { userId: 'u-owner', email: 'owner@example.test', role: 'owner', twoFactorEnabled: true, joinedAt: '2026-02-04T09:00:00.000Z' },
+          { userId: 'u-second', email: 'second@example.test', role: 'owner', twoFactorEnabled: true, joinedAt: '2026-03-04T09:00:00.000Z' },
+        ],
+      },
+    });
+
+    const labels = await page.$$eval('#member-table tbody tr button', (nodes) =>
+      nodes.map((node) => node.textContent.trim()),
+    );
+    assert.deepEqual(labels, ['Leave', 'Remove']);
+
+    const asked = [];
+    page.on('dialog', (dialog) => {
+      asked.push(dialog.message());
+      void dialog.dismiss();
+    });
+    await page.click('#member-table tbody tr:first-child button');
+    await page.waitForTimeout(200);
+    assert.match(asked[0] ?? '', /Leave Example Store/);
+    await context.close();
+  });
+
+  test('leaving signs you out, because there is nothing left to show you', async () => {
+    const { page, context } = await open({
+      query: 'tab=team',
+      members: {
+        data: [
+          { userId: 'u-owner', email: 'owner@example.test', role: 'owner', twoFactorEnabled: true, joinedAt: '2026-02-04T09:00:00.000Z' },
+          { userId: 'u-second', email: 'second@example.test', role: 'owner', twoFactorEnabled: true, joinedAt: '2026-03-04T09:00:00.000Z' },
+        ],
+      },
+    });
+    page.on('dialog', (dialog) => void dialog.accept());
+
+    await page.click('#member-table tbody tr:first-child button');
+    await page.waitForFunction(() => document.getElementById('app')?.hidden === true, { timeout: 5000 });
+    assert.equal(await shown(page, '#auth-panel'), true);
+    await context.close();
+  });
+
+  test('a viewer can leave but cannot touch anybody else', async () => {
+    /**
+     * Two authorisation paths, and the page reflects both: no pickers, no Remove buttons, and
+     * still a way out. If leaving needed `member:remove` a viewer could never leave at all.
+     */
+    const { page, context } = await open({
+      query: 'tab=team',
+      role: 'viewer',
+      members: {
+        data: [
+          { userId: 'u-owner', email: 'owner2@example.test', role: 'owner', twoFactorEnabled: true, joinedAt: '2026-02-04T09:00:00.000Z' },
+          { userId: 'u-me', email: 'owner@example.test', role: 'viewer', twoFactorEnabled: false, joinedAt: '2026-03-04T09:00:00.000Z' },
+        ],
+      },
+    });
+
+    assert.equal((await page.$$('#member-table select')).length, 0, 'a viewer must not see role pickers');
+    const labels = await page.$$eval('#member-table tbody tr button', (nodes) =>
+      nodes.map((node) => node.textContent.trim()),
+    );
+    assert.deepEqual(labels, ['Leave'], labels.join(' | '));
     await context.close();
   });
 

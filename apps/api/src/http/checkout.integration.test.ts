@@ -18,6 +18,7 @@ import { AdminService } from '../domain/admin-service.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
 import { InviteService } from '../domain/invite-service.js';
+import { MembershipService } from '../domain/membership-service.js';
 import { AuthService } from '../domain/auth-service.js';
 import { CheckoutService } from '../domain/checkout-service.js';
 import { DepositAddressDeriver } from '../domain/deposit-address.js';
@@ -149,6 +150,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
       assets: new AssetService(db, audit, new ContractProbe(offlineCaller), ['USDT']),
       payouts: new PayoutAddressService(db, audit, mailer),
       invites: new InviteService(db, audit),
+      memberships: new MembershipService(db, audit, mailer),
       auth: new AuthService(db, audit, {
         sessionTtlMs: 60 * 60 * 1000,
         emailTokenTtlMs: 60 * 60 * 1000,

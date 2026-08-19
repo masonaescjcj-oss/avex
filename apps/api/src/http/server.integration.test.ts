@@ -22,6 +22,7 @@ import { PriceTickWriter } from '../domain/price-repository.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
 import { InviteService } from '../domain/invite-service.js';
+import { MembershipService } from '../domain/membership-service.js';
 import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
 import { DatabaseWatchStore } from '../domain/watch-store.js';
@@ -189,6 +190,7 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
       minPriceSources: DEFAULT_AGGREGATION.minSources,
       payouts: new PayoutAddressService(database.db, audit, mailer ?? new ConsoleMailer(env.APP_URL, () => {})),
       invites: new InviteService(database.db, audit),
+      memberships: new MembershipService(database.db, audit, mailer),
       assets: new AssetService(database.db, audit, new ContractProbe(offlineCaller), ['USDT']),
       prices: new PriceService(
         [fakeSource('fake-a'), fakeSource('fake-b')],
@@ -633,6 +635,7 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
       minPriceSources: 2,
       payouts: new PayoutAddressService(database.db, audit, suiteMailer),
       invites: new InviteService(database.db, audit),
+      memberships: new MembershipService(database.db, audit, suiteMailer),
       assets: new AssetService(database.db, audit, new ContractProbe(offlineCaller), ['USDT']),
       prices: new PriceService(
         [
@@ -833,6 +836,7 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
       minPriceSources: 2,
       payouts: new PayoutAddressService(database.db, audit, suiteMailer),
       invites: new InviteService(database.db, audit),
+      memberships: new MembershipService(database.db, audit, suiteMailer),
       prices: new PriceService(
         [
           { name: 'a', supports: () => true, async fetchUsdPrice() { return { priceScaled: 10n ** 18n, observedAt: Date.now() }; } },
@@ -1134,6 +1138,7 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
       mailer: mail,
       payouts,
       invites: new InviteService(database.db, audit),
+      memberships: new MembershipService(database.db, audit, mail),
       minPriceSources: 2,
       assets: new AssetService(database.db, audit, new ContractProbe(offlineCaller), ['USDT']),
       prices: new PriceService(

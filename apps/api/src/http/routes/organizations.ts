@@ -33,6 +33,13 @@ const revokeInviteParams = z.object({
 
 const acceptInviteBody = z.object({ token: z.string().min(1).max(400) });
 
+const memberParams = z.object({
+  orgId: z.string().uuid(),
+  userId: z.string().uuid(),
+});
+
+const roleChangeBody = z.object({ role: z.enum(ROLES) });
+
 export function registerOrganizationRoutes(app: FastifyInstance, context: AppContext): void {
   /** Organisations the caller belongs to. The dashboard's entry point. */
   app.get('/v1/organizations', async (request, reply) => {
@@ -229,6 +236,127 @@ export function registerOrganizationRoutes(app: FastifyInstance, context: AppCon
       });
     }
     return reply.status(204).send();
+  });
+
+  /**
+   * Change what a member may do.
+   *
+   * Owner-only and elevation-gated, which `requirePermission` enforces from the permission
+   * name alone — this is the operation that can hand somebody the payout address, and a
+   * stolen session must not be enough to do it.
+   */
+  app.patch('/v1/organizations/:orgId/members/:userId', async (request, reply) => {
+    const { orgId, userId } = memberParams.parse(request.params);
+    const body = roleChangeBody.parse(request.body);
+    const principal = request.principal;
+    if (!principal) throw new UnauthenticatedError();
+
+    const access = await requireOrganizationAccess(context.db, principal, orgId);
+    requirePermission(access, 'member:role_change');
+
+    const outcome = await context.memberships.changeRole({
+      organizationId: orgId,
+      userId,
+      role: body.role,
+      actorRole: access.role,
+      actor: {
+        userId: principal.kind === 'session' ? principal.session.userId : null,
+        apiKeyId: principal.kind === 'api_key' ? principal.apiKeyId : null,
+        ip: request.ip,
+        userAgent: request.headers['user-agent'] ?? null,
+      },
+    });
+
+    switch (outcome.status) {
+      case 'changed':
+        return reply.send({ status: 'changed', from: outcome.from, to: outcome.to });
+      case 'unchanged':
+        // Not an error and not a write: recording a change that did not happen would put
+        // noise in the one log that has to be worth reading during an incident.
+        return reply.send({ status: 'unchanged', role: outcome.role });
+      case 'not_a_member':
+        return reply.status(404).send({
+          error: 'not_a_member',
+          message: 'That person is not in this organisation.',
+        });
+      case 'last_owner':
+        /**
+         * The invariant, with the next step in the message.
+         *
+         * Owner is the only role that can change where money is sent, so an organisation
+         * with no owner is one whose payout address can never be changed again. "You cannot
+         * do that" would send somebody hunting for a permission problem.
+         */
+        return reply.status(409).send({
+          error: 'last_owner',
+          message:
+            'This is the only owner. Make somebody else an owner first, then change this role.',
+        });
+      case 'role_not_assignable':
+        return reply.status(403).send({
+          error: 'role_not_assignable',
+          message: `You cannot grant the ${outcome.role} role.`,
+        });
+    }
+  });
+
+  /**
+   * Remove somebody.
+   *
+   * Two authorisation paths, because they are two different acts. Removing *somebody else*
+   * needs `member:remove`, which is elevated. Leaving yourself needs neither: a viewer has
+   * no `member:remove` and would otherwise be unable to leave at all, and somebody who
+   * never enrolled an authenticator would be trapped by the elevation requirement.
+   *
+   * The cost is that a stolen session can remove its own membership. That is the most
+   * destructive thing a stolen *viewer* session can do, and it is undone by an admin
+   * re-inviting them — which is a better trade than an organisation nobody can leave.
+   */
+  app.delete('/v1/organizations/:orgId/members/:userId', async (request, reply) => {
+    const { orgId, userId } = memberParams.parse(request.params);
+    const principal = request.principal;
+    if (!principal) throw new UnauthenticatedError();
+
+    const access = await requireOrganizationAccess(context.db, principal, orgId);
+    const isSelf = principal.kind === 'session' && principal.session.userId === userId;
+    if (!isSelf) requirePermission(access, 'member:remove');
+
+    const outcome = await context.memberships.remove({
+      organizationId: orgId,
+      userId,
+      actor: {
+        userId: principal.kind === 'session' ? principal.session.userId : null,
+        apiKeyId: principal.kind === 'api_key' ? principal.apiKeyId : null,
+        ip: request.ip,
+        userAgent: request.headers['user-agent'] ?? null,
+      },
+    });
+
+    switch (outcome.status) {
+      case 'removed':
+        return reply.send({
+          status: 'removed',
+          /**
+           * Said in the response, because the alternative is an operator assuming access is
+           * gone when a key the person created is still live. Keys belong to the
+           * organisation, not to the person — revoking them on departure would take
+           * production down as a side effect of an HR action.
+           */
+          apiKeysUnaffected: true,
+        });
+      case 'not_a_member':
+        return reply.status(404).send({
+          error: 'not_a_member',
+          message: 'That person is not in this organisation.',
+        });
+      case 'last_owner':
+        return reply.status(409).send({
+          error: 'last_owner',
+          message: isSelf
+            ? 'You are the only owner. Make somebody else an owner before you leave.'
+            : 'This is the only owner. Make somebody else an owner first.',
+        });
+    }
   });
 
   app.get('/v1/organizations/:orgId/api-keys', async (request, reply) => {

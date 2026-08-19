@@ -714,6 +714,8 @@
    * actions is authorised again on the server.
    */
   let myRole = null;
+  /** The signed-in address, so a member row can tell "you" from "them". */
+  let myEmail = '';
 
   const API = (document.querySelector('meta[name="avex-api"]')?.content ?? '').replace(/\/$/, '');
 
@@ -1694,6 +1696,136 @@
   }
 
   const canInvite = () => myRole === 'owner' || myRole === 'admin';
+  const canRemove = canInvite;
+  /** Only the owner may move somebody between roles. It is the one that reaches the payout. */
+  const canChangeRole = () => myRole === 'owner';
+
+  /**
+   * Whether this member is the only owner left.
+   *
+   * The server refuses to remove or demote them either way — an organisation with no owner is
+   * one whose payout address can never be changed again. Drawn here so the reason is on
+   * screen before somebody tries, rather than as an error after.
+   */
+  function isLastOwner(member, members) {
+    return member.role === 'owner' && members.filter((row) => row.role === 'owner').length === 1;
+  }
+
+  /**
+   * The role cell: a picker for an owner, a plain badge for everybody else.
+   *
+   * The last owner keeps the badge even for an owner looking at it, with the reason attached.
+   * A picker that is refused on submit teaches somebody that the page is unreliable; one that
+   * is not offered, next to a sentence saying why, teaches them the rule.
+   */
+  function memberRoleCell(member, last) {
+    if (!canChangeRole() || last) {
+      return h('span', {
+        class: 'pill',
+        text: member.role,
+        title: last ? 'The only owner. Make somebody else an owner first.' : null,
+      });
+    }
+
+    const select = h(
+      'select',
+      {
+        'aria-label': 'Role for ' + member.email,
+        onchange: async (event) => {
+          const wanted = event.target.value;
+          if (wanted === member.role) return;
+          event.target.disabled = true;
+          try {
+            const outcome = await api(
+              '/v1/organizations/' + orgId + '/members/' + member.userId,
+              { method: 'PATCH', body: JSON.stringify({ role: wanted }) },
+            );
+            flash(
+              outcome?.status === 'unchanged'
+                ? member.email + ' is already ' + wanted + '.'
+                : member.email + ' is now ' + wanted + ' — it applies to their next request.',
+              'ok',
+            );
+          } catch (problem) {
+            // Put the visible value back: a picker showing a role the server refused is a
+            // page telling somebody a change happened when it did not.
+            event.target.value = member.role;
+            flash(problem.message, 'error');
+          } finally {
+            event.target.disabled = false;
+            await refresh('team');
+          }
+        },
+      },
+      assignableRoles(myRole).map((role) =>
+        h('option', { value: role, text: role, selected: role === member.role ? 'selected' : null }),
+      ),
+    );
+    select.value = member.role;
+    return select;
+  }
+
+  /**
+   * The remove cell.
+   *
+   * Three states, because they are three different things: leaving, showing somebody the
+   * door, and the one that cannot happen. Saying "Leave" rather than "Remove" for your own row
+   * matters — a row of identical buttons is how somebody removes themselves by accident.
+   */
+  function memberRemoveCell(member, last, self) {
+    if (last) {
+      return h('span', {
+        class: 'note',
+        text: 'only owner',
+        title: 'An organisation with no owner is one whose payout address can never be changed.',
+      });
+    }
+    if (!self && !canRemove()) return null;
+
+    return h('button', {
+      class: 'ghost danger',
+      type: 'button',
+      text: self ? 'Leave' : 'Remove',
+      onclick: async () => {
+        /**
+         * Confirmed, and named.
+         *
+         * The only destructive button on this page, and the two versions of it do very
+         * different things — so the question says which one was pressed.
+         */
+        const question = self
+          ? 'Leave ' + (orgName || 'this organisation') + '? You will lose access until somebody invites you back.'
+          : 'Remove ' + member.email + '? They lose access immediately.';
+        if (!window.confirm(question)) return;
+
+        try {
+          const outcome = await api(
+            '/v1/organizations/' + orgId + '/members/' + member.userId,
+            { method: 'DELETE' },
+          );
+          if (self) {
+            // Nothing left to show them here: they are not in this organisation any more.
+            flash('You have left ' + (orgName || 'the organisation') + '.', 'ok');
+            el('sign-out').click();
+            return;
+          }
+          /**
+           * Said every time, because it is the part an operator assumes wrongly. Keys belong
+           * to the organisation, not to the person who typed them in — revoking them on
+           * departure would take production down as a side effect of an HR action.
+           */
+          flash(
+            member.email + ' has been removed. Any API keys they created still work — those'
+              + ' belong to the organisation. Revoke them from the API keys tab if you need to.',
+            outcome?.apiKeysUnaffected ? 'warn' : 'ok',
+          );
+          await refresh('team');
+        } catch (problem) {
+          flash(problem.message, 'error');
+        }
+      },
+    });
+  }
 
   function renderTeam() {
     const members = cache.members || [];
@@ -1701,20 +1833,25 @@
 
     fill(el('member-table'), [
       h('thead', {}, [
-        h('tr', {}, ['Email', 'Role', 'Two-factor', 'Joined'].map((label) => h('th', { text: label }))),
+        h('tr', {}, ['Email', 'Role', 'Two-factor', 'Joined', ''].map((label) => h('th', { text: label }))),
       ]),
       h('tbody', {}, members.length === 0
         ? [h('tr', {}, [h('td', { class: 'empty', text: 'Nobody yet.' })])]
-        : members.map((member) => h('tr', {}, [
-            h('td', { class: 'mono', text: member.email }),
-            h('td', {}, [h('span', { class: 'pill', text: member.role })]),
-            /**
-             * Said plainly rather than left blank, because it is the difference between a
-             * member who can be phished out of the payout address and one who cannot.
-             */
-            h('td', { text: member.twoFactorEnabled ? 'on' : 'off' }),
-            h('td', { text: formatAgo(member.joinedAt) }),
-          ]))),
+        : members.map((member) => {
+            const last = isLastOwner(member, members);
+            const self = member.email === myEmail;
+            return h('tr', {}, [
+              h('td', { class: 'mono', text: member.email }),
+              h('td', {}, [memberRoleCell(member, last)]),
+              /**
+               * Said plainly rather than left blank, because it is the difference between a
+               * member who can be phished out of the payout address and one who cannot.
+               */
+              h('td', { text: member.twoFactorEnabled ? 'on' : 'off' }),
+              h('td', { text: formatAgo(member.joinedAt) }),
+              h('td', {}, [memberRemoveCell(member, last, self)]),
+            ]);
+          })),
     ]);
 
     const now = Date.now();
@@ -2065,7 +2202,8 @@
     orgName = first.name || '';
     myRole = first.role || null;
     el('whoami-org').textContent = orgName;
-    el('whoami-mode').textContent = me.email || '';
+    myEmail = me.email || '';
+    el('whoami-mode').textContent = myEmail;
     el('whoami').hidden = false;
     el('auth-panel').hidden = true;
     el('app').hidden = false;
