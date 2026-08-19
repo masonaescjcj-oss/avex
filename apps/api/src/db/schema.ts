@@ -116,6 +116,48 @@ export const memberships = pgTable(
   ],
 );
 
+/**
+ * A pending invitation to join an organisation.
+ *
+ * Separate from `email_tokens` because that table hangs off a user id and an
+ * invitation is addressed to a mailbox that may have no account yet — which is the
+ * whole point of inviting somebody.
+ *
+ * `invitedByUserId` and `invitedByApiKeyId` are kept because acceptance re-checks
+ * them. A pending invitation outlives the moment it was authorised, so an owner who
+ * invites another owner and is then demoted would otherwise still be granting the
+ * role they can no longer grant.
+ */
+export const organizationInvites = pgTable(
+  'organization_invites',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    /** Normalised the same way `users.email` is, so the comparison at acceptance holds. */
+    email: text('email').notNull(),
+    role: roleEnum('role').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    invitedByUserId: uuid('invited_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    invitedByApiKeyId: uuid('invited_by_api_key_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    acceptedByUserId: uuid('accepted_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('organization_invites_token_hash_key').on(table.tokenHash),
+    index('organization_invites_org_idx').on(table.organizationId),
+    index('organization_invites_email_idx').on(table.email),
+  ],
+);
+
 export const sessions = pgTable(
   'sessions',
   {

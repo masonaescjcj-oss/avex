@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 
 import {
   FormatError,
@@ -8,6 +8,7 @@ import {
   formatGwei,
   formatUnits,
   formatUnitsGrouped,
+  formatUntil,
   formatUsdMicros,
   humanizeAction,
   shortenAddress,
@@ -155,4 +156,32 @@ test('an action name becomes readable without losing its structure', () => {
   assert.equal(humanizeAction('payout_address.change_requested'), 'payout address · change requested');
   assert.equal(humanizeAction('merchant.suspended'), 'merchant · suspended');
   assert.equal(humanizeAction('staff.read'), 'staff · read');
+});
+
+describe('formatUntil', () => {
+  test('counts down to a future instant', () => {
+    const now = Date.parse('2026-08-19T00:00:00.000Z');
+    assert.equal(formatUntil('2026-08-21T02:00:00.000Z', now), '2d 2h');
+    assert.equal(formatUntil('2026-08-19T00:30:00.000Z', now), '30m');
+  });
+
+  test('a passed deadline is null, not a duration of zero', () => {
+    /**
+     * The whole reason this is not a flag on `formatAgo`, which reports a future instant as
+     * "just now" to absorb clock skew. Applied to a deadline that produced "in just now" for
+     * an invitation with five days left, and nothing for one that had expired.
+     */
+    const now = Date.parse('2026-08-19T00:00:00.000Z');
+    assert.equal(formatUntil('2026-08-18T23:59:59.000Z', now), null);
+    // Exactly now counts as passed: a deadline is over the moment it arrives.
+    assert.equal(formatUntil('2026-08-19T00:00:00.000Z', now), null);
+  });
+
+  test('nothing and nonsense are both null', () => {
+    // So a caller cannot accidentally render "in NaN" from a field the API left out.
+    assert.equal(formatUntil(null), null);
+    assert.equal(formatUntil(undefined), null);
+    assert.equal(formatUntil(''), null);
+    assert.equal(formatUntil('not a date'), null);
+  });
 });

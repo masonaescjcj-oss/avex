@@ -15,7 +15,16 @@ export interface Mailer {
    * owner learns about the attempt.
    */
   sendEmailAlreadyRegisteredNotice(email: string): Promise<void>;
-  sendMemberInvite(email: string, organizationId: string, role: Role): Promise<void>;
+  /**
+   * Takes the organisation's *name*, not its id.
+   *
+   * A person deciding whether to accept needs to recognise who is asking, and a uuid
+   * tells them nothing. The token is the only thing in this mail that is a secret.
+   */
+  sendMemberInvite(
+    email: string,
+    details: { organizationName: string; role: Role; token: string; expiresAt: Date },
+  ): Promise<void>;
   /**
    * Sent to every member when a payout address change is queued — the delay only
    * protects a merchant who is told about it.
@@ -64,11 +73,23 @@ export class ConsoleMailer implements Mailer {
     );
   }
 
-  async sendMemberInvite(email: string, organizationId: string, role: Role): Promise<void> {
+  async sendMemberInvite(
+    email: string,
+    details: { organizationName: string; role: Role; token: string; expiresAt: Date },
+  ): Promise<void> {
     this.record(
       email,
-      'You have been invited to AVEX Pay',
-      `You were invited to join an organisation as ${role}.\n${this.appUrl}/invites?org=${organizationId}`,
+      `You have been invited to ${details.organizationName} on AVEX Pay`,
+      [
+        `You were invited to join ${details.organizationName} as ${details.role}.`,
+        '',
+        // Accepting needs an account for this address, so the link says so rather than
+        // dropping somebody on a sign-in form with no idea which account to use.
+        `Accept it with the account for ${email} — create one if you do not have it yet:`,
+        `${this.appUrl}/dashboard?invite=${encodeURIComponent(details.token)}`,
+        '',
+        `This invitation expires ${details.expiresAt.toISOString()}.`,
+      ].join('\n'),
     );
   }
 

@@ -97,6 +97,47 @@ const NOW = Date.parse('2026-08-18T09:00:00.000Z');
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
 const ahead = (minutes: number) => new Date(NOW + minutes * 60_000).toISOString();
 
+const MEMBERS = [
+  {
+    email: 'you@example.com',
+    role: 'owner',
+    twoFactorEnabled: true,
+    joinedAt: '2026-02-04T09:00:00.000Z',
+  },
+  {
+    email: 'reza@example.com',
+    role: 'developer',
+    /**
+     * Deliberately off. It is the difference between a member who can be phished out of the
+     * payout address and one who cannot, and a preview where everybody is protected would
+     * never show that column meaning anything.
+     */
+    twoFactorEnabled: false,
+    joinedAt: '2026-06-18T11:30:00.000Z',
+  },
+];
+
+const INVITES = [
+  {
+    id: 'inv-live',
+    email: 'sara@example.com',
+    role: 'admin',
+    invitedAt: '2026-08-17T08:00:00.000Z',
+    expiresAt: '2026-08-24T08:00:00.000Z',
+    invitedBy: 'you@example.com',
+    expired: false,
+  },
+  {
+    id: 'inv-stale',
+    email: 'old-contractor@example.com',
+    role: 'viewer',
+    invitedAt: '2026-07-01T08:00:00.000Z',
+    expiresAt: '2026-07-08T08:00:00.000Z',
+    invitedBy: 'you@example.com',
+    expired: true,
+  },
+];
+
 const COMMISSION = {
   plan: { feeBps: 50, negotiatedFee: false },
   commission: {
@@ -219,8 +260,26 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
     ],
     [
       'GET /v1/organizations',
-      ok({ organizations: [{ id: 'preview-org', name: 'Kian Digital', slug: 'kian-digital' }] }),
+      // With a role, because the team page draws differently for a viewer than an owner and
+      // a preview that showed the read-only version would be previewing the wrong product.
+      ok({
+        organizations: [
+          { id: 'preview-org', name: 'Kian Digital', slug: 'kian-digital', role: 'owner' },
+        ],
+      }),
     ],
+
+    /**
+     * A team part-way through being assembled: two people in, one invitation waiting and one
+     * that nobody acted on and has since expired.
+     *
+     * The expired row is the point. It is the state that used to be invisible — an
+     * invitation that quietly vanished on its expiry, leaving somebody sure they had sent
+     * one — so a preview without it would be showing a tab that always looks tidy.
+     */
+    ['GET /members', ok({ data: MEMBERS })],
+    ['GET /invites', ok({ data: INVITES })],
+    ['POST /members', { status: 202, body: { status: 'invited', id: 'inv-new', superseded: 0 } }],
     ['GET /commission', ok(COMMISSION)],
     [
       'GET /reports/volume',

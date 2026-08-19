@@ -36,6 +36,7 @@ import { WebhookService } from './domain/webhook-service.js';
 import { PriceTickWriter } from './domain/price-repository.js';
 import { loadEnv } from './env.js';
 import { buildServer } from './http/server.js';
+import { InviteService } from './domain/invite-service.js';
 import { JsonRpcCaller } from './rpc/json-rpc-caller.js';
 import { ConsoleMailer } from './mailer.js';
 
@@ -85,6 +86,7 @@ async function main(): Promise<void> {
 
   const mailer = new ConsoleMailer(env.APP_URL);
   const payouts = new PayoutAddressService(db, audit, mailer);
+  const invites = new InviteService(db, audit);
 
   // Scheduled payout changes take effect on a timer rather than on the next
   // request, so a merchant who stops using the dashboard still gets the change
@@ -191,6 +193,7 @@ async function main(): Promise<void> {
     prices,
     assets: assetService,
     payouts,
+    invites,
     staffAuth,
     admin,
     settlements: settlementStore,

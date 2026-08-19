@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -84,6 +84,35 @@ const FIXTURE = {
     ],
   },
   deliveries: { deliveries: [] },
+  members: {
+    data: [
+      { email: 'owner@example.test', role: 'owner', twoFactorEnabled: true, joinedAt: '2026-02-04T09:00:00.000Z' },
+      { email: 'reza@example.test', role: 'developer', twoFactorEnabled: false, joinedAt: '2026-06-18T11:30:00.000Z' },
+    ],
+  },
+  /** One invitation still live, one nobody acted on — the state that used to be invisible. */
+  invites: {
+    data: [
+      {
+        id: 'inv-live',
+        email: 'sara@example.test',
+        role: 'admin',
+        invitedAt: '2026-08-17T08:00:00.000Z',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+        invitedBy: 'owner@example.test',
+        expired: false,
+      },
+      {
+        id: 'inv-stale',
+        email: 'gone@example.test',
+        role: 'viewer',
+        invitedAt: '2026-07-01T08:00:00.000Z',
+        expiresAt: '2026-07-08T08:00:00.000Z',
+        invitedBy: 'owner@example.test',
+        expired: true,
+      },
+    ],
+  },
 };
 
 describe('merchant dashboard', { skip: playwright ? false : 'playwright is not installed' }, () => {
@@ -154,7 +183,21 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       if (method === 'POST' && path.endsWith('/v1/auth/logout')) return route.fulfill(json({}));
       if (path.endsWith('/v1/auth/me')) return route.fulfill(json({ email: 'owner@example.test' }));
       if (path.endsWith('/v1/organizations')) {
-        return route.fulfill(json({ organizations: [{ id: ORG, name: 'Example Store' }] }));
+        // With a role: the team page draws differently for a viewer than for an owner, so a
+        // fixture without one would exercise only the read-only half.
+        return route.fulfill(
+          json({
+            organizations: [
+              { id: ORG, name: 'Example Store', role: overrides.role ?? 'owner' },
+            ],
+          }),
+        );
+      }
+      if (method === 'POST' && path.endsWith('/v1/invites/accept')) {
+        posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
+        return route.fulfill(
+          overrides.acceptInvite ?? json({ status: 'accepted', organizationId: ORG, role: 'developer' }, 201),
+        );
       }
 
       if (method === 'PUT') {
@@ -188,10 +231,22 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         if (path.endsWith('/webhook-endpoints')) {
           return route.fulfill(json({ id: 'e1', secret: 'whsec_shown_once' }, 201));
         }
+        if (path.endsWith('/members')) {
+          return route.fulfill(
+            overrides.invited ?? json({ status: 'invited', id: 'inv-new', superseded: 0 }, 202),
+          );
+        }
         if (path.endsWith('/payout-addresses')) return route.fulfill(json({ status: 'scheduled' }, 202));
         return route.fulfill(json({ status: 'ok' }));
       }
 
+      if (method === 'DELETE') {
+        posts.push({ path, body: null });
+        return route.fulfill({ status: 204, body: '' });
+      }
+
+      if (path.endsWith('/members')) return route.fulfill(json(data.members));
+      if (path.endsWith('/invites')) return route.fulfill(json(data.invites));
       if (path.endsWith('/commission')) return route.fulfill(json(data.commission));
       if (path.endsWith('/reports/volume')) return route.fulfill(json(data.report));
       if (path.endsWith('/assets')) return route.fulfill(json(data.assets));
@@ -561,6 +616,264 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.equal(current, 'Overview');
     assert.equal(await shown(page, '#view-overview'), true);
     assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  // ── team ──────────────────────────────────────────────────────────────────
+
+  test('the team page lists who is in, and whether they have a second factor', async () => {
+    /**
+     * Two-factor is a column rather than a detail, because it is the difference between a
+     * member who can be phished out of the payout address and one who cannot. Blank would
+     * read as "not applicable" for the exact people it matters most for.
+     */
+    const { page, context } = await open({ query: 'tab=team' });
+    /**
+     * Read cell by cell, not as one string.
+     *
+     * `textContent` on a row concatenates without separators, so the first version of this
+     * asserted `/\bon\b/` against "owner@example.testowneron195d 23h" — which has no word
+     * boundary before "on" and failed for a reason that had nothing to do with the page.
+     */
+    const rows = await page.$$eval('#member-table tbody tr', (nodes) =>
+      nodes.map((node) => [...node.children].map((cell) => cell.textContent.trim())),
+    );
+    assert.equal(rows.length, 2, JSON.stringify(rows));
+    assert.deepEqual(rows[0].slice(0, 3), ['owner@example.test', 'owner', 'on']);
+    assert.deepEqual(rows[1].slice(0, 3), ['reza@example.test', 'developer', 'off']);
+    await context.close();
+  });
+
+  test('a pending invitation is shown with what is left of its life', async () => {
+    const { page, context } = await open({ query: 'tab=team' });
+    const rows = await all(page, '#invite-table tbody tr');
+    assert.equal(rows.length, 2, rows.join(' | '));
+    assert.match(rows[0], /sara@example\.test/);
+    assert.match(rows[0], /admin/);
+    assert.match(rows[0], /in \d/, rows[0]);
+    assert.equal(await text(page, '#invite-count'), '1 waiting');
+    await context.close();
+  });
+
+  test('an expired invitation is marked expired, not dropped or counted', async () => {
+    /**
+     * "I invited them and nothing happened" is the question this table answers, and one
+     * that vanished on its expiry answers it wrongly. It also must not read as live: the
+     * link is dead, and somebody waiting on it needs to know that rather than keep waiting.
+     */
+    const { page, context } = await open({ query: 'tab=team' });
+    const rows = await all(page, '#invite-table tbody tr');
+    const stale = rows.find((row) => /gone@example\.test/.test(row));
+    assert.ok(stale, rows.join(' | '));
+    assert.match(stale, /expired/);
+    assert.ok(!/in \d/.test(stale), stale);
+    // One live invitation, not two.
+    assert.equal(await text(page, '#invite-count'), '1 waiting');
+    await context.close();
+  });
+
+  test('the role picker offers no role above the caller\'s own', async () => {
+    /**
+     * Not a security control — the server refuses either way — but a picker offering `owner`
+     * to an admin is a form whose only purpose is to be rejected, and the rejection reads as
+     * the page being broken rather than as the rule it is.
+     */
+    const { page, context } = await open({ query: 'tab=team', role: 'admin' });
+    const roles = await page.$$eval('#invite-role option', (nodes) =>
+      nodes.map((node) => node.value),
+    );
+    assert.deepEqual(roles, ['viewer', 'developer', 'admin']);
+    // Least privilege by default, so a distracted click grants the least.
+    assert.equal(await page.$eval('#invite-role', (node) => node.value), 'viewer');
+    await context.close();
+  });
+
+  test('an owner may offer every role', async () => {
+    const { page, context } = await open({ query: 'tab=team', role: 'owner' });
+    const roles = await page.$$eval('#invite-role option', (nodes) =>
+      nodes.map((node) => node.value),
+    );
+    assert.deepEqual(roles, ['viewer', 'developer', 'admin', 'owner']);
+    await context.close();
+  });
+
+  test('the ladder in the page is the one the server enforces', async () => {
+    /**
+     * The page ships as one file and imports nothing, so this list is a copy of `ROLE_RANK`
+     * in domain/rbac.ts. A copy that drifted would offer a role the server refuses, or hide
+     * one it allows — this reads the real thing and fails on either.
+     */
+    const rbac = readFileSync(join(here, '..', '..', 'api', 'src', 'domain', 'rbac.ts'), 'utf8');
+    const [, block] = rbac.match(/ROLE_RANK[^=]*=\s*\{([\s\S]*?)\}/);
+    const ranked = [...block.matchAll(/(\w+):\s*(\d+)/g)]
+      .sort((a, b) => Number(a[2]) - Number(b[2]))
+      .map((match) => match[1]);
+
+    const { page, context } = await open({ query: 'tab=team', role: 'owner' });
+    const roles = await page.$$eval('#invite-role option', (nodes) =>
+      nodes.map((node) => node.value),
+    );
+    assert.deepEqual(roles, ranked);
+    await context.close();
+  });
+
+  test('a viewer sees the pending list but is told who can invite', async () => {
+    /**
+     * Reading the list is `member:read`: a members page that hid pending invitations would
+     * read as complete when it is not. Sending one is not. A disabled form with no
+     * explanation reads as a bug, so the absence is explained instead.
+     */
+    const { page, context } = await open({ query: 'tab=team', role: 'viewer' });
+    assert.equal((await all(page, '#invite-table tbody tr')).length, 2);
+    assert.equal(await shown(page, '#invite-form'), false);
+    assert.match(await text(page, '#invite-note'), /owner or an admin/i);
+    // And no way to withdraw one either.
+    assert.equal((await page.$$('#invite-table button')).length, 0);
+    await context.close();
+  });
+
+  test('sending an invitation posts the address and role, and says it can be withdrawn', async () => {
+    const { page, context, posts } = await open({ query: 'tab=team' });
+    await page.fill('#invite-email', 'new@example.test');
+    await page.selectOption('#invite-role', 'developer');
+    await page.click('#invite-submit');
+    await page.waitForFunction(() => document.getElementById('flash')?.hidden === false, { timeout: 5000 });
+
+    const sent = posts.find((post) => post.path.endsWith('/members'));
+    assert.ok(sent, JSON.stringify(posts));
+    assert.equal(sent.body.email, 'new@example.test');
+    assert.equal(sent.body.role, 'developer');
+    assert.match(await text(page, '#flash'), /withdrawn/i);
+    // The field is cleared, so a second invitation is not an accidental duplicate.
+    assert.equal(await page.$eval('#invite-email', (node) => node.value), '');
+    await context.close();
+  });
+
+  test('replacing an earlier invitation is said out loud', async () => {
+    /**
+     * Otherwise somebody who corrected a role is left wondering which of two live links
+     * their colleague will click. There is only ever one, and this is where they learn it.
+     */
+    const { page, context } = await open({
+      query: 'tab=team',
+      invited: {
+        status: 202,
+        contentType: 'application/json',
+        body: JSON.stringify({ status: 'invited', id: 'inv-2', superseded: 1 }),
+      },
+    });
+    await page.fill('#invite-email', 'sara@example.test');
+    await page.click('#invite-submit');
+    await page.waitForFunction(() => document.getElementById('flash')?.hidden === false, { timeout: 5000 });
+    assert.match(await text(page, '#flash'), /replaces the earlier one/i);
+    await context.close();
+  });
+
+  test('withdrawing an invitation says the link is dead now', async () => {
+    // The only defence once the mail has left, so the confirmation has to be about the link
+    // rather than about a row disappearing from a table.
+    const { page, context, posts } = await open({ query: 'tab=team' });
+    await page.click('#invite-table tbody tr:first-child button');
+    await page.waitForFunction(() => document.getElementById('flash')?.hidden === false, { timeout: 5000 });
+
+    const deleted = posts.find((post) => post.path.includes('/invites/inv-live'));
+    assert.ok(deleted, JSON.stringify(posts.map((p) => p.path)));
+    assert.match(await text(page, '#flash'), /no longer works/i);
+    await context.close();
+  });
+
+  // ── arriving from an invitation ────────────────────────────────────────────
+
+  test('an invitation link says who it is for before asking anybody to sign in', async () => {
+    /**
+     * Arriving with a token and no session is the normal case, not an error: accepting needs
+     * an account for the invited address, and the invitee may not have one yet. Dropping
+     * them on a bare sign-in form would leave them guessing which account to use.
+     */
+    const { page, context } = await open({ staySignedOut: true, query: 'invite=tok_team' });
+    assert.equal(await shown(page, '#auth-panel'), true);
+    assert.equal(await shown(page, '#app'), false);
+    const message = await text(page, '#auth-error');
+    assert.match(message, /invited/i);
+    assert.match(message, /address the invitation was sent to/i);
+    await context.close();
+  });
+
+  test('signing in with an invitation in hand spends it before the dashboard loads', async () => {
+    /**
+     * Order matters: accepting is what puts them into the organisation, so reading the list
+     * first would show the team they just joined as absent — or, for somebody whose only
+     * organisation is that one, show nothing at all.
+     */
+    const { page, context, posts, seen } = await open({ query: 'invite=tok_team' });
+
+    const accepted = posts.find((post) => post.path.endsWith('/v1/invites/accept'));
+    assert.ok(accepted, JSON.stringify(posts.map((p) => p.path)));
+    assert.equal(accepted.body.token, 'tok_team');
+
+    const acceptIndex = seen.indexOf('POST /v1/invites/accept');
+    const listIndex = seen.indexOf('GET /v1/organizations');
+    assert.ok(acceptIndex >= 0 && listIndex >= 0, seen.join(' | '));
+    assert.ok(acceptIndex < listIndex, `accepted after reading the org list: ${seen.join(' | ')}`);
+
+    assert.match(await text(page, '#flash'), /joined the team/i);
+    assert.equal(await shown(page, '#app'), true);
+    await context.close();
+  });
+
+  test('an invitation is spent once, not again on every refresh', async () => {
+    // It is a bearer token in a URL that stays in the address bar. Re-posting it on each
+    // reload would turn a stale tab into a stream of failures.
+    const { page, context, posts } = await open({ query: 'invite=tok_team' });
+    await page.click('nav.tabs button:has-text("Invoices")');
+    await page.waitForTimeout(200);
+    await page.click('nav.tabs button:has-text("Overview")');
+    await page.waitForTimeout(200);
+
+    const attempts = posts.filter((post) => post.path.endsWith('/v1/invites/accept'));
+    assert.equal(attempts.length, 1, JSON.stringify(attempts));
+    await context.close();
+  });
+
+  test('an invitation for somebody already inside says what they kept', async () => {
+    /**
+     * Accepting must not raise an existing role — that is `member:role_change`, elevated and
+     * audited. So the message says what is true rather than implying something changed.
+     */
+    const { page, context } = await open({
+      query: 'invite=tok_team',
+      acceptInvite: {
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ status: 'already_member', organizationId: ORG, role: 'viewer' }),
+      },
+    });
+    const message = await text(page, '#flash');
+    assert.match(message, /already in that team/i);
+    assert.match(message, /viewer/);
+    await context.close();
+  });
+
+  test('the wrong account is told which address the invitation was for', async () => {
+    /**
+     * The API names it, and this is the one refusal where the message is the whole remedy:
+     * somebody signed in as the wrong colleague otherwise has no way to work out what went
+     * wrong. It leaks nothing — they are holding a mail that contains it.
+     */
+    const { page, context } = await open({
+      query: 'invite=tok_team',
+      acceptInvite: {
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: 'wrong_account',
+          message: 'This invitation was sent to sara@example.test. Sign in with that address to accept it.',
+        }),
+      },
+    });
+    assert.match(await text(page, '#flash'), /sara@example\.test/);
+    // And they are still signed in to their own account rather than stranded.
+    assert.equal(await shown(page, '#app'), true);
     await context.close();
   });
 

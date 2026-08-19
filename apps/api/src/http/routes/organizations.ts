@@ -26,6 +26,13 @@ const inviteBody = z.object({
   role: z.enum(ROLES),
 });
 
+const revokeInviteParams = z.object({
+  orgId: z.string().uuid(),
+  inviteId: z.string().uuid(),
+});
+
+const acceptInviteBody = z.object({ token: z.string().min(1).max(400) });
+
 export function registerOrganizationRoutes(app: FastifyInstance, context: AppContext): void {
   /** Organisations the caller belongs to. The dashboard's entry point. */
   app.get('/v1/organizations', async (request, reply) => {
@@ -115,20 +122,113 @@ export function registerOrganizationRoutes(app: FastifyInstance, context: AppCon
       });
     }
 
-    await context.mailer.sendMemberInvite(body.email, orgId, body.role);
-    await context.audit.record({
+    /**
+     * The invitation is a row, not just a mail.
+     *
+     * It was a mail alone for a while: the endpoint answered `202 invited`, recorded an
+     * audit entry, and left the recipient with a link that pointed at a page nothing
+     * served and a token nothing could spend. Nobody could accept, and nothing said so.
+     */
+    const invite = await context.invites.invite({
       organizationId: orgId,
-      userId: principal.kind === 'session' ? principal.session.userId : null,
-      apiKeyId: principal.kind === 'api_key' ? principal.apiKeyId : null,
-      ip: request.ip,
-      userAgent: request.headers['user-agent'] ?? null,
-      action: 'member.invited',
-      targetType: 'email',
-      targetId: body.email,
-      metadata: { role: body.role },
+      email: body.email,
+      role: body.role,
+      actorRole: access.role,
+      actor: {
+        userId: principal.kind === 'session' ? principal.session.userId : null,
+        apiKeyId: principal.kind === 'api_key' ? principal.apiKeyId : null,
+        ip: request.ip,
+        userAgent: request.headers['user-agent'] ?? null,
+      },
     });
 
-    return reply.status(202).send({ status: 'invited' });
+    const [organization] = await context.db
+      .select({ name: organizations.name })
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
+      .limit(1);
+
+    // The token leaves through the mailer or not at all — never in this response.
+    await context.mailer.sendMemberInvite(body.email, {
+      organizationName: organization?.name ?? 'an organisation',
+      role: body.role,
+      token: invite.token,
+      expiresAt: invite.expiresAt,
+    });
+
+    return reply.status(202).send({
+      status: 'invited',
+      id: invite.id,
+      expiresAt: invite.expiresAt.toISOString(),
+      /** How many outstanding invitations for this address it replaced. */
+      superseded: invite.supersededCount,
+    });
+  });
+
+  /**
+   * Invitations still waiting.
+   *
+   * `member:read`, not `member:invite`: seeing who has been asked to join is the same
+   * kind of knowledge as seeing who is already in, and a viewer who cannot see the
+   * pending list will read the members page as complete when it is not.
+   */
+  app.get('/v1/organizations/:orgId/invites', async (request, reply) => {
+    const { orgId } = orgParams.parse(request.params);
+    const principal = request.principal;
+    if (!principal) throw new UnauthenticatedError();
+
+    const access = await requireOrganizationAccess(context.db, principal, orgId);
+    requirePermission(access, 'member:read');
+
+    const pending = await context.invites.pending(orgId);
+    const now = Date.now();
+    return reply.send({
+      data: pending.map((invite) => ({
+        id: invite.id,
+        email: invite.email,
+        role: invite.role,
+        invitedAt: invite.invitedAt.toISOString(),
+        expiresAt: invite.expiresAt.toISOString(),
+        invitedBy: invite.invitedByEmail,
+        /**
+         * Stated rather than filtered. "I invited them and nothing happened" is the
+         * question this list answers, and one that vanished on its expiry answers it
+         * wrongly.
+         */
+        expired: invite.expiresAt.getTime() <= now,
+      })),
+    });
+  });
+
+  /** Withdraw one. The only defence once the mail has left. */
+  app.delete('/v1/organizations/:orgId/invites/:inviteId', async (request, reply) => {
+    const { orgId, inviteId } = revokeInviteParams.parse(request.params);
+    const principal = request.principal;
+    if (!principal) throw new UnauthenticatedError();
+
+    const access = await requireOrganizationAccess(context.db, principal, orgId);
+    requirePermission(access, 'member:invite');
+
+    const revoked = await context.invites.revoke({
+      organizationId: orgId,
+      inviteId,
+      actor: {
+        userId: principal.kind === 'session' ? principal.session.userId : null,
+        apiKeyId: principal.kind === 'api_key' ? principal.apiKeyId : null,
+        ip: request.ip,
+        userAgent: request.headers['user-agent'] ?? null,
+      },
+    });
+
+    // Scoped by organisation inside the update, so an id from another organisation is
+    // indistinguishable from one that never existed.
+    if (!revoked) {
+      return reply.status(404).send({
+        error: 'invite_not_found',
+        message: 'That invitation is not outstanding.',
+      });
+    }
+    return reply.status(204).send();
   });
 
   app.get('/v1/organizations/:orgId/api-keys', async (request, reply) => {
@@ -295,6 +395,79 @@ export function registerOrganizationRoutes(app: FastifyInstance, context: AppCon
         at: row.createdAt.toISOString(),
       })),
     });
+  });
+
+  /**
+   * Accept an invitation.
+   *
+   * Not under `/v1/organizations/:orgId`, and deliberately: the caller is not a member
+   * yet, so there is no organisation they may name. Which organisation this joins is
+   * something only the token knows, and the route does not let the caller assert it.
+   *
+   * A session, never an API key. Joining an organisation is a person's act, the check
+   * that makes a forwarded invitation harmless is "is this the invited person", and a
+   * key is not a person — it is a credential belonging to an organisation, quite
+   * possibly the one doing the inviting.
+   */
+  app.post('/v1/invites/accept', async (request, reply) => {
+    const body = acceptInviteBody.parse(request.body);
+    const principal = request.principal;
+    if (!principal) throw new UnauthenticatedError();
+    if (principal.kind !== 'session') {
+      return reply.status(403).send({
+        error: 'session_required',
+        message: 'An invitation is accepted by a person signing in, not by an API key.',
+      });
+    }
+
+    const outcome = await context.invites.accept({
+      token: body.token,
+      userId: principal.session.userId,
+      actor: { ip: request.ip, userAgent: request.headers['user-agent'] ?? null },
+    });
+
+    switch (outcome.status) {
+      case 'accepted':
+        return reply.status(201).send({
+          status: 'accepted',
+          organizationId: outcome.organizationId,
+          role: outcome.role,
+        });
+      case 'already_member':
+        /**
+         * 200, not an error: nothing went wrong, and the invitation is spent. The role
+         * they already had is unchanged — an invitation must not be a quiet path around
+         * `member:role_change`, which is elevated and audited for good reason.
+         */
+        return reply.send({
+          status: 'already_member',
+          organizationId: outcome.organizationId,
+          role: outcome.role,
+        });
+      case 'wrong_account':
+        return reply.status(409).send({
+          error: 'wrong_account',
+          message: `This invitation was sent to ${outcome.invitedEmail}. Sign in with that address to accept it.`,
+        });
+      case 'expired':
+        return reply.status(410).send({
+          error: 'invite_expired',
+          message: 'This invitation has expired. Ask for a new one.',
+        });
+      case 'inviter_unauthorized':
+        // The world moved while the mail waited: whoever sent it can no longer grant
+        // what it offers.
+        return reply.status(409).send({
+          error: 'invite_no_longer_valid',
+          message:
+            'Whoever invited you can no longer grant that role. Ask somebody there to invite you again.',
+        });
+      case 'invalid':
+        return reply.status(404).send({
+          error: 'invite_not_found',
+          message: 'This invitation is not valid. It may have been withdrawn or already used.',
+        });
+    }
   });
 }
 

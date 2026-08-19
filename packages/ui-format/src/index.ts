@@ -129,6 +129,23 @@ export function formatAgo(iso: string | null | undefined, now: number = Date.now
 }
 
 /**
+ * How long until an ISO timestamp, or `null` once it has passed.
+ *
+ * A companion to `formatAgo` rather than a flag on it, because the two disagree about what
+ * a crossed boundary means. `formatAgo` reports a future instant as "just now" — a
+ * clock-skew guard, and right for a timestamp that is supposed to be in the past. Here the
+ * future is the normal case and the past is the interesting one, so a passed deadline is
+ * `null` and the caller says what that means: an invitation reads "expired", not "in just
+ * now", which is what the invitations table said before this existed.
+ */
+export function formatUntil(iso: string | null | undefined, now: number = Date.now()): string | null {
+  if (!iso) return null;
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return null;
+  return at <= now ? null : formatDuration(at - now);
+}
+
+/**
  * An address shortened for a table, keeping both ends.
  *
  * Both ends, never one: operators compare addresses by eye, and two different

@@ -21,6 +21,7 @@ import { createDatabase, schema } from '../db/client.js';
 import { AdminService } from '../domain/admin-service.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
+import { InviteService } from '../domain/invite-service.js';
 import { AuthService } from '../domain/auth-service.js';
 import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
@@ -186,6 +187,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       mailer,
       minPriceSources: DEFAULT_AGGREGATION.minSources,
       payouts: new PayoutAddressService(db, audit, mailer),
+      invites: new InviteService(db, audit),
       assets: new AssetService(db, audit, new ContractProbe(offlineCaller), ['USDT']),
       prices: new PriceService([fakeSource('a'), fakeSource('b')], {
         aggregation: DEFAULT_AGGREGATION,
@@ -2451,6 +2453,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       listed: boolean;
       verdict: string;
       priced: boolean;
+      curated: boolean;
       enabledByMerchants: number;
     }[];
     assert.ok(listed.length > 0, 'the curated list is seeded');
@@ -2458,9 +2461,19 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     // assets that already existed when it was added.
     assert.ok(listed.every((asset) => typeof asset.listed === 'boolean'));
     assert.ok(listed.every((asset) => asset.enabledByMerchants >= 0));
-    // USDT on BSC is curated and quoted, which is the shape an operator reads as "fine".
-    const usdt = listed.find((asset) => asset.symbol === 'USDT' && asset.chain === 'bsc');
-    assert.ok(usdt);
+    /**
+     * USDT on BSC is curated and quoted, which is the shape an operator reads as "fine".
+     *
+     * Matched on `curated`, not on the symbol alone. Merchants may submit their own contract
+     * under any ticker they like — including that one — so a database with a few thousand
+     * accumulated test rows in it has plenty of uncurated `USDT` on `bsc`, some deliberately
+     * blocked by the tests that made them. Without the third condition this picked whichever
+     * came back first and asserted the curated entry's properties about a stranger's.
+     */
+    const usdt = listed.find(
+      (asset) => asset.symbol === 'USDT' && asset.chain === 'bsc' && asset.curated,
+    );
+    assert.ok(usdt, 'the curated USDT on bsc should be in the catalogue');
     assert.equal(usdt!.verdict, 'approved');
     assert.equal(usdt!.priced, true);
   });

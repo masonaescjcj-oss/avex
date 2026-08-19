@@ -584,6 +584,44 @@
       </div>
     </section>
 
+    <!-- team -->
+    <section class="view" id="view-team" hidden>
+      <div class="panel">
+        <div class="panel-head"><h2>👥 Who can get in</h2></div>
+        <div class="panel-body">
+          <div class="scroll"><table id="member-table"></table></div>
+          <p class="note">
+            Only the owner can change where money is sent. That is not a setting — it is the
+            one permission no admin has, so a compromised admin account cannot redirect your
+            revenue.
+          </p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>✉️ Invitations</h2>
+          <span class="note" id="invite-count"></span>
+        </div>
+        <div class="panel-body">
+          <!--
+            Pending invitations are listed rather than hidden. "I invited them and nothing
+            happened" is the question this table answers, and an invitation that quietly
+            disappeared on its expiry answers it wrongly.
+          -->
+          <div class="scroll"><table id="invite-table"></table></div>
+          <form id="invite-form" hidden>
+            <div class="row">
+              <label>Email<input type="email" id="invite-email" autocomplete="off" required></label>
+              <label>Role<select id="invite-role"></select></label>
+            </div>
+            <div class="row"><button class="primary" type="submit" id="invite-submit">Send invitation</button></div>
+          </form>
+          <p class="note" id="invite-note"></p>
+        </div>
+      </div>
+    </section>
+
     <!-- commission -->
     <section class="view" id="view-commission" hidden>
       <div class="panel">
@@ -743,6 +781,24 @@ function formatAgo(iso, now = Date.now()) {
     if (Number.isNaN(at))
         return '—';
     return at > now ? 'just now' : formatDuration(now - at);
+}
+/**
+ * How long until an ISO timestamp, or `null` once it has passed.
+ *
+ * A companion to `formatAgo` rather than a flag on it, because the two disagree about what
+ * a crossed boundary means. `formatAgo` reports a future instant as "just now" — a
+ * clock-skew guard, and right for a timestamp that is supposed to be in the past. Here the
+ * future is the normal case and the past is the interesting one, so a passed deadline is
+ * `null` and the caller says what that means: an invitation reads "expired", not "in just
+ * now", which is what the invitations table said before this existed.
+ */
+function formatUntil(iso, now = Date.now()) {
+    if (!iso)
+        return null;
+    const at = Date.parse(iso);
+    if (Number.isNaN(at))
+        return null;
+    return at <= now ? null : formatDuration(at - now);
 }
 /**
  * An address shortened for a table, keeping both ends.
@@ -1553,6 +1609,45 @@ function previewAssets() {
 const NOW = Date.parse('2026-08-18T09:00:00.000Z');
 const ago = (minutes) => new Date(NOW - minutes * 60_000).toISOString();
 const ahead = (minutes) => new Date(NOW + minutes * 60_000).toISOString();
+const MEMBERS = [
+    {
+        email: 'you@example.com',
+        role: 'owner',
+        twoFactorEnabled: true,
+        joinedAt: '2026-02-04T09:00:00.000Z',
+    },
+    {
+        email: 'reza@example.com',
+        role: 'developer',
+        /**
+         * Deliberately off. It is the difference between a member who can be phished out of the
+         * payout address and one who cannot, and a preview where everybody is protected would
+         * never show that column meaning anything.
+         */
+        twoFactorEnabled: false,
+        joinedAt: '2026-06-18T11:30:00.000Z',
+    },
+];
+const INVITES = [
+    {
+        id: 'inv-live',
+        email: 'sara@example.com',
+        role: 'admin',
+        invitedAt: '2026-08-17T08:00:00.000Z',
+        expiresAt: '2026-08-24T08:00:00.000Z',
+        invitedBy: 'you@example.com',
+        expired: false,
+    },
+    {
+        id: 'inv-stale',
+        email: 'old-contractor@example.com',
+        role: 'viewer',
+        invitedAt: '2026-07-01T08:00:00.000Z',
+        expiresAt: '2026-07-08T08:00:00.000Z',
+        invitedBy: 'you@example.com',
+        expired: true,
+    },
+];
 const COMMISSION = {
     plan: { feeBps: 50, negotiatedFee: false },
     commission: {
@@ -1671,8 +1766,25 @@ function previewRoutes() {
         ],
         [
             'GET /v1/organizations',
-            ok({ organizations: [{ id: 'preview-org', name: 'Kian Digital', slug: 'kian-digital' }] }),
+            // With a role, because the team page draws differently for a viewer than an owner and
+            // a preview that showed the read-only version would be previewing the wrong product.
+            ok({
+                organizations: [
+                    { id: 'preview-org', name: 'Kian Digital', slug: 'kian-digital', role: 'owner' },
+                ],
+            }),
         ],
+        /**
+         * A team part-way through being assembled: two people in, one invitation waiting and one
+         * that nobody acted on and has since expired.
+         *
+         * The expired row is the point. It is the state that used to be invisible — an
+         * invitation that quietly vanished on its expiry, leaving somebody sure they had sent
+         * one — so a preview without it would be showing a tab that always looks tidy.
+         */
+        ['GET /members', ok({ data: MEMBERS })],
+        ['GET /invites', ok({ data: INVITES })],
+        ['POST /members', { status: 202, body: { status: 'invited', id: 'inv-new', superseded: 0 } }],
         ['GET /commission', ok(COMMISSION)],
         [
             'GET /reports/volume',
@@ -1847,6 +1959,15 @@ function matchPreview(method, url, routes = previewRoutes()) {
   let token = null;
   let orgId = null;
   let orgName = '';
+  /**
+   * The caller's own role, from the organisation list.
+   *
+   * Held because the team page has to draw differently for a viewer than for an owner —
+   * and because a role picker offering roles above your own is a form that exists only to
+   * be refused. This is a courtesy to the reader, never a control: every one of these
+   * actions is authorised again on the server.
+   */
+  let myRole = null;
 
   const API = (document.querySelector('meta[name="avex-api"]')?.content ?? '').replace(/\/$/, '');
 
@@ -1924,6 +2045,16 @@ function matchPreview(method, url, routes = previewRoutes()) {
    */
   const verification = (entry.get('verify') ?? '').trim();
 
+  /**
+   * An invitation token, held until there is a session to spend it with.
+   *
+   * Accepting requires being signed in as the invited address — the token proves somebody
+   * read that mailbox, and a forwarded mail is an ordinary thing. So arriving with one and
+   * no session is the normal case, not an error: the page says who it is for, waits for
+   * them to sign in or create the account, and spends it the moment `start()` succeeds.
+   */
+  let pendingInvite = (entry.get('invite') ?? '').trim();
+
   function renderAuthMode() {
     const signingUp = mode === 'signup';
     el('auth-title').textContent = signingUp ? 'Create an account' : 'Sign in';
@@ -1957,6 +2088,14 @@ function matchPreview(method, url, routes = previewRoutes()) {
   });
 
   renderAuthMode();
+
+  if (pendingInvite && !verification) {
+    const banner = el('auth-error');
+    banner.textContent =
+      'You have been invited to a team. Sign in with the address the invitation was sent to — or create an account for it — and you will be added.';
+    banner.dataset.kind = 'ok';
+    banner.hidden = false;
+  }
 
   el('auth-form').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -2122,6 +2261,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
     ['payouts', 'Payouts'],
     ['webhooks', 'Webhooks'],
     ['keys', 'API keys'],
+    ['team', 'Team'],
     ['commission', 'Commission'],
   ];
 
@@ -2790,6 +2930,158 @@ function matchPreview(method, url, routes = previewRoutes()) {
     ]);
   }
 
+  // ── team ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Privilege order, least to most. Mirrors `ROLE_RANK` in domain/rbac.ts.
+   *
+   * Duplicated because this page ships as one file and imports nothing, and guarded by a
+   * browser test that reads the server's list — a role picker that drifted from the real
+   * ladder would offer a role the server refuses, which reads as the form being broken.
+   */
+  const ROLES_ASCENDING = ['viewer', 'developer', 'admin', 'owner'];
+
+  /** Roles the caller may hand out. Nobody may grant a role above their own. */
+  function assignableRoles(role) {
+    const ceiling = ROLES_ASCENDING.indexOf(role);
+    return ceiling < 0 ? [] : ROLES_ASCENDING.slice(0, ceiling + 1);
+  }
+
+  const canInvite = () => myRole === 'owner' || myRole === 'admin';
+
+  function renderTeam() {
+    const members = cache.members || [];
+    const invites = cache.invites || [];
+
+    fill(el('member-table'), [
+      h('thead', {}, [
+        h('tr', {}, ['Email', 'Role', 'Two-factor', 'Joined'].map((label) => h('th', { text: label }))),
+      ]),
+      h('tbody', {}, members.length === 0
+        ? [h('tr', {}, [h('td', { class: 'empty', text: 'Nobody yet.' })])]
+        : members.map((member) => h('tr', {}, [
+            h('td', { class: 'mono', text: member.email }),
+            h('td', {}, [h('span', { class: 'pill', text: member.role })]),
+            /**
+             * Said plainly rather than left blank, because it is the difference between a
+             * member who can be phished out of the payout address and one who cannot.
+             */
+            h('td', { text: member.twoFactorEnabled ? 'on' : 'off' }),
+            h('td', { text: formatAgo(member.joinedAt) }),
+          ]))),
+    ]);
+
+    const now = Date.now();
+    fill(el('invite-table'), [
+      h('thead', {}, [
+        h('tr', {}, ['Email', 'Role', 'Invited', 'Expires', ''].map((label) => h('th', { text: label }))),
+      ]),
+      h('tbody', {}, invites.length === 0
+        ? [h('tr', {}, [h('td', { class: 'empty', text: 'No invitations outstanding.' })])]
+        : invites.map((invite) => {
+            /**
+             * `formatUntil` decides, not the server's flag alone.
+             *
+             * The flag was computed when the response was built; a page left open past the
+             * deadline would keep showing a dead link as live. Either signal expiring is
+             * enough.
+             */
+            const left = formatUntil(invite.expiresAt, now);
+            const expired = invite.expired || left === null;
+            return h('tr', {}, [
+              h('td', { class: 'mono', text: invite.email }),
+              h('td', {}, [h('span', { class: 'pill', text: invite.role })]),
+              h('td', { text: formatAgo(invite.invitedAt) }),
+              /**
+               * An expired invitation is shown as expired rather than dropped. Somebody
+               * waiting on a colleague needs to know the link died, not to find an empty
+               * table and conclude they never sent it.
+               */
+              h('td', {}, [
+                expired
+                  ? h('span', { class: 'pill', 'data-kind': 'warn', text: 'expired' })
+                  : h('span', { text: 'in ' + left }),
+              ]),
+              h('td', {}, [
+                canInvite()
+                  ? h('button', {
+                      class: 'ghost danger',
+                      type: 'button',
+                      text: 'Withdraw',
+                      onclick: async () => {
+                        try {
+                          await api('/v1/organizations/' + orgId + '/invites/' + invite.id, {
+                            method: 'DELETE',
+                          });
+                          flash('Invitation withdrawn. The link no longer works.', 'ok');
+                          await refresh('team');
+                        } catch (problem) {
+                          flash(problem.message, 'error');
+                        }
+                      },
+                    })
+                  : null,
+              ]),
+            ]);
+          })),
+    ]);
+
+    const live = invites.filter((invite) => !invite.expired).length;
+    el('invite-count').textContent = live === 0 ? '' : live + ' waiting';
+
+    /**
+     * The form is drawn only for somebody who may use it, and the note explains the absence.
+     *
+     * A disabled form with no explanation reads as a bug; saying which role is required
+     * tells a viewer what to ask for.
+     */
+    el('invite-form').hidden = !canInvite();
+    el('invite-note').textContent = canInvite()
+      ? 'An invitation lasts a week and can be withdrawn until it is used. It can only be accepted by somebody signed in with the address it was sent to.'
+      : 'Only an owner or an admin can invite somebody.';
+
+    if (canInvite()) {
+      const roles = assignableRoles(myRole);
+      const select = el('invite-role');
+      const chosen = select.value;
+      fill(select, roles.map((role) => h('option', { value: role, text: role })));
+      // Keep a half-made choice across a refresh; default to the least privilege.
+      select.value = roles.includes(chosen) ? chosen : roles[0];
+    }
+  }
+
+  el('invite-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = el('invite-submit');
+    button.disabled = true;
+    try {
+      const response = await api('/v1/organizations/' + orgId + '/members', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: el('invite-email').value.trim(),
+          role: el('invite-role').value,
+        }),
+      });
+      /**
+       * Inviting the same address twice replaces the first invitation, and that is said out
+       * loud — otherwise somebody who corrected a role would be left wondering which of two
+       * live links their colleague will click.
+       */
+      flash(
+        response?.superseded > 0
+          ? 'Invitation sent. It replaces the earlier one for that address, which no longer works.'
+          : 'Invitation sent. It expires in a week and can be withdrawn until it is used.',
+        'ok',
+      );
+      el('invite-email').value = '';
+      await refresh('team');
+    } catch (problem) {
+      flash(problem.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  });
+
   // ── commission ────────────────────────────────────────────────────────────
 
   function renderCommission() {
@@ -2951,6 +3243,14 @@ function matchPreview(method, url, routes = previewRoutes()) {
         const keys = await api(base + '/api-keys');
         cache.keys = keys.keys || keys.apiKeys || [];
         renderKeys();
+      } else if (view === 'team') {
+        const [members, invites] = await Promise.all([
+          api(base + '/members'),
+          api(base + '/invites'),
+        ]);
+        cache.members = members.data || members.members || [];
+        cache.invites = invites.data || invites.invites || [];
+        renderTeam();
       } else if (view === 'commission') {
         cache.commission = await api(base + '/commission');
         renderCommission();
@@ -2967,8 +3267,46 @@ function matchPreview(method, url, routes = previewRoutes()) {
     }
   }
 
+  /**
+   * Spend a held invitation, before the organisation list is read.
+   *
+   * Order matters: accepting is what puts the caller into the organisation, so reading the
+   * list first would show them the team they were about to join as absent — or, for
+   * somebody whose only organisation is the one they were invited to, show nothing at all.
+   *
+   * Every outcome is reported. A silent failure here would drop somebody into their own
+   * dashboard wondering why the invitation did nothing.
+   */
+  async function acceptPendingInvite() {
+    const token = pendingInvite;
+    if (!token) return;
+    // Cleared first, so a refresh cannot spend it twice and a failure cannot loop.
+    pendingInvite = '';
+
+    try {
+      const outcome = await api('/v1/invites/accept', {
+        method: 'POST',
+        body: JSON.stringify({ token }),
+      });
+      if (outcome?.status === 'already_member') {
+        // Deliberately not a role change: an invitation must not be a quiet path around
+        // one, so say what was kept rather than implying something happened.
+        flash('You are already in that team, as ' + outcome.role + '.', 'ok');
+      } else {
+        flash('You have joined the team as ' + (outcome?.role ?? 'a member') + '.', 'ok');
+      }
+    } catch (problem) {
+      /**
+       * `wrong_account` is the one worth its own words: the API names the invited address,
+       * and somebody signed in as the wrong colleague needs to read it.
+       */
+      flash(problem.message || 'That invitation could not be accepted.', 'error');
+    }
+  }
+
   async function start() {
     const me = await api('/v1/auth/me');
+    await acceptPendingInvite();
     const organizations = await api('/v1/organizations');
     const list = organizations.organizations || organizations.data || organizations;
     const first = Array.isArray(list) ? list[0] : null;
@@ -2979,6 +3317,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
 
     orgId = first.id || first.organizationId;
     orgName = first.name || '';
+    myRole = first.role || null;
     el('whoami-org').textContent = orgName;
     el('whoami-mode').textContent = me.email || '';
     el('whoami').hidden = false;
@@ -3016,14 +3355,14 @@ function matchPreview(method, url, routes = previewRoutes()) {
     el('preview-banner').hidden = false;
 
     /**
-     * `?signup=1` alongside it means the visitor came from the landing page's button, and
-     * `?verify=` means they came from the confirmation email — either way the screen they were
-     * sent to is at the door, so that is where the preview opens. Arriving already signed in
+     * `?signup=1` alongside it means the visitor came from the landing page's button,
+     * `?verify=` means the confirmation email and `?invite=` an invitation — in every case
+     * the screen they were sent to is at the door, so that is where the preview opens. Arriving already signed in
      * would put the dashboard over the top of the one message they came to read.
      *
      * With neither there is nothing to demonstrate at the door, so the preview opens inside.
      */
-    if (mode === 'signup' || verification) {
+    if (mode === 'signup' || verification || pendingInvite) {
       el('auth-email').focus();
     } else {
       // A token so `api()` sends an Authorization header, exactly as it would signed in.
