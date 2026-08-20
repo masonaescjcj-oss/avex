@@ -10,15 +10,35 @@ document is the honest split — what can go to Supabase today, what cannot, and
 | Postgres | ✅ | ✅ | Drizzle migrations either way |
 | HTTP API (every route) | ✅ Edge Function | ✅ Node process | one `compose()`, two entry points |
 | Background jobs (webhooks, commission, payouts) | ✅ `pg_cron` → `/internal/jobs` | ✅ in-process timers | same jobs, same advisory locks |
-| Chain watcher | ❌ | ✅ | not built yet — see below |
-| Settlement / sweep signer | ❌ | ✅ | holds the key that moves funds |
+| Chain watcher | ❌ | ✅ | `npm run -w @avex/api watch` |
+| Settlement / sweep signer | ❌ | ✅ | still not wired — see below |
 
-**Today the API has no long-lived chain loop at all.** `Watcher` and `SettlementRunner`
-exist in `@avex/core` with their own tests, and nothing instantiates them: `main.ts` loads
-the watcher's cursors, logs them, and says so. So everything that currently exists can run
-on Supabase. The VPS becomes necessary when the watcher and the settlement runner are wired,
-because both need a process that outlives a request — cursor continuity, reorg rewind, and a
-signing key that must not sit in a runtime that scales to zero.
+The watcher is a second process, `apps/api/dist/watcher.js`, and it is the one thing here
+that cannot be serverless. It holds a cursor per chain that has to advance monotonically, it
+rewinds that cursor when a reorg is found, and it decides that a payment happened. A runtime
+that scales to zero between invocations can do none of that: two overlapping invocations
+would scan the same range twice and race each other's cursor writes.
+
+It takes the `chainWatcher` advisory lock for the life of the process, so a deploy that
+starts a second copy without stopping the first has the second exit rather than double-scan.
+It watches every EVM chain that has both an RPC endpoint and a forwarder factory configured,
+and refuses to start if that set is empty — a watcher with nothing to watch is
+indistinguishable from a healthy one, and the deployment would go on believing payments were
+being detected.
+
+```bash
+npm run -w @avex/api build
+DATABASE_URL=… EVM_RPC_URLS=bsc=https://… FORWARDER_FACTORIES=bsc=0x… \
+  npm run -w @avex/api watch
+```
+
+**Sweeping is still not wired.** The watcher detects and credits payments; nothing moves
+funds out of the forwarders yet. `SettlementRunner` exists in `@avex/core` with its own
+tests and consumes a `ChainSigner` — `pendingNonce`/`broadcast`/`receipt`, which
+`EvmChainSigner` implements. `EvmAdapter.settle()` wants a different interface, `EvmSigner`'s
+`sendTransaction`, and nothing implements that one. Two settlement designs, one signer, and
+the watcher passes a stub that throws rather than a cast that would fail the first time
+somebody swept.
 
 ## Postgres
 
@@ -104,19 +124,36 @@ that can write a row needs each of them duplicated as a trigger, and two enforce
 means one drifts. The panel is a static file talking to this API, which is the right shape
 and costs nothing to keep.
 
-## The VPS, when the watcher lands
+## The VPS
 
-One process, `apps/api` with:
+Two processes, or one if the API runs there too:
 
+```bash
+npm run -w @avex/api start   # the HTTP API; RUN_JOBS_IN_PROCESS=true drives the jobs
+npm run -w @avex/api watch   # the chain watcher, one per deployment
 ```
-RUN_JOBS_IN_PROCESS=true
-SETTLEMENT_KEY_HEX=…        # development only; production supplies a KMS-backed KeyProvider
-EVM_RPC_URLS=bsc=https://…
-```
 
-It needs the same database and nothing else from Supabase. Run it with the jobs on timers
-and leave the cron schedules unapplied, or run it with `RUN_JOBS_IN_PROCESS=false` alongside
-the Edge Function and let cron drive them — the locks make either safe.
+The watcher needs `DATABASE_URL`, `EVM_RPC_URLS` and `FORWARDER_FACTORIES`, and nothing
+else. It serves no HTTP: a payment it credits reaches a merchant through the webhook rows it
+writes, which the API's own scheduler drains.
+
+Both may run alongside the Edge Function against the same database. The locks make that
+safe — set `RUN_JOBS_IN_PROCESS=false` on whichever side should not hold the timers, or
+leave both on and let the loser of each tick skip.
+
+The catalogue is read once at watcher startup, deliberately: `acceptedAssets` decides which
+contracts count as payments, and a set that changed underneath a scan would mean the same
+block is interpreted two ways depending on when it was read. Listing a new token is a
+restart.
+
+**A known limit, found by running it.** `EvmAdapter.poll` asks for one `eth_getLogs` covering
+every accepted contract at once — it used to ask once per token, which made a poll cost as
+many requests as the catalogue holds, and merchants can submit contracts so that number grows
+without anybody deciding to grow it. What is left is the other end of the same problem:
+providers cap how many addresses a single filter may carry, usually in the low hundreds. The
+listed, approved, curated set is well under that; a deployment that lists hundreds of
+merchant-submitted tokens on one chain will need the filter split into batches. The startup
+line logs the count so the number is visible before it becomes a 400 from the provider.
 
 ## Availability, stated plainly
 

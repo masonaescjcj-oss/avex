@@ -137,38 +137,65 @@ export class EvmAdapter implements ChainAdapter {
     const to = Math.min(head, from + this.config.pollRange - 1);
     const payments: IncomingPayment[] = [];
 
+    /**
+     * One request for every token, not one request per token.
+     *
+     * `eth_getLogs` takes an array of addresses, and using it is the difference between a
+     * poll that costs one call and a poll that costs as many calls as the catalogue holds.
+     * Merchants can submit their own contracts, so that number grows without anybody
+     * deciding to grow it — and a poll every few seconds multiplied by a few hundred tokens
+     * is a rate limit, then a provider ban, then payments going unnoticed.
+     *
+     * Native assets are skipped: an incoming native transfer emits no log, so finding one
+     * needs trace or balance polling rather than a filter.
+     */
+    const byContract = new Map<string, Asset>();
     for (const asset of this.config.acceptedAssets) {
-      if (asset.kind === 'native') continue; // native arrivals need trace/balance polling
+      if (asset.kind === 'native') continue;
+      if (asset.contract === undefined) continue;
+      byContract.set(asset.contract.toLowerCase(), asset);
+    }
+    if (byContract.size === 0) return { payments: [], cursor: String(to) };
 
-      const logs = await this.rpc<RpcLog[]>('eth_getLogs', [
-        {
-          fromBlock: `0x${from.toString(16)}`,
-          toBlock: `0x${to.toString(16)}`,
-          address: asset.contract,
-          topics: [TRANSFER_TOPIC],
-        },
-      ]);
+    const logs = await this.rpc<RpcLog[]>('eth_getLogs', [
+      {
+        fromBlock: `0x${from.toString(16)}`,
+        toBlock: `0x${to.toString(16)}`,
+        address: [...byContract.keys()],
+        topics: [TRANSFER_TOPIC],
+      },
+    ]);
 
-      for (const log of logs) {
-        const recipientTopic = log.topics[2];
-        if (recipientTopic === undefined) continue;
+    for (const log of logs) {
+      /**
+       * Which token this was, from the emitting contract.
+       *
+       * With one filter per token the answer was implicit in which loop found the log. Now it
+       * has to be looked up — and a log from a contract that is not in the map is dropped
+       * rather than attributed to a guess, because attributing it would credit a merchant in
+       * a currency nobody accepted.
+       */
+      const asset = byContract.get(log.address.toLowerCase());
+      if (asset === undefined) continue;
 
-        // Topics pad addresses to 32 bytes; the address is the last 20.
-        const recipient = toChecksumAddress(`0x${recipientTopic.slice(26)}`);
-        if ((await this.addressBook.lookup(recipient)) === null) continue;
+      const recipientTopic = log.topics[2];
+      if (recipientTopic === undefined) continue;
 
-        const blockNumber = Number(BigInt(log.blockNumber));
-        payments.push({
-          chain: this.chain,
-          txHash: log.transactionHash,
-          transferIndex: Number(BigInt(log.logIndex)),
-          to: recipient,
-          asset,
-          amount: BigInt(log.data),
-          blockNumber,
-          confirmations: head - blockNumber + 1,
-        });
-      }
+      // Topics pad addresses to 32 bytes; the address is the last 20.
+      const recipient = toChecksumAddress(`0x${recipientTopic.slice(26)}`);
+      if ((await this.addressBook.lookup(recipient)) === null) continue;
+
+      const blockNumber = Number(BigInt(log.blockNumber));
+      payments.push({
+        chain: this.chain,
+        txHash: log.transactionHash,
+        transferIndex: Number(BigInt(log.logIndex)),
+        to: recipient,
+        asset,
+        amount: BigInt(log.data),
+        blockNumber,
+        confirmations: head - blockNumber + 1,
+      });
     }
 
     return { payments, cursor: String(to) };

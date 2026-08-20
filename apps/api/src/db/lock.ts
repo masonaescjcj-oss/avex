@@ -36,6 +36,14 @@ export const JOB_LOCKS = {
   webhookDelivery: 8_140_001,
   commissionPeriods: 8_140_002,
   payoutChanges: 8_140_003,
+  /**
+   * The watcher's claim on its role, not on a pass.
+   *
+   * Held for the life of the process rather than per poll: a second copy — started by a
+   * deploy that did not stop the first, which is the ordinary way this goes wrong — must
+   * exit rather than scan the same ranges and race the first one's cursor writes.
+   */
+  chainWatcher: 8_140_004,
 } as const;
 
 export type JobLock = (typeof JOB_LOCKS)[keyof typeof JOB_LOCKS];

@@ -1,6 +1,6 @@
 import type { IncomingPayment, PaymentSink } from '@avex/core';
 import { requiredConfirmations } from '@avex/core';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
 import { invoices, payments } from '../db/schema.js';
@@ -236,11 +236,28 @@ export class DatabasePaymentSink implements PaymentSink {
       if (byMemo) return byMemo;
     }
 
+    /**
+     * Case-insensitive on the address, and it matters.
+     *
+     * The watcher hands over `toChecksumAddress(...)`, and our own deriver stores the same
+     * EIP-55 form, so an exact comparison happens to work today. It stops working the moment
+     * a deposit address reaches this table in any other case — a shared-memo wallet typed in
+     * by an operator, a row restored from an export, a chain adapter that reports lowercase —
+     * and the failure is silent and total: a real transfer to a real invoice matches nothing
+     * and goes to reconciliation as unmatched, which reads as the payer never sending it.
+     *
+     * `lower()` on both sides rather than trusting either. The same comparison the address
+     * book makes, for the same reason; the two disagreeing was the bug that made this
+     * comment necessary.
+     */
     const [byAddress] = await this.db
       .select()
       .from(invoices)
       .where(
-        and(eq(invoices.chain, payment.chain), eq(invoices.depositAddress, payment.to)),
+        and(
+          eq(invoices.chain, payment.chain),
+          sql`lower(${invoices.depositAddress}) = ${payment.to.toLowerCase()}`,
+        ),
       )
       .limit(1);
     return byAddress ?? null;

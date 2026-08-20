@@ -9,7 +9,8 @@
     "test": "npm run build && node --test \"dist/**/*.test.js\"",
     "start": "node dist/main.js",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "watch": "node dist/watcher.js"
   },
   "dependencies": {
     "@avex/core": "*",
