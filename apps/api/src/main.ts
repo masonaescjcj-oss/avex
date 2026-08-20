@@ -1,12 +1,3 @@
-import {
-  ContractProbe,
-  DEFAULT_BREAKER,
-  DEFAULT_DISPATCHER,
-  FetchPoster,
-  PriceService,
-  WebhookDispatcher,
-  createPriceSources,
-} from '@avex/core';
 
 import { createDatabase } from './db/client.js';
 import type { ChainId } from '@avex/core';
@@ -17,209 +8,65 @@ import {
   evmChainId,
 } from '@avex/core';
 
-import { AdminService } from './domain/admin-service.js';
-import { MerchantService } from './domain/merchant-service.js';
-import { CheckoutService } from './domain/checkout-service.js';
-import { DepositAddressDeriver } from './domain/deposit-address.js';
-import { InvoiceCreationService } from './domain/invoice-creation.js';
-import { FeePlanService } from './domain/fee-plan-service.js';
-import { AuditService } from './domain/audit.js';
-import { AssetService } from './domain/asset-service.js';
-import { AuthService } from './domain/auth-service.js';
-import { StaffAuthService } from './domain/staff-auth.js';
-import { DatabasePaymentSink } from './domain/payment-sink.js';
-import { ReconciliationService } from './domain/reconciliation-service.js';
-import { SettlementStore } from './domain/settlement-store.js';
-import { PayoutAddressService } from './domain/payout-service.js';
 import { DatabaseWatchStore } from './domain/watch-store.js';
-import { WebhookService } from './domain/webhook-service.js';
 import { PriceTickWriter } from './domain/price-repository.js';
 import { loadEnv } from './env.js';
-import { buildServer } from './http/server.js';
-import { InviteService } from './domain/invite-service.js';
-import { MembershipService } from './domain/membership-service.js';
+import { compose } from './compose.js';
+import { startJobTimers } from './jobs.js';
 import { JsonRpcCaller } from './rpc/json-rpc-caller.js';
-import { ConsoleMailer } from './mailer.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
-  const { db, close } = createDatabase(env.DATABASE_URL);
-
-  const audit = new AuditService(db);
-  const auth = new AuthService(db, audit, {
-    sessionTtlMs: env.SESSION_TTL_HOURS * 60 * 60 * 1000,
-    emailTokenTtlMs: env.EMAIL_TOKEN_TTL_MINUTES * 60 * 1000,
+  const { db, close, prepare } = createDatabase(env.DATABASE_URL, {
+    prepare: env.DATABASE_PREPARE,
   });
 
-  // Every observation is buffered and flushed, never awaited inline: storage
-  // latency must not sit on the checkout path.
-  // console rather than app.log: the writer is constructed before the server, and
-  // capturing `app` here would be a use-before-initialisation waiting to happen.
-  const tickWriter = new PriceTickWriter(db, 5_000, 5_000, (message) =>
-    console.warn(message),
-  );
+  /**
+   * Every observation is buffered and flushed, never awaited inline: storage latency must
+   * not sit on the checkout path.
+   *
+   * console rather than app.log: the writer is constructed before the server, and capturing
+   * `app` here would be a use-before-initialisation waiting to happen.
+   */
+  const tickWriter = new PriceTickWriter(db, 5_000, 5_000, (message) => console.warn(message));
   tickWriter.start();
 
-  const prices = new PriceService(
-    createPriceSources(env.PRICE_SOURCES),
-    {
-      aggregation: {
-        minSources: env.PRICE_MIN_SOURCES,
-        outlierToleranceBps: env.PRICE_OUTLIER_TOLERANCE_BPS,
-        maxDispersionBps: env.PRICE_MAX_DISPERSION_BPS,
-        maxStalenessMs: env.PRICE_MAX_STALENESS_MS,
-      },
-      breaker: DEFAULT_BREAKER,
-      cacheTtlMs: env.PRICE_CACHE_TTL_MS,
-    },
-    (tick) => tickWriter.record(tick),
-  );
-
-  const pricedSymbols = [...prices.coverage().keys()];
-  const assetService = new AssetService(
-    db,
-    audit,
-    new ContractProbe(new JsonRpcCaller(env.EVM_RPC_URLS)),
-    pricedSymbols,
-  );
-
-  const seeded = await assetService.seedCurated();
-
-  const mailer = new ConsoleMailer(env.APP_URL);
-  const payouts = new PayoutAddressService(db, audit, mailer);
-  const invites = new InviteService(db, audit);
-  const memberships = new MembershipService(db, audit, mailer);
-
-  // Scheduled payout changes take effect on a timer rather than on the next
-  // request, so a merchant who stops using the dashboard still gets the change
-  // they asked for.
-  const webhooks = new WebhookService(
-    db,
-    new WebhookDispatcher(new FetchPoster(DEFAULT_DISPATCHER.timeoutMs)),
-    (message) => console.warn(message),
-  );
-
-  // Credits transfers the watcher finds, and queues the callbacks that tell a
-  // merchant about them. Enqueueing is a database write, so a slow merchant
-  // endpoint can never delay crediting a payment.
-  const paymentSink = new DatabasePaymentSink(db, audit, webhooks, () => 0);
-  const watchStore = new DatabaseWatchStore(db);
-
-  // Delivery runs on its own timer rather than inline, so a retry backlog drains
-  // independently of whatever is happening on-chain.
-  const webhookWorker = setInterval(() => {
-    void webhooks
-      .drain()
-      .then((tally) => {
-        if (tally.delivered + tally.failed + tally.abandoned > 0) {
-          app.log.info(tally, 'webhook deliveries processed');
-        }
-      })
-      .catch((error: unknown) => app.log.error({ err: error }, 'webhook worker failed'));
-  }, 10_000);
-  webhookWorker.unref();
-
   /**
-   * Commission periods close hourly rather than daily.
+   * The service graph, from the one place that defines it.
    *
-   * Hourly means a merchant whose month just ended is on the rate their volume earned
-   * within the hour, rather than up to a day later. It is safe to run this often because
-   * a plan whose period ends in the future is not selected, so a second run in the same
-   * hour does nothing — and because it only ever assesses a period that has closed, so
-   * frequency cannot make it read a partial month.
+   * `compose` is shared with the serverless entry point, so anything added there appears
+   * here too — the alternative was two copies of a twenty-service wiring, where the second
+   * is missing whatever was added last.
    */
-  const commissionWorker = setInterval(() => {
-    void feePlans
-      .closePeriods()
-      .then((report) => {
-        if (report.moved > 0) app.log.info(report, 'commission tiers reviewed');
-      })
-      .catch((error: unknown) => app.log.error({ err: error }, 'commission worker failed'));
-  }, 60 * 60_000);
-  commissionWorker.unref();
-
-  const payoutWorker = setInterval(() => {
-    void payouts
-      .applyDueChanges()
-      .then((count) => {
-        if (count > 0) app.log.info({ count }, 'applied scheduled payout changes');
-      })
-      .catch((error: unknown) => app.log.error({ err: error }, 'payout worker failed'));
-  }, 60_000);
-  payoutWorker.unref();
-
-  const feePlans = new FeePlanService(db, audit, {
-    feeCollectors: env.FEE_COLLECTORS,
-  });
-
-  /**
-   * Address derivation, built from configuration alone.
-   *
-   * Every EVM chain shares one creation code because they run identical bytecode; the
-   * factory address differs because each chain has its own deployment. A chain absent
-   * from `FORWARDER_FACTORIES` simply cannot issue invoices, which is the safe
-   * direction — a defaulted factory would hand payers addresses no CREATE2 produces.
-   */
-  const deriver = new DepositAddressDeriver(
-    {
-      evm: Object.fromEntries(
-        Object.entries(env.FORWARDER_FACTORIES).map(([chain, factory]) => [
-          chain,
-          { factory, forwarderCreationCode: env.FORWARDER_CREATION_CODE },
-        ]),
-      ),
-      shared: env.SHARED_DEPOSIT_WALLETS,
-    },
-    env.MEMO_SECRET,
-  );
-
-  const invoiceCreation = new InvoiceCreationService(
-    db,
-    deriver,
-    feePlans,
-    // The pricing engine, narrowed to the one method invoice creation needs.
-    { requireRate: (symbol) => prices.requireRate(symbol) },
-    audit,
-  );
-
-  const staffAuth = new StaffAuthService(db, audit);
-  const settlementStore = new SettlementStore(db);
-  const reconciliation = new ReconciliationService(db, audit, paymentSink);
-  const admin = new AdminService(db, audit, settlementStore, reconciliation);
-
-  const app = buildServer({
+  const { app, context } = compose({
     env,
     db,
-    auth,
-    audit,
-    prices,
-    assets: assetService,
-    payouts,
-    invites,
-    memberships,
-    staffAuth,
-    admin,
-    settlements: settlementStore,
-    reconciliation,
-    merchant: new MerchantService(db),
-    invoiceCreation,
-    checkouts: new CheckoutService(
-      db,
-      invoiceCreation,
-      feePlans,
-      deriver,
-      { requireRate: (symbol) => prices.requireRate(symbol) },
-      audit,
-    ),
-    webhooks,
-    feePlans,
-    minPriceSources: env.PRICE_MIN_SOURCES,
-    // A real transport still to come; the seam is what matters now.
-    mailer,
+    recordTick: (tick) => tickWriter.record(tick),
   });
+
+  const seeded = await context.assets.seedCurated();
+
+  /**
+   * The jobs, on timers, unless a scheduler is driving them from outside.
+   *
+   * Started after the server so failures log through `app.log` rather than the console, and
+   * stopped before it closes so a tick cannot fire against a pool that is going away.
+   */
+  const stopJobs = env.RUN_JOBS_IN_PROCESS
+    ? startJobTimers(
+        {
+          db,
+          webhooks: context.webhooks,
+          feePlans: context.feePlans,
+          payouts: context.payouts,
+        },
+        app.log,
+      )
+    : () => {};
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'shutting down');
+    stopJobs();
     await app.close();
     // Flush buffered ticks before the pool goes away.
     await tickWriter.stop();
@@ -263,9 +110,31 @@ async function main(): Promise<void> {
 
   await app.listen({ port: env.PORT, host: env.HOST });
   app.log.info({ seeded }, 'curated asset catalogue synchronised');
+  /**
+   * Said out loud, because a misdiagnosed pooler is otherwise invisible until the first
+   * prepared statement fails — and that error names nothing in this codebase.
+   */
   app.log.info(
-    { chains: await watchStore.status() },
-    'watcher state loaded; per-chain watchers start with the settlement runner',
+    {
+      preparedStatements: prepare,
+      jobs: env.RUN_JOBS_IN_PROCESS ? 'in-process timers' : 'external scheduler',
+      schedulerHook: env.CRON_SECRET === undefined ? 'closed' : 'open',
+    },
+    'database and scheduler configuration',
+  );
+  /**
+   * The watcher's stored position, and an honest statement about what is driving it.
+   *
+   * Nothing, in this process. `Watcher` and `SettlementRunner` exist in @avex/core with
+   * their own tests, and nothing here instantiates them — so payments are credited only by
+   * the reconciliation path an operator triggers, and funds are not swept at all. The
+   * previous version of this line said watchers "start with the settlement runner", which
+   * read as a description of something happening.
+   */
+  const watchStore = new DatabaseWatchStore(db);
+  app.log.info(
+    { chains: await watchStore.status(), driver: 'none' },
+    'watcher cursors loaded; no watcher loop runs in this process yet',
   );
 
   if (signers.size === 0) {
@@ -283,10 +152,6 @@ async function main(): Promise<void> {
       );
     }
   }
-
-  // Referenced so the wiring is obviously live rather than dead configuration.
-  void paymentSink;
-  void settlementStore;
 }
 
 main().catch((error: unknown) => {

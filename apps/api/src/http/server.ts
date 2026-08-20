@@ -7,6 +7,8 @@ import type { PayoutAddressService } from '../domain/payout-service.js';
 import type { InviteService } from '../domain/invite-service.js';
 import type { MembershipService } from '../domain/membership-service.js';
 import { assetErrorResponse } from './routes/assets.js';
+import { timingSafeEqual } from 'node:crypto';
+
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
@@ -62,6 +64,7 @@ import {
 } from './routes/admin.js';
 import { registerAssetRoutes } from './routes/assets.js';
 import { checkoutErrorResponse, registerCheckoutRoutes } from './routes/checkout.js';
+import { JOB_NAMES, isJobName, runAllJobs, runJob } from '../jobs.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerPayoutRoutes, payoutErrorResponse } from './routes/payouts.js';
@@ -136,6 +139,15 @@ const PUBLIC_ROUTES = new Set([
    * here at all.
    */
   'GET /pay/:sessionId/receipt',
+  /**
+   * The scheduler hook, which carries its own credential rather than a principal.
+   *
+   * Listed here because it has no account behind it — a cron entry is not a user and
+   * cannot hold a session. It is not open: the handler refuses everything unless
+   * `CRON_SECRET` is set and matches, compared in constant time. Public in the sense of
+   * "the principal middleware does not apply", never in the sense of "anybody may call it".
+   */
+  'POST /internal/jobs',
 ]);
 
 /**
@@ -447,6 +459,63 @@ export function buildServer(context: AppContext): FastifyInstance {
 
   app.get('/health', async () => ({ status: 'ok' }));
 
+  /**
+   * Run the background jobs, for a deployment that has no process to hold timers in.
+   *
+   * Serverless functions and containers that scale to zero cannot keep a `setInterval`
+   * alive, so the schedule lives outside and calls in. The jobs themselves are the same
+   * ones the timers run — one definition in `jobs.ts`, two drivers — and each takes its own
+   * advisory lock, so this arriving while a timer is mid-run is a skip rather than a
+   * double delivery.
+   *
+   * Authenticated by a shared secret and nothing else. That is a weaker credential than
+   * everything else on this server, which is why it can do only this one thing and why an
+   * absent secret closes the door completely rather than leaving it ajar.
+   */
+  app.post('/internal/jobs', async (request, reply) => {
+    const expected = context.env.CRON_SECRET;
+    if (expected === undefined) {
+      /**
+       * 404, not 403.
+       *
+       * A deployment that drives its jobs with timers has no use for this route, and
+       * saying "forbidden" would advertise that a secret exists to be guessed. Nothing
+       * here is reachable, so nothing here is described.
+       */
+      return reply.status(404).send({ error: 'not_found', message: 'No such route.' });
+    }
+
+    const presented = request.headers['x-cron-secret'];
+    if (typeof presented !== 'string' || !secretMatches(presented, expected)) {
+      return reply.status(403).send({ error: 'forbidden', message: 'Bad or missing secret.' });
+    }
+
+    const requested = (request.query as { job?: string } | undefined)?.job;
+    if (requested !== undefined && !isJobName(requested)) {
+      return reply.status(400).send({
+        error: 'unknown_job',
+        message: `No such job. Known jobs: ${JOB_NAMES.join(', ')}.`,
+      });
+    }
+
+    const deps = {
+      db: context.db,
+      webhooks: context.webhooks,
+      feePlans: context.feePlans,
+      payouts: context.payouts,
+    };
+    const outcomes = requested === undefined
+      ? await runAllJobs(deps)
+      : [await runJob(requested, deps)];
+
+    for (const outcome of outcomes) {
+      if (outcome.ran && outcome.detail !== null) {
+        request.log.info({ job: outcome.job, detail: outcome.detail }, 'scheduled job did work');
+      }
+    }
+    return reply.send({ jobs: outcomes });
+  });
+
   registerAuthRoutes(app, context);
   registerOrganizationRoutes(app, context);
   registerPriceRoutes(app, context);
@@ -457,4 +526,18 @@ export function buildServer(context: AppContext): FastifyInstance {
   registerAdminRoutes(app, context);
 
   return app;
+}
+
+/**
+ * Constant-time secret comparison.
+ *
+ * `===` on a secret leaks its length and its matching prefix through timing. That is a
+ * thin channel over the internet, but this secret gates the webhook queue and the whole
+ * defence is that it cannot be guessed — so it costs nothing to close.
+ */
+function secretMatches(presented: string, expected: string): boolean {
+  const a = Buffer.from(presented, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }

@@ -1,0 +1,44 @@
+# Supabase project configuration.
+#
+# Deliberately small. Only two of Supabase's products are used — Postgres and Edge Functions
+# — and the rest are off rather than left at their defaults, because a default-on service is
+# an attack surface nobody chose. See docs/DEPLOY.md for why each is off.
+
+project_id = "avex-pay"
+
+[api]
+enabled = false
+# PostgREST is off, and this is the most important line in the file.
+#
+# It would expose the tables directly, which moves tenancy into row policies and — more to
+# the point — puts every money invariant one direct write away from being bypassed. The fee
+# floor, the gross-up, the paid/underpaid tolerance, payment idempotency on
+# (chain, tx_hash, transfer_index) and reorg reversal all live in services. A client that can
+# write a row needs each of them duplicated as a trigger, and two enforcement points means
+# one drifts.
+
+[auth]
+enabled = false
+# GoTrue is off: what lives in this codebase's auth path is not authentication but
+# authorisation with money rules — per-permission step-up with a five-minute window, a
+# 24-hour delay on payout address changes, API keys that cannot exceed their creator's role.
+# All of that stays ours either way, so GoTrue would replace only the password and session
+# primitives, in the most security-sensitive path, for nothing.
+
+[storage]
+enabled = false
+# Nothing is uploaded anywhere in this product.
+
+[realtime]
+enabled = false
+# The dashboard polls. A socket per open tab against the row store is not worth the coupling.
+
+[db]
+port = 54322
+major_version = 15
+
+[functions.api]
+# The whole HTTP API, one function. `verify_jwt` off because this API authenticates with its
+# own credentials — sessions, scoped API keys, and one cron secret — and Supabase's gateway
+# checking for a Supabase JWT first would refuse every one of them.
+verify_jwt = false

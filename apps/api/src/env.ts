@@ -12,6 +12,54 @@ const schema = z.object({
 
   DATABASE_URL: z.string().url(),
 
+  /**
+   * A second connection string that always reaches Postgres directly.
+   *
+   * Managed Postgres is usually fronted by a transaction-mode pooler, and a transaction
+   * pooler cannot run everything: `CREATE TYPE`, advisory locks that must outlive a
+   * statement, and `LISTEN` all need a session of their own. Migrations in particular —
+   * this schema has enums, and applying one through a transaction pooler fails in a way
+   * that reads like a syntax error.
+   *
+   * Optional, and falls back to `DATABASE_URL`, which is right for a plain Postgres where
+   * the two are the same string.
+   */
+  DIRECT_DATABASE_URL: z.string().url().optional(),
+
+  /**
+   * Whether the driver may use prepared statements.
+   *
+   * Off through a transaction-mode pooler, which hands each statement whichever backend is
+   * free — so a statement prepared on one connection is unknown on the next, and the error
+   * ("prepared statement \"s1\" does not exist") names nothing that appears in this
+   * codebase. Inferred from the URL below; set it explicitly to override.
+   */
+  DATABASE_PREPARE: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
+
+  /**
+   * Shared secret a scheduler presents to run the background jobs over HTTP.
+   *
+   * For a deployment with no long-lived process to hold timers in. Absent, the endpoint
+   * refuses every request — an unauthenticated way to trigger webhook delivery would let
+   * anybody drain the queue at whatever rate they liked.
+   */
+  CRON_SECRET: z.string().min(24).optional(),
+
+  /**
+   * Whether this process should hold the job timers itself.
+   *
+   * Defaults on, because that is right for a server. Turned off where a scheduler drives
+   * the jobs instead, so both are not running them — the lock makes that safe, but a
+   * timer firing every ten seconds against a pooled connection it does not need is waste.
+   */
+  RUN_JOBS_IN_PROCESS: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+
   /** Public origin, used in verification links. */
   APP_URL: z.string().url().default('http://localhost:3000'),
 

@@ -62,6 +62,12 @@ const INTERNAL = new Set([
   'DELETE /v1/organizations/:orgId/payout-addresses/pending/:changeId',
   // Price coverage is an operational read.
   'GET /v1/prices/coverage',
+  /**
+   * The scheduler hook. Not part of anybody's integration — it is the deployment's own
+   * plumbing, called by cron with a shared secret, and documenting it would be publishing
+   * the existence of a credential that gates the webhook queue. See docs/DEPLOY.md.
+   */
+  'POST /internal/jobs',
 ]);
 
 /** Everything below these prefixes is out of scope for a merchant-facing reference. */
