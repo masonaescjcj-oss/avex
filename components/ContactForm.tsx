@@ -16,6 +16,7 @@ const budgets = [
 const timelines = ['As soon as possible', 'Within a month', 'This quarter', 'Just exploring'];
 
 type Flash = { kind: 'ok' | 'err'; text: string } | null;
+type Status = 'idle' | 'sending' | 'sent';
 
 export default function ContactForm() {
   const [form, setForm] = useState({
@@ -26,8 +27,10 @@ export default function ContactForm() {
     budget: budgets[0],
     timeline: timelines[0],
     brief: '',
+    company_website: '', // honeypot — hidden from people, filled by most bots
   });
   const [flash, setFlash] = useState<Flash>(null);
+  const [status, setStatus] = useState<Status>('idle');
 
   const set = (key: keyof typeof form) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
@@ -59,6 +62,49 @@ export default function ContactForm() {
       return false;
     }
     return true;
+  };
+
+  const submit = async () => {
+    if (!validate()) return;
+    setStatus('sending');
+    setFlash(null);
+
+    try {
+      const response = await fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+      };
+
+      if (data.ok) {
+        setStatus('sent');
+        setFlash({
+          kind: 'ok',
+          text: 'Brief received — we reply within one business day.',
+        });
+        return;
+      }
+
+      setStatus('idle');
+      // 501 means no delivery channel is configured on this deployment yet.
+      setFlash({
+        kind: 'err',
+        text:
+          data.error && data.error !== 'not-configured' && data.error !== 'delivery-failed'
+            ? data.error
+            : 'Could not send from here. Use Telegram or email below and it reaches us directly.',
+      });
+    } catch {
+      setStatus('idle');
+      setFlash({
+        kind: 'err',
+        text: 'Network error. Use Telegram or email below and it reaches us directly.',
+      });
+    }
   };
 
   const sendEmail = () => {
@@ -188,6 +234,18 @@ export default function ContactForm() {
         />
       </div>
 
+      <div aria-hidden="true" className={styles.hp}>
+        <label htmlFor="company_website">Company website</label>
+        <input
+          id="company_website"
+          name="company_website"
+          tabIndex={-1}
+          autoComplete="off"
+          value={form.company_website}
+          onChange={set('company_website')}
+        />
+      </div>
+
       {flash && (
         <p
           className={`${styles.flash} ${flash.kind === 'err' ? styles.error : ''}`}
@@ -199,18 +257,29 @@ export default function ContactForm() {
       )}
 
       <div className={styles.actions}>
-        <button type="button" className="btn btn--solid" onClick={sendTelegram}>
-          <span>Send on Telegram</span>
+        <button
+          type="submit"
+          className="btn btn--solid"
+          onClick={submit}
+          disabled={status !== 'idle'}
+        >
+          <span>
+            {status === 'sending' ? 'Sending…' : status === 'sent' ? 'Sent' : 'Send brief'}
+          </span>
+          {status === 'idle' && <span aria-hidden="true">→</span>}
+        </button>
+        <button type="button" className="btn btn--ghost" onClick={sendTelegram}>
+          <span>Telegram instead</span>
           <span aria-hidden="true">↗</span>
         </button>
-        <button type="button" className="btn" onClick={sendEmail}>
-          <span>Send by email</span>
+        <button type="button" className="btn btn--ghost" onClick={sendEmail}>
+          <span>Email instead</span>
         </button>
       </div>
 
       <p className={styles.note}>
-        No database, no tracking — the form only assembles your brief and hands it to Telegram or
-        your mail client. Reply within one business day.
+        Your brief goes straight to us — no tracking, nothing sold on. Reply within one business
+        day.
       </p>
     </form>
   );

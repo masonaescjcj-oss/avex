@@ -88,3 +88,12 @@
 }
 
 .error { border-color: rgba(255, 75, 43, 0.4); background: rgba(255, 75, 43, 0.07); color: var(--flare); }
+
+/* Honeypot: off-screen rather than display:none, which some bots skip. */
+.hp {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
