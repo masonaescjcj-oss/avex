@@ -1,0 +1,11 @@
+# What must not be uploaded to the build.
+#
+# The CLI uploads the working tree, and `vercel link` writes a .env.local holding a live
+# OIDC token — a credential that has no business in a build context. Local build output is
+# excluded too: the build regenerates it, and shipping a stale copy would mean a deployment
+# whose pages came from whatever was last built on somebody's laptop.
+.env
+.env.*
+.vercel
+deploy/out
+node_modules

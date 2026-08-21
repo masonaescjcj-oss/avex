@@ -2,14 +2,20 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build:static",
   "outputDirectory": "deploy/out",
-  "installCommand": "npm ci",
+  "installCommand": "npm ci --include=dev",
   "trailingSlash": false,
   "cleanUrls": true,
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "www.avexpay.net" }],
+      "destination": "https://avexpay.net/$1",
+      "permanent": true
+    }
+  ],
   "rewrites": [
-    { "source": "/dashboard", "destination": "/dashboard.html" },
-    { "source": "/admin", "destination": "/admin.html" },
-    { "source": "/pay/:sessionId/receipt", "destination": "/receipt.html" },
-    { "source": "/pay/:sessionId", "destination": "/pay.html" }
+    { "source": "/pay/:sessionId/receipt", "destination": "/receipt" },
+    { "source": "/pay/:sessionId", "destination": "/pay" }
   ],
   "headers": [
     {

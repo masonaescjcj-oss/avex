@@ -10,3 +10,9 @@ coverage/
 
 # Assembled static output. Built from the four pages by deploy/build-static.mjs.
 deploy/out/
+
+# Vercel's local state: .vercel/ holds the linked project id, and `vercel link` writes a
+# .env.local containing a live OIDC token. Both are per-machine credentials, not repository
+# content.
+.vercel/
+.env*

@@ -40,6 +40,48 @@ tests and consumes a `ChainSigner` — `pendingNonce`/`broadcast`/`receipt`, whi
 the watcher passes a stub that throws rather than a cast that would fail the first time
 somebody swept.
 
+## The front end, on Vercel
+
+Five static pages, no framework, no build server. `npm run build:static` builds the page
+workspaces, then `deploy/build-static.mjs` assembles `deploy/out/` and injects the two values
+that break a split deployment silently: `avex-api` (where the API is) and `avex-dashboard`
+(where the site's sign-in button points).
+
+Live at **https://avexpay.net**, project `avex-pay` under the `isaacs-projects-dad539ec`
+team. `www` 308s to the apex so there is one origin, not two.
+
+```bash
+vercel link --project avex-pay
+printf 'https://api.avexpay.net' | vercel env add AVEX_API_URL production
+vercel --prod
+```
+
+`AVEX_API_URL` is a *build* variable, not a runtime one — it is read by the build script and
+baked into a meta tag. Changing it needs a redeploy, not a restart.
+
+Three things about the configuration that are not obvious:
+
+- **`installCommand` is `npm ci --include=dev`, and the flag is load-bearing.** The page
+  builds run `tsc`, and `solc` compiles the contracts — all devDependencies. A build host
+  that sets `NODE_ENV=production` makes plain `npm ci` skip them, and the failure arrives as
+  a missing module rather than as anything about environments.
+- **`cleanUrls` and rewrite destinations do not mix.** With `cleanUrls: true`, `/pay.html`
+  308s to `/pay`, so a rewrite whose destination is `/pay.html` lands on a redirect and the
+  dynamic path 404s. Destinations are extensionless for that reason. It is also why
+  `/dashboard` and `/admin` need no rewrite at all: `cleanUrls` already resolves them, and a
+  rewrite from `/dashboard` to `/dashboard` would be a loop.
+- **`.vercelignore` excludes `.env*`.** `vercel link` writes a `.env.local` holding a live
+  OIDC token, and the CLI uploads the working tree.
+
+Deployment is by CLI, not by git push: connecting the repository needs a GitHub login
+connection on the Vercel account, which this one does not have. Nothing depends on it —
+`vercel --prod` from a checkout is the whole deployment.
+
+The panel loads before the API exists, and that is worth saying out loud because it looks
+like success: `/dashboard` renders, sign-in posts to `https://api.avexpay.net/v1/auth/login`,
+and until something answers there the form fails. The static host being up is not the
+product being up.
+
 ## Postgres
 
 Migrations are Drizzle's, and they stay Drizzle's. Do not let Supabase's migration tooling
