@@ -119,15 +119,6 @@ export default function Nav() {
           >
             Telegram {site.contact.telegramHandle} ↗
           </a>
-          <a
-            className="arrow-link"
-            href={site.contact.channel}
-            target="_blank"
-            rel="noreferrer"
-            tabIndex={open ? 0 : -1}
-          >
-            Channel {site.contact.channelHandle} ↗
-          </a>
         </div>
       </div>
     </>

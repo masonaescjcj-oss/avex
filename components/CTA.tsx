@@ -6,7 +6,6 @@ import styles from './CTA.module.css';
 const channels = [
   { label: 'Email', value: site.contact.email, href: `mailto:${site.contact.email}`, ext: false },
   { label: 'Telegram', value: site.contact.telegramHandle, href: site.contact.telegram, ext: true },
-  { label: 'Channel', value: site.contact.channelHandle, href: site.contact.channel, ext: true },
 ];
 
 export default function CTA({

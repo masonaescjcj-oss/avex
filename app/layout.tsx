@@ -69,7 +69,7 @@ const orgSchema = {
   description: site.description,
   email: site.contact.email,
   foundingDate: String(site.founded),
-  sameAs: [site.contact.telegram, site.contact.channel],
+  sameAs: [site.contact.telegram],
   knowsAbout: [
     'Website development',
     'Application development',

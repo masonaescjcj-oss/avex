@@ -171,14 +171,6 @@ export default function CareersPage() {
                 <span>Message {site.contact.telegramHandle}</span>
                 <span aria-hidden="true">↗</span>
               </a>
-              <a
-                className="btn btn--ghost"
-                href={site.contact.channel}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <span>Follow {site.contact.channelHandle}</span>
-              </a>
             </div>
           </Reveal>
         </div>

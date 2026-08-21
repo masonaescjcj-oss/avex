@@ -11,8 +11,6 @@ export const site = {
     email: 'info@retroai.agency',
     telegram: 'https://t.me/isaacar',
     telegramHandle: '@isaacar',
-    channel: 'https://t.me/retroagency',
-    channelHandle: '@retroagency',
   },
   locations: ['Remote-first', 'Worldwide delivery'],
 } as const;

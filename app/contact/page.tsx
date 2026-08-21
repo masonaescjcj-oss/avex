@@ -28,13 +28,6 @@ const channels = [
     note: 'For briefs, documents and contracts',
     ext: false,
   },
-  {
-    label: 'Channel',
-    value: site.contact.channelHandle,
-    href: site.contact.channel,
-    note: 'Build notes and launches',
-    ext: true,
-  },
 ];
 
 const faqs = [

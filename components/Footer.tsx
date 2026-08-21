@@ -61,16 +61,6 @@ export default function Footer() {
                   Telegram {site.contact.telegramHandle} ↗
                 </a>
               </li>
-              <li>
-                <a
-                  className={styles.item}
-                  href={site.contact.channel}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Channel {site.contact.channelHandle} ↗
-                </a>
-              </li>
             </ul>
           </div>
 
