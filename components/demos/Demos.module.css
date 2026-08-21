@@ -181,6 +181,7 @@
 .stepMark { color: var(--cyan); }
 
 .track {
+  display: block;
   height: 4px;
   border-radius: 2px;
   background: rgba(237, 234, 227, 0.07);
@@ -188,6 +189,7 @@
 }
 
 .fill {
+  display: block;
   height: 100%;
   width: 0;
   border-radius: 2px;
@@ -245,9 +247,10 @@
 
 .vital { display: flex; align-items: center; gap: 0.55rem; font-size: 0.6rem; letter-spacing: 0.13em; text-transform: uppercase; }
 .vitalName { color: var(--paper-45); width: 4.25rem; flex: none; }
-.vitalTrack { flex: 1; height: 4px; border-radius: 2px; background: rgba(237, 234, 227, 0.08); overflow: hidden; }
+.vitalTrack { display: block; flex: 1; height: 4px; border-radius: 2px; background: rgba(237, 234, 227, 0.08); overflow: hidden; }
 
 .vitalFill {
+  display: block;
   height: 100%;
   width: 0;
   border-radius: 2px;

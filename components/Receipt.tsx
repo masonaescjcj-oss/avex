@@ -1,6 +1,6 @@
 'use client';
 
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useReducedMotion, useScrollProgress } from '@/lib/hooks';
 import { site } from '@/lib/site';
 import s from './Receipt.module.css';
@@ -23,6 +23,11 @@ export default function Receipt() {
   const innerRef = useRef<HTMLDivElement>(null);
   // Bottom edge of each row, so the paper can be cut to the printed height.
   const [edges, setEdges] = useState<number[]>([]);
+  // Until this flips, the receipt renders fully printed — so the server output
+  // and any JS-less view show a complete receipt rather than blank paper.
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => setReady(true), []);
 
   const rows: React.ReactNode[] = [
     <div className={s.head} key="head">
@@ -107,8 +112,8 @@ export default function Receipt() {
         </span>
       </div>
 
-      <div className={s.reserve} ref={ref} style={{ minHeight: full }}>
-        <div className={s.paper} style={{ height }}>
+      <div className={s.reserve} ref={ref} style={{ minHeight: ready ? full : undefined }}>
+        <div className={s.paper} data-ready={ready ? '1' : '0'} style={{ height: ready ? height : undefined }}>
           <div className={s.inner} ref={innerRef}>
             {rows.map((row, i) => (
               <div className={s.row} key={i} data-row="" data-on={printed > i ? '1' : '0'}>

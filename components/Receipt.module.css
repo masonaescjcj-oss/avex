@@ -87,14 +87,14 @@
 
 /* ---------- rows: each one prints ---------- */
 
-.row {
+.paper[data-ready='1'] .row {
   opacity: 0;
   transform: translateY(-3px);
   filter: blur(1.5px);
   transition: opacity 0.28s var(--ease), transform 0.28s var(--ease), filter 0.28s var(--ease);
 }
 
-.row[data-on='1'] { opacity: 1; transform: none; filter: none; }
+.paper[data-ready='1'] .row[data-on='1'] { opacity: 1; transform: none; filter: none; }
 
 .line {
   display: flex;
@@ -175,5 +175,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .headBar { animation: none; }
-  .row { opacity: 1; transform: none; filter: none; }
+  .paper[data-ready='1'] .row { opacity: 1; transform: none; filter: none; }
 }
