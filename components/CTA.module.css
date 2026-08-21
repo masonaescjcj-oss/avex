@@ -1,0 +1,57 @@
+.cta {
+  position: relative;
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+  padding-block: clamp(4rem, 10vw, 8rem);
+  background:
+    radial-gradient(75% 110% at 50% 118%, rgba(255, 176, 32, 0.15), rgba(6, 6, 10, 0) 60%),
+    var(--ink);
+}
+
+.inner { display: grid; gap: clamp(1.75rem, 4vw, 3rem); }
+
+@media (min-width: 62rem) {
+  .inner { grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); align-items: end; }
+}
+
+.title {
+  font-size: clamp(2.1rem, 6vw, 4.75rem);
+  line-height: 0.94;
+  letter-spacing: -0.045em;
+}
+
+.channels {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--line-2);
+}
+
+.channel {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.95rem 0;
+  border-bottom: 1px solid var(--line-2);
+  transition: padding-left 0.35s var(--ease);
+}
+
+.channel:hover { padding-left: 0.45rem; }
+
+.channelLabel {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-28);
+  width: 5.5rem;
+  flex: none;
+}
+
+.channelValue {
+  font-size: 0.98rem;
+  color: var(--paper-70);
+  transition: color 0.3s var(--ease);
+  overflow-wrap: anywhere;
+}
+
+.channel:hover .channelValue { color: var(--amber); }

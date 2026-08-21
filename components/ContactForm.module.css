@@ -1,0 +1,90 @@
+.form { display: grid; gap: 1.1rem; }
+
+.field { display: grid; gap: 0.5rem; }
+
+.label {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-45);
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.label b { color: var(--amber); font-weight: 400; }
+
+.input,
+.textarea,
+.select {
+  width: 100%;
+  background: rgba(237, 234, 227, 0.026);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 0.8rem 0.9rem;
+  font-size: 0.95rem;
+  color: var(--paper);
+  transition: border-color 0.3s var(--ease), background 0.3s var(--ease);
+  appearance: none;
+}
+
+.select {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  background-image: linear-gradient(45deg, transparent 50%, var(--paper-45) 50%),
+    linear-gradient(135deg, var(--paper-45) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 2.25rem;
+}
+
+.select option { background: var(--ink-2); color: var(--paper); }
+
+.textarea { resize: vertical; min-height: 8rem; line-height: 1.6; font-family: inherit; }
+
+.input::placeholder, .textarea::placeholder { color: var(--paper-28); }
+
+.input:focus, .textarea:focus, .select:focus {
+  border-color: var(--amber);
+  background: rgba(255, 176, 32, 0.045);
+  outline: none;
+}
+
+.row { display: grid; gap: 1.1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); }
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  align-items: center;
+  padding-top: 0.35rem;
+}
+
+.note {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--paper-28);
+  line-height: 1.7;
+}
+
+.flash {
+  border: 1px solid rgba(55, 230, 200, 0.32);
+  background: rgba(55, 230, 200, 0.06);
+  border-radius: 2px;
+  padding: 0.7rem 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.error { border-color: rgba(255, 75, 43, 0.4); background: rgba(255, 75, 43, 0.07); color: var(--flare); }

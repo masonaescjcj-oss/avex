@@ -1,0 +1,42 @@
+.head { display: grid; gap: 1.35rem; max-width: 52rem; }
+
+.title {
+  font-size: clamp(2rem, 5.4vw, 4rem);
+  line-height: 0.98;
+  letter-spacing: -0.042em;
+}
+
+.prose {
+  max-width: 40rem;
+  display: grid;
+  gap: 1.55rem;
+}
+
+.prose p {
+  font-size: clamp(1rem, 1.35vw, 1.115rem);
+  line-height: 1.72;
+  color: var(--paper-70);
+}
+
+.prose p:first-child {
+  font-size: clamp(1.1rem, 1.6vw, 1.3rem);
+  color: var(--paper);
+  line-height: 1.6;
+}
+
+.prose p:first-child::first-letter {
+  float: left;
+  font-size: 3.1em;
+  line-height: 0.78;
+  padding: 0.06em 0.12em 0 0;
+  color: var(--amber);
+  font-weight: 500;
+}
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  justify-content: space-between;
+  max-width: 40rem;
+}

@@ -1,0 +1,147 @@
+/* Shared styles for inner pages. */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+}
+
+.heroBg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(60% 60% at 12% 0%, rgba(255, 176, 32, 0.11), rgba(6, 6, 10, 0) 62%),
+    radial-gradient(50% 55% at 92% 24%, rgba(55, 230, 200, 0.075), rgba(6, 6, 10, 0) 60%);
+}
+
+.crumb {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--paper-28);
+  margin-bottom: 1.35rem;
+}
+
+.crumb a { color: var(--paper-45); transition: color 0.3s var(--ease); }
+.crumb a:hover { color: var(--amber); }
+
+/* ---------- detail blocks ---------- */
+
+.block:first-child { border-top: 0; padding-top: clamp(1rem, 2vw, 1.5rem); }
+
+.block {
+  display: grid;
+  gap: clamp(1.5rem, 3.5vw, 3rem);
+  padding-block: clamp(2.5rem, 6vw, 4.75rem);
+  border-top: 1px solid var(--line-2);
+  scroll-margin-top: calc(var(--nav-h) + 2rem);
+}
+
+@media (min-width: 62rem) {
+  .block { grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); align-items: start; }
+}
+
+.blockTitle {
+  font-size: clamp(1.85rem, 4.4vw, 3.1rem);
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.checkList { display: grid; gap: 0.65rem; list-style: none; }
+
+.checkItem {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  color: var(--paper-70);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.checkItem::before {
+  content: '▸';
+  color: var(--amber);
+  flex: none;
+  font-size: 0.72rem;
+}
+
+/* ---------- numbered card grid ---------- */
+
+.cards {
+  display: grid;
+  gap: clamp(0.85rem, 2vw, 1.25rem);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+}
+
+.cardIndex {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.16em;
+  color: var(--amber);
+  margin-bottom: 1.1rem;
+  display: block;
+}
+
+.cardTitle {
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+  font-weight: 500;
+  margin-bottom: 0.6rem;
+}
+
+.cardBody { color: var(--paper-45); font-size: 0.9rem; line-height: 1.6; }
+
+/* ---------- table-ish rows ---------- */
+
+.rows { border-top: 1px solid var(--line-2); }
+
+.row {
+  display: grid;
+  gap: 0.6rem 1.5rem;
+  grid-template-columns: minmax(0, 1fr);
+  padding: clamp(1.1rem, 2.5vw, 1.6rem) 0;
+  border-bottom: 1px solid var(--line-2);
+  transition: padding-left 0.4s var(--ease);
+}
+
+.row:hover { padding-left: 0.5rem; }
+
+.rowTitle {
+  font-size: clamp(1.05rem, 2vw, 1.3rem);
+  letter-spacing: -0.02em;
+  font-weight: 500;
+  transition: color 0.3s var(--ease);
+}
+
+.row:hover .rowTitle { color: var(--amber); }
+.rowBody { color: var(--paper-45); font-size: 0.92rem; line-height: 1.55; }
+
+/* ---------- metrics ---------- */
+
+.metrics {
+  display: grid;
+  gap: clamp(0.85rem, 2vw, 1.25rem);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+}
+
+.metric {
+  border-left: 1px solid var(--amber);
+  padding-left: 0.9rem;
+}
+
+.metricValue {
+  font-size: clamp(1.5rem, 3.2vw, 2.1rem);
+  letter-spacing: -0.035em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.metricLabel {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--paper-45);
+  margin-top: 0.55rem;
+}
