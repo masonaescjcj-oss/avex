@@ -3,7 +3,7 @@ import Link from 'next/link';
 import CTA from '@/components/CTA';
 import Marquee from '@/components/Marquee';
 import Reveal from '@/components/Reveal';
-import Terminal from '@/components/Terminal';
+import Demo from '@/components/demos/Demos';
 import { services, stack } from '@/lib/site';
 import inner from '../inner.module.css';
 
@@ -96,12 +96,7 @@ export default function ServicesPage() {
                     ))}
                   </ul>
                 </div>
-                <Terminal
-                  cmd={service.terminal.cmd}
-                  lines={service.terminal.lines}
-                  status={service.terminal.status}
-                  label={`${service.id} · live`}
-                />
+                <Demo kind={service.demo} />
               </div>
             </Reveal>
           ))}

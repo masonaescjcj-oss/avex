@@ -39,7 +39,7 @@ export type Service = {
   body: string;
   tags: string[];
   deliverables: string[];
-  terminal: { cmd: string; lines: string[]; status: string };
+  demo: 'browser' | 'deploy' | 'intake' | 'agent';
 };
 
 export const services: Service[] = [
@@ -58,15 +58,7 @@ export const services: Service[] = [
       'CMS your team can actually use',
       'Analytics, SEO and schema wired in',
     ],
-    terminal: {
-      cmd: 'next build --profile',
-      lines: [
-        'compiled 34 routes · 0 errors',
-        'lighthouse · perf 99 · a11y 100 · seo 100',
-        'first load JS · 84 kB shared',
-      ],
-      status: 'DEPLOYED · retroai.agency',
-    },
+    demo: 'browser',
   },
   {
     id: 'app',
@@ -83,15 +75,7 @@ export const services: Service[] = [
       'Admin and operator tooling',
       'CI/CD, monitoring, on-call runbooks',
     ],
-    terminal: {
-      cmd: 'deploy · api-01',
-      lines: [
-        'migrations · 41 applied',
-        'tests · 1,284 passed',
-        'p95 latency · 118 ms',
-      ],
-      status: 'LIVE · v2.14.0 · ALL GREEN',
-    },
+    demo: 'deploy',
   },
   {
     id: 'automation',
@@ -108,15 +92,7 @@ export const services: Service[] = [
       'Integrations across your existing stack',
       'Human-in-the-loop review where it matters',
     ],
-    terminal: {
-      cmd: 'run intake.pipeline',
-      lines: [
-        'INV-4021 · parsed · validated ✓',
-        'INV-4022 · parsed · validated ✓',
-        'INV-4023 · flagged → review queue',
-      ],
-      status: '312 DOCS/HR · 0 ERRORS',
-    },
+    demo: 'intake',
   },
   {
     id: 'ai',
@@ -133,15 +109,7 @@ export const services: Service[] = [
       'Tool-calling agents with guardrails',
       'Cost, latency and quality dashboards',
     ],
-    terminal: {
-      cmd: 'agent · support-triage',
-      lines: [
-        'ticket #8842 · intent · refund',
-        'policy checked · 3 tools called',
-        'resolved · no human in loop',
-      ],
-      status: 'EVAL SCORE · 0.94 · 24 H WINDOW',
-    },
+    demo: 'agent',
   },
 ];
 

@@ -1,0 +1,179 @@
+.frame { display: grid; gap: 0.9rem; }
+
+/* ---------- printer head ---------- */
+
+.printer {
+  border: 1px solid var(--line);
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(180deg, rgba(237, 234, 227, 0.05), rgba(237, 234, 227, 0.015));
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--paper-28);
+  margin-bottom: -0.9rem;
+}
+
+.printerState { margin-left: auto; color: var(--amber); font-variant-numeric: tabular-nums; }
+.printerState[data-done='1'] { color: var(--cyan); }
+
+.slot {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(237, 234, 227, 0.09);
+  overflow: hidden;
+  flex: 1;
+  max-width: 6rem;
+}
+
+.slotFill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--amber), var(--cyan));
+  transition: width 0.15s linear;
+}
+
+/* ---------- the paper ---------- */
+
+.reserve { position: relative; }
+
+/* The shell is the paper that has emerged so far; its height grows as rows
+   print, while .reserve holds the final height so nothing below reflows. */
+.paper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  line-height: 1.8;
+  background: #f4f2ec;
+  color: #14140f;
+  border-radius: 2px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  transition: height 0.2s linear;
+  --tear: 8px;
+  clip-path: polygon(
+    0 0, 100% 0, 100% calc(100% - var(--tear)),
+    96% 100%, 92% calc(100% - var(--tear)), 88% 100%, 84% calc(100% - var(--tear)),
+    80% 100%, 76% calc(100% - var(--tear)), 72% 100%, 68% calc(100% - var(--tear)),
+    64% 100%, 60% calc(100% - var(--tear)), 56% 100%, 52% calc(100% - var(--tear)),
+    48% 100%, 44% calc(100% - var(--tear)), 40% 100%, 36% calc(100% - var(--tear)),
+    32% 100%, 28% calc(100% - var(--tear)), 24% 100%, 20% calc(100% - var(--tear)),
+    16% 100%, 12% calc(100% - var(--tear)), 8% 100%, 4% calc(100% - var(--tear)), 0 100%
+  );
+}
+
+.inner { padding: 1.4rem 1.3rem 2.4rem; }
+
+/* Paper fibre, so it does not read as a flat white box. */
+.paper::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgba(20, 20, 15, 0.032) 0 1px,
+    transparent 1px 4px
+  );
+}
+
+/* ---------- rows: each one prints ---------- */
+
+.row {
+  opacity: 0;
+  transform: translateY(-3px);
+  filter: blur(1.5px);
+  transition: opacity 0.28s var(--ease), transform 0.28s var(--ease), filter 0.28s var(--ease);
+}
+
+.row[data-on='1'] { opacity: 1; transform: none; filter: none; }
+
+.line {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.line b { font-weight: 700; }
+
+.head { text-align: center; letter-spacing: 0.16em; text-transform: uppercase; }
+.title { font-size: 0.95rem; font-weight: 700; letter-spacing: 0.22em; }
+.dim { color: rgba(20, 20, 15, 0.55); }
+.centre { text-align: center; }
+
+.rule {
+  border: 0;
+  border-top: 1px dashed rgba(20, 20, 15, 0.3);
+  margin-block: 0.75rem;
+}
+
+.total { font-size: 0.85rem; font-weight: 700; letter-spacing: 0.1em; }
+
+.pays {
+  text-align: center;
+  color: rgba(20, 20, 15, 0.6);
+  letter-spacing: 0.05em;
+}
+
+.barcode {
+  margin-top: 1rem;
+  height: 32px;
+  background: repeating-linear-gradient(
+    90deg,
+    #14140f 0 2px, transparent 2px 4px, #14140f 4px 5px, transparent 5px 9px,
+    #14140f 9px 12px, transparent 12px 13px
+  );
+}
+
+/* The print head: a warm bar sitting on the row being printed. */
+.headBar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  z-index: 2;
+  background: linear-gradient(90deg, rgba(255, 120, 0, 0) 0%, #ff7a00 18%, #ffd08a 50%, #ff7a00 82%, rgba(255, 120, 0, 0) 100%);
+  box-shadow: 0 0 12px rgba(255, 122, 0, 0.75);
+  animation: heat 0.9s var(--ease-io) infinite;
+}
+
+@keyframes heat {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-28);
+  transition: opacity 0.5s var(--ease);
+}
+
+.hint[data-hidden='1'] { opacity: 0; }
+
+.hint span:last-child {
+  width: 2rem;
+  height: 1px;
+  background: linear-gradient(90deg, var(--amber), transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .headBar { animation: none; }
+  .row { opacity: 1; transform: none; filter: none; }
+}

@@ -4,19 +4,12 @@ import Counter from '@/components/Counter';
 import Hero from '@/components/Hero';
 import Marquee from '@/components/Marquee';
 import Reveal from '@/components/Reveal';
-import Terminal from '@/components/Terminal';
+import Demo from '@/components/demos/Demos';
+import Receipt from '@/components/Receipt';
 import { projects } from '@/lib/content';
 import { processSteps } from '@/lib/content';
 import { services, stack, stats } from '@/lib/site';
 import styles from './home.module.css';
-
-const receiptLines = [
-  { label: 'Websites', qty: '24' },
-  { label: 'Applications', qty: '18' },
-  { label: 'Automations', qty: '120' },
-  { label: 'AI systems', qty: '31' },
-  { label: 'Rented backbone', qty: '00' },
-];
 
 export default function HomePage() {
   return (
@@ -57,44 +50,7 @@ export default function HomePage() {
             </Reveal>
 
             <Reveal delay={140}>
-              <div className={styles.receipt}>
-                <div className={styles.receiptHead}>
-                  <p className={styles.receiptTitle}>RETROAI</p>
-                  <p className={styles.receiptDim}>WEB · APP · AUTOMATION · AI</p>
-                  <p className={styles.receiptDim}>retroai.agency · open 24/7</p>
-                </div>
-                <hr className={styles.receiptRule} />
-                <p className={styles.receiptLine}>
-                  <span>Ticket</span>
-                  <span>WHO-WE-ARE</span>
-                </p>
-                <p className={styles.receiptLine}>
-                  <span>Since</span>
-                  <span>2021</span>
-                </p>
-                <hr className={styles.receiptRule} />
-                {receiptLines.map((line) => (
-                  <p className={styles.receiptLine} key={line.label}>
-                    <span>{line.label}</span>
-                    <b>{line.qty}</b>
-                  </p>
-                ))}
-                <hr className={styles.receiptRule} />
-                <p className={`${styles.receiptLine} ${styles.receiptTotal}`}>
-                  <span>Total due</span>
-                  <span>0.00</span>
-                </p>
-                <p className={styles.receiptDim} style={{ textAlign: 'center' }}>
-                  ( it pays for itself )
-                </p>
-                <hr className={styles.receiptRule} />
-                <p className={styles.receiptHead} style={{ fontSize: '0.62rem' }}>
-                  Thank you for scrolling
-                  <br />
-                  reprints free
-                </p>
-                <div className={styles.receiptBar} aria-hidden="true" />
-              </div>
+              <Receipt />
             </Reveal>
           </div>
         </div>
@@ -144,12 +100,7 @@ export default function HomePage() {
                   What you get →
                 </Link>
               </div>
-              <Terminal
-                cmd={service.terminal.cmd}
-                lines={service.terminal.lines}
-                status={service.terminal.status}
-                label={`${service.id} · live`}
-              />
+              <Demo kind={service.demo} />
             </Reveal>
           ))}
         </div>
