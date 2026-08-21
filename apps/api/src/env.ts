@@ -178,6 +178,30 @@ const schema = z.object({
         .filter(Boolean),
     ),
 
+  /**
+   * Origins allowed to call the authenticated routes from a browser.
+   *
+   * Needed only when the dashboard is served from a different origin than the API — a static
+   * host in front, the API somewhere else. Same-origin deployments leave this empty and get
+   * no cross-origin access at all, which is the right default.
+   *
+   * Every caution in `CHECKOUT_ORIGINS` applies harder here, because these routes *do* take
+   * credentials. So: named origins only and never a wildcard, since a wildcard would let any
+   * page a signed-in merchant visits read their invoices with their own token. Credentials
+   * are still never allowed — the session travels in an `Authorization` header this page
+   * sets, not in a cookie a browser would attach on its own, and that difference is what
+   * keeps a hostile page from riding along.
+   */
+  DASHBOARD_ORIGINS: z
+    .string()
+    .default('')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((entry) => entry.trim().replace(/\/$/, ''))
+        .filter(Boolean),
+    ),
+
   EVM_RPC_URLS: z
     .string()
     .default('bsc=https://bsc-dataseed.binance.org')

@@ -235,6 +235,51 @@ export function buildServer(context: AppContext): FastifyInstance {
     if (request.method === 'OPTIONS') return reply.status(204).send();
   });
 
+  /**
+   * The same courtesy for the authenticated routes, and only for named origins.
+   *
+   * Needed when the dashboard is served from a different origin than the API — a static host
+   * in front, this somewhere else. Every caution above applies harder, because these routes
+   * do take credentials:
+   *
+   *   - Named origins, never a wildcard. A wildcard here would let any page a signed-in
+   *     merchant visits read their invoices with their own token.
+   *   - `authorization` in the allowed headers, because that is where the session travels.
+   *     Deliberately *not* `x-cron-secret`: the scheduler is not a browser and has no
+   *     business being reachable through a preflight.
+   *   - No `allow-credentials`. The token is set by the page, not attached by the browser,
+   *     so a hostile page gains nothing from being allowed to make the request — it still
+   *     has no token to put in the header.
+   *
+   * Empty by default, which is a same-origin deployment and wants none of this.
+   */
+  app.addHook('onRequest', async (request, reply) => {
+    if (context.env.DASHBOARD_ORIGINS.length === 0) return;
+
+    const url = request.routeOptions.url ?? request.url;
+    // The checkout hook above owns `/pay`, with its own narrower allowlist.
+    if (url.startsWith(CHECKOUT_PREFIX)) return;
+
+    const origin = request.headers.origin;
+    if (typeof origin !== 'string') return;
+
+    if (!context.env.DASHBOARD_ORIGINS.includes(origin.replace(/\/$/, ''))) {
+      // Absence of the header is the whole enforcement; the browser blocks either way, and
+      // a 403 on the preflight would be indistinguishable from the API being down.
+      if (request.method === 'OPTIONS') return reply.status(204).send();
+      return;
+    }
+
+    reply
+      .header('access-control-allow-origin', origin)
+      .header('vary', 'origin')
+      .header('access-control-allow-methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+      .header('access-control-allow-headers', 'authorization, content-type')
+      .header('access-control-max-age', '600');
+
+    if (request.method === 'OPTIONS') return reply.status(204).send();
+  });
+
   app.addHook('onRequest', async (request, reply) => {
     const decision = globalLimiter.check(request.ip);
     reply.header('x-ratelimit-remaining', decision.remaining);

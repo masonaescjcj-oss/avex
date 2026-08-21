@@ -1,5 +1,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Where the API is.
+
+  Empty means same origin, which is right when one host serves both the page and the API.
+  A split deployment — static pages on one host, the API on another — fills this in at
+  build time, and every request this page makes goes through it. See docs/DEPLOY.md.
+
+  It was read but never declared, so the base was always empty and a split deployment
+  would have sent every request to the static host.
+-->
+<meta name="avex-api" content="">
 <title>AVEX Pay</title>
 <style>
   /**

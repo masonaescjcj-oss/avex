@@ -1,5 +1,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Where the API is.
+  
+  Empty means same origin, which is right when one host serves both. A split deployment —
+  static pages on one host, the API on another — fills this in at build time, and every
+  request the page makes goes through it. See docs/DEPLOY.md.
+-->
+<meta name="avex-api" content="">
 <title>AVEX Pay Admin</title>
 <style>
   /**
@@ -405,7 +413,14 @@
    * origin would be able to read storage; a token in a closure at least dies with the
    * tab, and the eight-hour server-side expiry does the rest.
    */
-  const API = (window.AVEX_ADMIN_API ?? '').replace(/\/$/, '');
+  /**
+   * The same `<meta>` every other page in this product reads.
+   *
+   * It was `window.AVEX_ADMIN_API`, a global nothing set — so this page's API base was always
+   * empty and only a same-origin deployment worked. One mechanism across four pages means one
+   * thing for a deployment to fill in rather than four things to remember.
+   */
+  const API = (document.querySelector('meta[name="avex-api"]')?.content ?? '').replace(/\/$/, '');
 
   let token = null;
   let me = null;

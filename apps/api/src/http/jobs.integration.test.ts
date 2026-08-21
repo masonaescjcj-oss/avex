@@ -64,7 +64,10 @@ const source = (name: string): PriceSource => ({
 });
 
 /** Build a server with or without a configured secret. */
-function boot(secret: string | undefined): {
+function boot(
+  secret: string | undefined,
+  extra: Record<string, string> = {},
+): {
   app: FastifyInstance;
   close: () => Promise<void>;
 } {
@@ -74,6 +77,7 @@ function boot(secret: string | undefined): {
     DATABASE_URL: databaseUrl!,
     RATE_LIMIT_PER_MINUTE: '10000',
     ...(secret === undefined ? {} : { CRON_SECRET: secret }),
+    ...extra,
   });
 
   const database = createDatabase(env.DATABASE_URL);
@@ -265,5 +269,148 @@ describe('pooled connection strings', () => {
     // here would replace a clear connection error with a confusing parse error.
     assert.equal(looksPooled('not a url'), false);
     assert.equal(looksPooled(''), false);
+  });
+});
+
+describe('cross-origin access to the authenticated routes', {
+  skip: databaseUrl ? false : 'DATABASE_URL not set',
+}, () => {
+  /**
+   * Needed only when the dashboard is served from a different origin than the API, which is
+   * what a static host in front of a serverless API means. Every test here is about the
+   * boundary rather than the feature: this is the one hook that decides whether another
+   * website's JavaScript may talk to an API that takes credentials.
+   */
+  const ALLOWED = 'https://avexpay.net';
+  const ALSO = 'https://dash.avexpay.net';
+
+  test('a named origin is allowed, and told so per origin', async () => {
+    const { app, close } = boot(undefined, { DASHBOARD_ORIGINS: `${ALLOWED},${ALSO}` });
+    await app.ready();
+
+    for (const origin of [ALLOWED, ALSO]) {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/organizations',
+        headers: { origin },
+      });
+      assert.equal(response.headers['access-control-allow-origin'], origin);
+      /**
+       * `Vary: origin`, or a cache keyed on the URL alone serves one origin's header to
+       * another — which turns a correct allowlist into a wildcard at the CDN.
+       */
+      assert.match(String(response.headers['vary']), /origin/i);
+      // Never allowed: the token is set by the page, and allowing credentials would invite a
+      // browser to attach cookies a future deployment might set.
+      assert.equal(response.headers['access-control-allow-credentials'], undefined);
+    }
+    await close();
+  });
+
+  test('an origin nobody named gets no header at all', async () => {
+    /**
+     * Absence is the enforcement. A 403 would be indistinguishable, to the page, from the API
+     * being down — and the browser blocks the request either way.
+     */
+    const { app, close } = boot(undefined, { DASHBOARD_ORIGINS: ALLOWED });
+    await app.ready();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/organizations',
+      headers: { origin: 'https://attacker.example' },
+    });
+    assert.equal(response.headers['access-control-allow-origin'], undefined);
+    await close();
+  });
+
+  test('a preflight is answered, allowed or not', async () => {
+    const { app, close } = boot(undefined, { DASHBOARD_ORIGINS: ALLOWED });
+    await app.ready();
+
+    const allowed = await app.inject({
+      method: 'OPTIONS',
+      url: '/v1/organizations',
+      headers: { origin: ALLOWED, 'access-control-request-method': 'GET' },
+    });
+    assert.equal(allowed.statusCode, 204);
+    assert.equal(allowed.headers['access-control-allow-origin'], ALLOWED);
+    // The header the session travels in, or every authenticated request fails the preflight.
+    assert.match(String(allowed.headers['access-control-allow-headers']), /authorization/i);
+    /**
+     * And not the scheduler's header. That hook is not a browser and has no business being
+     * reachable through a preflight — naming it here would advertise it.
+     */
+    assert.ok(!/cron/i.test(String(allowed.headers['access-control-allow-headers'])));
+
+    const refused = await app.inject({
+      method: 'OPTIONS',
+      url: '/v1/organizations',
+      headers: { origin: 'https://attacker.example', 'access-control-request-method': 'GET' },
+    });
+    assert.equal(refused.statusCode, 204);
+    assert.equal(refused.headers['access-control-allow-origin'], undefined);
+    await close();
+  });
+
+  test('no allowlist means no cross-origin access at all', async () => {
+    // The default, and right for a deployment serving the dashboard from the API's own origin.
+    const { app, close } = boot(undefined, {});
+    await app.ready();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/organizations',
+      headers: { origin: ALLOWED },
+    });
+    assert.equal(response.headers['access-control-allow-origin'], undefined);
+    await close();
+  });
+
+  test('being allowed to ask is not being allowed in', async () => {
+    /**
+     * The distinction that matters. CORS decides whether a page may *make* the request; the
+     * principal check decides whether it is answered. A named origin with no token still gets
+     * a 401 — otherwise the allowlist would be an authentication bypass.
+     */
+    const { app, close } = boot(undefined, { DASHBOARD_ORIGINS: ALLOWED });
+    await app.ready();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/organizations',
+      headers: { origin: ALLOWED },
+    });
+    assert.equal(response.statusCode, 401, response.body);
+    assert.equal(response.headers['access-control-allow-origin'], ALLOWED);
+    await close();
+  });
+
+  test('the checkout keeps its own narrower allowlist', async () => {
+    /**
+     * Two hooks, two lists, and `/pay` belongs to the first one. A payer's origin must not
+     * inherit access to the authenticated routes, and a dashboard origin must not silently
+     * gain the checkout's — they are different audiences.
+     */
+    const { app, close } = boot(undefined, {
+      DASHBOARD_ORIGINS: ALLOWED,
+      CHECKOUT_ORIGINS: 'https://pay.avexpay.net',
+    });
+    await app.ready();
+
+    const payerOnDashboard = await app.inject({
+      method: 'GET',
+      url: '/v1/organizations',
+      headers: { origin: 'https://pay.avexpay.net' },
+    });
+    assert.equal(payerOnDashboard.headers['access-control-allow-origin'], undefined);
+
+    const dashboardOnCheckout = await app.inject({
+      method: 'GET',
+      url: '/pay/00000000-0000-4000-8000-000000000000/state',
+      headers: { origin: ALLOWED },
+    });
+    assert.equal(dashboardOnCheckout.headers['access-control-allow-origin'], undefined);
+    await close();
   });
 });

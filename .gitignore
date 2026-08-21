@@ -7,3 +7,6 @@ dist/
 coverage/
 .DS_Store
 *.tsbuildinfo
+
+# Assembled static output. Built from the four pages by deploy/build-static.mjs.
+deploy/out/
