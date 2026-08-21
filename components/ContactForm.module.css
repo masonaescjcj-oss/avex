@@ -97,3 +97,14 @@
   height: 1px;
   overflow: hidden;
 }
+
+/* On a phone each action gets its own full-width row — a wrapped grid of
+   part-width buttons read as broken. */
+@media (max-width: 40rem) {
+  .actions { flex-direction: column; align-items: stretch; }
+
+  .actions :global(.btn) {
+    width: 100%;
+    justify-content: center;
+  }
+}

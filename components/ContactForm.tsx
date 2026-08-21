@@ -53,15 +53,22 @@ export default function ContactForm() {
       .filter((line) => line !== null)
       .join('\n');
 
+  const missing = () => {
+    const gaps: string[] = [];
+    if (!form.name.trim()) gaps.push('your name');
+    if (!form.contact.trim()) gaps.push('an email or Telegram handle');
+    if (form.brief.trim().length < 12) gaps.push('a sentence about the project');
+    return gaps;
+  };
+
   const validate = () => {
-    if (!form.name.trim() || !form.contact.trim() || form.brief.trim().length < 12) {
-      setFlash({
-        kind: 'err',
-        text: 'Add your name, a way to reach you, and a sentence or two about the project.',
-      });
-      return false;
-    }
-    return true;
+    const gaps = missing();
+    if (!gaps.length) return true;
+    setFlash({
+      kind: 'err',
+      text: `Still needed: ${gaps.join(', ')}.`,
+    });
+    return false;
   };
 
   const submit = async () => {
@@ -107,26 +114,30 @@ export default function ContactForm() {
     }
   };
 
-  const sendEmail = () => {
-    if (!validate()) return;
+  const mailHref = () => {
     const subject = `Project enquiry — ${form.service}${form.company ? ` — ${form.company}` : ''}`;
-    window.location.href = `mailto:${site.contact.email}?subject=${encodeURIComponent(
+    return `mailto:${site.contact.email}?subject=${encodeURIComponent(
       subject,
     )}&body=${encodeURIComponent(compose())}`;
-    setFlash({ kind: 'ok', text: 'Your mail client should be opening with the brief attached.' });
   };
 
-  const sendTelegram = async () => {
-    if (!validate()) return;
-    // Telegram cannot pre-fill a direct message, so the brief goes to the
-    // clipboard and the chat opens ready for a paste.
-    try {
-      await navigator.clipboard.writeText(compose());
-      setFlash({ kind: 'ok', text: 'Brief copied — paste it into the chat that just opened.' });
-    } catch {
-      setFlash({ kind: 'ok', text: 'Telegram is opening. Paste or retype your brief there.' });
-    }
-    window.open(site.contact.telegram, '_blank', 'noopener,noreferrer');
+  // Telegram cannot pre-fill a direct message, so the brief goes to the
+  // clipboard and the chat opens ready for a paste.
+  const copyForTelegram = () => {
+    navigator.clipboard
+      ?.writeText(compose())
+      .then(() =>
+        setFlash({
+          kind: 'ok',
+          text: `Brief copied — paste it to ${site.contact.telegramHandle} in the chat that just opened.`,
+        }),
+      )
+      .catch(() =>
+        setFlash({
+          kind: 'ok',
+          text: `Opening Telegram — send your brief to ${site.contact.telegramHandle} there.`,
+        }),
+      );
   };
 
   return (
@@ -268,13 +279,19 @@ export default function ContactForm() {
           </span>
           {status === 'idle' && <span aria-hidden="true">→</span>}
         </button>
-        <button type="button" className="btn btn--ghost" onClick={sendTelegram}>
+        <a
+          className="btn btn--ghost"
+          href={site.contact.telegram}
+          target="_blank"
+          rel="noreferrer"
+          onClick={copyForTelegram}
+        >
           <span>Telegram instead</span>
           <span aria-hidden="true">↗</span>
-        </button>
-        <button type="button" className="btn btn--ghost" onClick={sendEmail}>
+        </a>
+        <a className="btn btn--ghost" href={mailHref()}>
           <span>Email instead</span>
-        </button>
+        </a>
       </div>
 
       <p className={styles.note}>
