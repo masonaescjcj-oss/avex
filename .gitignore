@@ -16,3 +16,6 @@ deploy/out/
 # content.
 .vercel/
 .env*
+
+# The Supabase CLI scratch directory. Per-machine state, not repository content.
+supabase/.temp/

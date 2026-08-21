@@ -314,6 +314,55 @@ describe('the page holds together', () => {
     assert.match(page, /body \{[^}]*background: var\(--void\)/);
   });
 
+  test('every link on the page goes somewhere we serve', () => {
+    /**
+     * The bug this exists for: "Open the API reference" — the primary call to action of the
+     * documentation section — pointed at a claude.ai artifact URL, because that is where the
+     * reference was drafted. It shipped to production that way. A visitor clicking the one
+     * button on the page that says "here is how you take money" left our domain for a private
+     * page on somebody else's host, and nothing in the repository objected: the link was
+     * valid HTML, it resolved, and no test looked at where it went.
+     *
+     * So this test reads the static bundle's own manifest and holds the page to it. A
+     * fragment must name something on the page. A root-relative path must be a file the
+     * bundle ships. An absolute URL must be one of the two font hosts.
+     */
+    const manifest = read('deploy/build-static.mjs');
+    const shipped = new Set(
+      [...manifest.matchAll(/to: '([^']+\.html)'/g)].map(([, file]) =>
+        // `cleanUrls` serves each file without its extension, and index.html at the root.
+        file === 'index.html' ? '/' : `/${file.replace(/\.html$/, '')}`,
+      ),
+    );
+    assert.ok(shipped.size >= 5, 'read no pages out of the bundle manifest; the regex is stale');
+
+    const ids = new Set([...page.matchAll(/\sid="([^"]+)"/g)].map(([, id]) => id));
+    const hrefs = new Set([...copy.matchAll(/href="([^"]+)"/g)].map(([, href]) => href));
+    assert.ok(hrefs.size > 0, 'found no links at all; the page or this regex changed');
+
+    for (const href of hrefs) {
+      if (href.startsWith('#')) {
+        assert.ok(ids.has(href.slice(1)), `${href} names nothing on the page`);
+        continue;
+      }
+
+      if (href.startsWith('https://')) {
+        assert.match(
+          href,
+          /^https:\/\/fonts\.(googleapis|gstatic)\.com/,
+          `${href} sends a reader off our domain`,
+        );
+        continue;
+      }
+
+      // A path of our own. The query is ours to add — `?signup=1` puts the panel on its
+      // sign-up view — so the check is on the path.
+      assert.ok(href.startsWith('/'), `${href} is neither a fragment, a path, nor a font host`);
+      const path = href.split(/[?#]/)[0];
+      assert.ok(shipped.has(path), `${href} is linked but the bundle ships no ${path}`);
+    }
+  });
+
   test('no stylesheet rule is left addressing something the page removed', () => {
     /**
      * Dead CSS is not a bug on its own; it is the fossil that makes the next person think a

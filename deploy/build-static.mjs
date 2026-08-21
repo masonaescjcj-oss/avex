@@ -65,6 +65,15 @@ const PAGES = [
   { from: 'apps/admin/public/admin.html', to: 'admin.html', api: true },
   { from: 'apps/checkout/public/checkout.html', to: 'pay.html', api: true },
   { from: 'apps/checkout/public/receipt.html', to: 'receipt.html', api: true },
+  /**
+   * The API reference, served from our own domain.
+   *
+   * It shipped for a while as a link to a claude.ai artifact, which is where it was first
+   * drafted — a production site sending its developers to somebody else's host for the
+   * document that tells them how to take money. It is self-contained HTML with no external
+   * links, so serving it is a copy.
+   */
+  { from: 'docs/api.html', to: 'docs.html', api: false },
 ];
 
 rmSync(out, { recursive: true, force: true });
