@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import CTA from '@/components/CTA';
 import Marquee from '@/components/Marquee';
+import Platforms from '@/components/Platforms';
 import Reveal from '@/components/Reveal';
 import Demo from '@/components/demos/Demos';
 import { services, stack } from '@/lib/site';
@@ -133,6 +134,26 @@ export default function ServicesPage() {
               </Reveal>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="wrap">
+          <div className="head head--split">
+            <Reveal className="stack">
+              <p className="eyebrow">Integrations</p>
+              <h2 className="h2">
+                What we plug <span className="dim">into.</span>
+              </h2>
+            </Reveal>
+            <Reveal delay={100}>
+              <p className="lede">
+                Most projects are not greenfield. These are the systems we most often build on,
+                extend or replace.
+              </p>
+            </Reveal>
+          </div>
+          <Platforms />
         </div>
       </section>
 

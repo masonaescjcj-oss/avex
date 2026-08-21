@@ -1,118 +1,39 @@
-export type Project = {
-  slug: string;
-  index: string;
-  name: string;
-  sector: string;
-  region: string;
-  summary: string;
-  status: 'OPERATING' | 'SHIPPED' | 'PRIVATE BETA' | 'IN BUILD';
-  year: string;
-  discipline: string[];
-  metrics: { label: string; value: string }[];
-};
+export type PlatformGroup = { label: string; note: string; items: string[] };
 
-export const projects: Project[] = [
+/**
+ * Systems we build on and integrate with. These are tools, not clients — the
+ * distinction matters and the section on the site states it plainly.
+ */
+export const platforms: PlatformGroup[] = [
   {
-    slug: 'atlas-freight',
-    index: '01',
-    name: 'ATLAS FREIGHT',
-    sector: 'Logistics',
-    region: 'EU',
-    summary:
-      'Quote-to-invoice replaced by one pipeline. Rate sheets parsed on arrival, quotes priced in seconds, invoices reconciled overnight.',
-    status: 'OPERATING',
-    year: '2026',
-    discipline: ['Automation', 'AI Development'],
-    metrics: [
-      { label: 'Manual hours removed', value: '190/mo' },
-      { label: 'Quote turnaround', value: '4 h → 40 s' },
-      { label: 'Reconciliation errors', value: '−96%' },
-    ],
+    label: 'Commerce & payments',
+    note: 'Checkout, subscriptions, invoicing',
+    items: ['Stripe', 'Shopify', 'WooCommerce', 'PayPal', 'Paddle'],
   },
   {
-    slug: 'northwind-clinic',
-    index: '02',
-    name: 'NORTHWIND CLINIC',
-    sector: 'Healthcare',
-    region: 'ME',
-    summary:
-      'Booking platform and multilingual patient portal, plus a triage assistant that routes intake forms to the right specialist.',
-    status: 'OPERATING',
-    year: '2026',
-    discipline: ['Application Development', 'AI Development'],
-    metrics: [
-      { label: 'No-show rate', value: '−38%' },
-      { label: 'Languages', value: '4' },
-      { label: 'Bookings/mo', value: '11.4k' },
-    ],
+    label: 'CRM & support',
+    note: 'Pipelines, tickets, customer data',
+    items: ['Salesforce', 'HubSpot', 'Zendesk', 'Intercom', 'Pipedrive'],
   },
   {
-    slug: 'kavir-commerce',
-    index: '03',
-    name: 'KAVIR COMMERCE',
-    sector: 'E-commerce',
-    region: 'GLOBAL',
-    summary:
-      'Headless storefront rebuilt from a legacy monolith. Catalogue of 40k SKUs, sub-second navigation, automated supplier feeds.',
-    status: 'SHIPPED',
-    year: '2025',
-    discipline: ['Website Development', 'Automation'],
-    metrics: [
-      { label: 'LCP', value: '4.8 s → 0.9 s' },
-      { label: 'Conversion', value: '+41%' },
-      { label: 'SKUs synced', value: '40k nightly' },
-    ],
+    label: 'AI & retrieval',
+    note: 'Models, embeddings, vector search',
+    items: ['OpenAI', 'Anthropic', 'Hugging Face', 'Pinecone', 'LangChain'],
   },
   {
-    slug: 'meridian-desk',
-    index: '04',
-    name: 'MERIDIAN DESK',
-    sector: 'Support ops',
-    region: 'APAC',
-    summary:
-      'Support desk with an agent that reads policy, drafts the reply and closes the ticket when it is allowed to. Humans handle the rest.',
-    status: 'OPERATING',
-    year: '2025',
-    discipline: ['AI Development', 'Application Development'],
-    metrics: [
-      { label: 'First response', value: '6 h → 90 s' },
-      { label: 'Auto-resolved', value: '54%' },
-      { label: 'CSAT', value: '4.7 / 5' },
-    ],
+    label: 'Cloud & data',
+    note: 'Hosting, databases, caching',
+    items: ['AWS', 'Google Cloud', 'Vercel', 'Supabase', 'PostgreSQL', 'Redis'],
   },
   {
-    slug: 'vestra-capital',
-    index: '05',
-    name: 'VESTRA CAPITAL',
-    sector: 'Finance',
-    region: 'EU',
-    summary:
-      'Deal-room platform with document extraction, permissioned data rooms and an analyst copilot over the firm’s own memos.',
-    status: 'PRIVATE BETA',
-    year: '2026',
-    discipline: ['Application Development', 'AI Development'],
-    metrics: [
-      { label: 'Docs indexed', value: '210k' },
-      { label: 'Memo prep time', value: '−72%' },
-      { label: 'Answer accuracy', value: '0.93 eval' },
-    ],
+    label: 'Automation',
+    note: 'Pipelines between the tools you own',
+    items: ['n8n', 'Zapier', 'Make', 'Airtable', 'Google Sheets'],
   },
   {
-    slug: 'orbit-studio',
-    index: '06',
-    name: 'ORBIT STUDIO',
-    sector: 'Media',
-    region: 'GLOBAL',
-    summary:
-      'Editorial platform and brand site for a production house, with an asset pipeline that transcodes, tags and publishes on upload.',
-    status: 'SHIPPED',
-    year: '2025',
-    discipline: ['Website Development', 'Automation'],
-    metrics: [
-      { label: 'Publish time', value: '2 d → 20 min' },
-      { label: 'Organic traffic', value: '+3.1×' },
-      { label: 'Assets processed', value: '58k' },
-    ],
+    label: 'Comms & content',
+    note: 'Messaging, notifications, publishing',
+    items: ['Telegram', 'WhatsApp Business', 'Twilio', 'Slack', 'Notion', 'WordPress'],
   },
 ];
 

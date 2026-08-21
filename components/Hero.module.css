@@ -9,6 +9,17 @@
   overflow: hidden;
 }
 
+/* On a phone the content is shorter than the viewport, so centring it opened a
+   dead band under the nav. Start from the top instead. */
+@media (max-width: 48rem) {
+  .hero {
+    min-height: 0;
+    justify-content: flex-start;
+    padding-top: calc(var(--nav-h) + 1.25rem);
+    padding-bottom: 2rem;
+  }
+}
+
 .bg {
   position: absolute;
   inset: 0;
@@ -37,7 +48,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.6rem 1.4rem;
-  padding-bottom: clamp(1.5rem, 4vw, 2.75rem);
+  padding-bottom: clamp(1.1rem, 4vw, 2.75rem);
 }
 
 .badge {

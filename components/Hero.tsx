@@ -52,8 +52,8 @@ export default function Hero() {
                 <span>Start a project</span>
                 <span aria-hidden="true">→</span>
               </Link>
-              <Link href="/work" className="btn btn--ghost">
-                <span>See the work</span>
+              <Link href="/services" className="btn btn--ghost">
+                <span>What we build</span>
               </Link>
             </div>
           </div>

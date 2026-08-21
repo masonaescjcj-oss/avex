@@ -1,0 +1,74 @@
+.grid {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--line-2);
+}
+
+@media (min-width: 48rem) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: clamp(1.5rem, 4vw, 3.5rem); }
+}
+
+@media (min-width: 72rem) {
+  .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.group {
+  padding: clamp(1.1rem, 2.4vw, 1.6rem) 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.groupHead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
+}
+
+.groupLabel {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+.groupNote {
+  font-family: var(--font-mono);
+  font-size: 0.575rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--paper-28);
+  margin-left: auto;
+  text-align: right;
+}
+
+.items { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+.item {
+  font-size: 0.85rem;
+  letter-spacing: -0.01em;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--paper-70);
+  background: rgba(237, 234, 227, 0.02);
+  transition: color 0.3s var(--ease), border-color 0.3s var(--ease), transform 0.3s var(--ease);
+  white-space: nowrap;
+}
+
+.item:hover {
+  color: var(--paper);
+  border-color: rgba(255, 176, 32, 0.4);
+  transform: translateY(-2px);
+}
+
+.disclaimer {
+  margin-top: clamp(1.5rem, 3vw, 2.25rem);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--paper-28);
+  line-height: 1.8;
+  max-width: 62ch;
+}

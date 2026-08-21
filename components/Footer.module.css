@@ -17,6 +17,8 @@
   user-select: none;
 }
 
+.bigAi { -webkit-text-stroke: 1px rgba(255, 176, 32, 0.55); }
+
 .cols {
   display: grid;
   gap: clamp(1.75rem, 4vw, 3rem);

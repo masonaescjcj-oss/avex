@@ -70,7 +70,6 @@ app/
   home.module.css       homepage-only sections (receipt, stats, rows)
   inner.module.css      shared inner-page styles (blocks, cards, rows, metrics)
   services/             the four disciplines + engagement models
-  work/                 index + [slug] case studies (static params)
   process/              five-phase delivery process
   about/                studio, team, timeline, principles
   blog/                 index + [slug] posts (static params)
@@ -81,12 +80,12 @@ app/
   not-found.tsx         404
   sitemap.ts robots.ts opengraph-image.tsx icon.svg
 components/
-  Nav Footer Hero CTA Marquee Reveal Counter Clock ContactForm Receipt
+  Nav Footer Hero CTA Marquee Platforms Reveal Counter Clock ContactForm Receipt
   demos/Demos.tsx       the four scroll-driven service demos
 lib/hooks.ts            useInView, useSteps, useScrollProgress, useReducedMotion
 lib/
   site.ts               brand, contact details, nav, services, stack, stats
-  content.ts            projects, posts, roles, process steps, fleet
+  content.ts            platforms, posts, roles, process steps, fleet
 ```
 
 ## Editing content
@@ -103,5 +102,8 @@ one array — pages, the sitemap and the footer pick it up automatically.
   silently lost.
 - **Accessibility:** skip link, visible focus rings, `prefers-reduced-motion` honoured throughout
   (reveals, counters, marquee and terminal all fall back to their finished state).
+- **Platforms section** lists tools and platforms we build on — deliberately not framed as a
+  client list, and the section says so on the page. Replace it with real client work only once
+  there is real client work to name.
 - **Design:** dark retro-terminal system — near-black `#06060a`, amber `#ffb020`, cyan `#37e6c8`,
   with a subtle CRT scanline overlay. Tokens are at the top of `app/globals.css`.

@@ -22,12 +22,11 @@ export type NavItem = { label: string; href: string; index: string; note: string
 export const nav: NavItem[] = [
   { label: 'Home', href: '/', index: '01', note: 'the studio' },
   { label: 'Services', href: '/services', index: '02', note: 'what we build' },
-  { label: 'Work', href: '/work', index: '03', note: 'shipped systems' },
-  { label: 'Process', href: '/process', index: '04', note: 'how we run' },
-  { label: 'About', href: '/about', index: '05', note: 'who we are' },
-  { label: 'Journal', href: '/blog', index: '06', note: 'notes & builds' },
-  { label: 'Careers', href: '/careers', index: '07', note: 'open roles' },
-  { label: 'Contact', href: '/contact', index: '08', note: 'start a project' },
+  { label: 'Process', href: '/process', index: '03', note: 'how we run' },
+  { label: 'About', href: '/about', index: '04', note: 'who we are' },
+  { label: 'Journal', href: '/blog', index: '05', note: 'notes & builds' },
+  { label: 'Careers', href: '/careers', index: '06', note: 'open roles' },
+  { label: 'Contact', href: '/contact', index: '07', note: 'start a project' },
 ];
 
 export type Service = {

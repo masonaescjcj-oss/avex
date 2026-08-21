@@ -3,10 +3,10 @@ import CTA from '@/components/CTA';
 import Counter from '@/components/Counter';
 import Hero from '@/components/Hero';
 import Marquee from '@/components/Marquee';
+import Platforms from '@/components/Platforms';
 import Reveal from '@/components/Reveal';
 import Demo from '@/components/demos/Demos';
 import Receipt from '@/components/Receipt';
-import { projects } from '@/lib/content';
 import { processSteps } from '@/lib/content';
 import { services, stack, stats } from '@/lib/site';
 import styles from './home.module.css';
@@ -133,46 +133,26 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ---------- work ---------- */}
+      {/* ---------- platforms ---------- */}
       <section className="section">
         <div className="wrap">
           <div className="head head--split">
             <Reveal className="stack">
-              <p className="eyebrow">04 · Selected work</p>
+              <p className="eyebrow">04 · What we work in</p>
               <h2 className="h2">
-                Systems in <span className="dim">production.</span>
+                Your stack,
+                <br />
+                <span className="dim">already familiar.</span>
               </h2>
             </Reveal>
             <Reveal delay={100}>
-              <div className="stack">
-                <p className="lede">
-                  Six of the builds we can talk about publicly, with the metric the client actually
-                  cared about.
-                </p>
-                <Link href="/work" className="arrow-link">
-                  All work →
-                </Link>
-              </div>
+              <p className="lede">
+                We build on the systems your team already pays for, and wire the new work into them
+                rather than around them.
+              </p>
             </Reveal>
           </div>
-
-          <div>
-            {projects.slice(0, 4).map((project, i) => (
-              <Reveal key={project.slug} delay={i * 50}>
-                <Link href={`/work/${project.slug}`} className={styles.workRow}>
-                  <span className={styles.workIdx}>{project.index}</span>
-                  <span className={styles.workName}>{project.name}</span>
-                  <span className={styles.workSummary}>{project.summary}</span>
-                  <span className="mono dim">
-                    {project.sector} · {project.region}
-                  </span>
-                  <span className="mono amber" aria-hidden="true">
-                    ↗
-                  </span>
-                </Link>
-              </Reveal>
-            ))}
-          </div>
+          <Platforms />
         </div>
       </section>
 

@@ -33,34 +33,20 @@
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  font-size: 1.06rem;
-  font-weight: 600;
-  letter-spacing: -0.03em;
+  font-size: clamp(1.25rem, 2.6vw, 1.5rem);
+  font-weight: 700;
+  letter-spacing: -0.038em;
   z-index: 2;
 }
 
-.brandMark {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.28rem;
-}
+.brandMark { display: inline-flex; align-items: baseline; }
 
-.brandR {
-  display: inline-grid;
-  place-items: center;
-  width: 1.35rem;
-  height: 1.35rem;
-  border: 1px solid var(--amber);
-  border-radius: 2px;
+.brandAi {
   color: var(--amber);
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  font-weight: 700;
-  line-height: 1;
-  transition: background 0.35s var(--ease), color 0.35s var(--ease);
+  transition: opacity 0.3s var(--ease);
 }
 
-.brand:hover .brandR { background: var(--amber); color: #0a0700; }
+.brand:hover .brandAi { opacity: 0.75; }
 
 .brandSub {
   font-family: var(--font-mono);

@@ -8,7 +8,7 @@ export default function Footer() {
     <footer className={styles.footer}>
       <div className="wrap">
         <div className={styles.big} aria-hidden="true">
-          RETROAI
+          RETRO<span className={styles.bigAi}>AI</span>
         </div>
 
         <div className={styles.cols}>

@@ -46,10 +46,7 @@ export default function Nav() {
         <div className={styles.inner}>
           <Link href="/" className={styles.brand} aria-label={`${site.name} — home`}>
             <span className={styles.brandMark}>
-              <span className={styles.brandR} aria-hidden="true">
-                R
-              </span>
-              RetroAI
+              Retro<span className={styles.brandAi}>AI</span>
             </span>
             <span className={styles.brandSub}>Agency</span>
           </Link>

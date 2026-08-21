@@ -33,23 +33,10 @@ export default function OpengraphImage() {
           }}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
-          <div
-            style={{
-              width: '46px',
-              height: '46px',
-              border: '2px solid #ffb020',
-              borderRadius: '5px',
-              color: '#ffb020',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '26px',
-              fontWeight: 700,
-            }}
-          >
-            R
+          <div style={{ fontSize: '38px', fontWeight: 700, letterSpacing: '-0.035em', display: 'flex' }}>
+            <span>Retro</span>
+            <span style={{ color: '#ffb020' }}>AI</span>
           </div>
-          <div style={{ fontSize: '30px', fontWeight: 600, letterSpacing: '-0.02em' }}>RetroAI</div>
           <div style={{ fontSize: '17px', letterSpacing: '0.22em', color: 'rgba(237,234,227,0.35)' }}>
             AGENCY
           </div>
