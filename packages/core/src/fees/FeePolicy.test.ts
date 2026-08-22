@@ -34,23 +34,38 @@ test('minimum invoice size rises automatically with gas', () => {
   const spikeMin = policy.minInvoiceUsd(ethereumAt(9));
 
   /**
-   * $3.76 at the quiet end, not the $2 an earlier 150,000-gas estimate implied.
+   * About $19 at the quiet end, and the figure is five hundred times the 3.76 cents it costs.
    *
-   * The bound is stated as a range rather than a ceiling because both directions
-   * are product facts worth catching. Above ~$5 and Ethereum stops being usable for
-   * ordinary payments even in a calm market, which is an argument for the cheaper
-   * chains rather than for a smaller constant. Below ~$2 and the estimate has
-   * drifted back down towards a figure the bytecode does not support.
+   * That multiple is the whole content of `targetFeeRatio`, and it is not a margin on the gas:
+   * the payer already covers the gas. It is the margin on the *forecast* — the fee is fixed
+   * when the invoice is created and the settlement is paid later, so the commission has to be
+   * able to absorb a chain that got dearer in between. At 0.4% and a threefold spike that lands
+   * on five hundred, and this is where it is spent.
+   *
+   * Stated as a range because both directions are product facts. Much lower and Ethereum starts
+   * accepting orders whose commission cannot absorb an ordinary spike; much higher and the
+   * floor is doing something other than what its derivation says.
    */
   assert.ok(
-    cheapMin > 2 && cheapMin < 5,
-    `expected $2-$5 at 0.047 gwei, got $${cheapMin}`,
+    cheapMin > 15 && cheapMin < 25,
+    `expected $15-$25 at 0.047 gwei, got $${cheapMin}`,
   );
-  assert.ok(spikeMin > 250, `expected over $250 at 9 gwei, got $${spikeMin}`);
+
+  /**
+   * And in the hundreds during a spike, which reads as Ethereum being unusable for retail and
+   * is exactly right: at 9 gwei a settlement is $7.20, so an order that can absorb one going
+   * wrong is a large order. The answer for a small one is TRON, which the payer is shown.
+   */
+  assert.ok(spikeMin > 1000, `expected over $1000 at 9 gwei, got $${spikeMin}`);
 });
 
 test('a small invoice is withdrawn from checkout during a spike', () => {
-  const invoiceUsd = 20;
+  /**
+   * $50 rather than the $20 this used to use. The floor at 0.047 gwei is about $19, so a $20
+   * order sat a few cents inside it — a test that would have started failing on a rounding
+   * rather than on a behaviour, which is not what it is for.
+   */
+  const invoiceUsd = 50;
 
   const cheap = policy.availability(ethereumAt(0.047), invoiceUsd);
   assert.equal(cheap.available, true);

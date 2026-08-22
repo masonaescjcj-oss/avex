@@ -20,6 +20,8 @@ import type { Database } from '../db/client.js';
 import { assets, invoices, merchantAssets, payoutAddresses, quotes } from '../db/schema.js';
 import type { AuditService } from './audit.js';
 import { surchargeBps } from './commission-ledger.js';
+import type { ChainMinimums } from './chain-minimums.js';
+import { formatUsdMicros } from './chain-minimums.js';
 import { WalletPoolError } from './wallet-pool-allocator.js';
 import type { WalletPoolService } from './wallet-pool-service.js';
 import type { CommissionLedger } from './commission-ledger.js';
@@ -57,6 +59,7 @@ export class InvoiceCreationError extends Error {
       | 'amount_invalid'
       | 'chain_unsupported'
       | 'balance_owed'
+      | 'amount_below_minimum'
       | 'not_configured',
     message: string,
   ) {
@@ -161,6 +164,15 @@ export class InvoiceCreationService {
      * silently producing an invoice with no address.
      */
     private readonly pool?: WalletPoolService | undefined,
+    /**
+     * The smallest order each chain can carry, from live gas.
+     *
+     * Optional, and absent means no floor is enforced — the behaviour every deployment had
+     * before this, and the safe direction for a service that can be constructed without an RPC
+     * endpoint. A floor that appeared because a dependency was wired is better than a sale that
+     * disappeared because one was not.
+     */
+    private readonly minimums?: ChainMinimums | undefined,
   ) {}
 
   async create(
@@ -211,6 +223,35 @@ export class InvoiceCreationService {
     // 3. The rate, and from it the amount. `createQuote` is pure, so every rounding
     //    decision it makes is testable without a network.
     const quote = await this.buildQuote(config, request);
+
+    /**
+     * 3b. Whether this chain can carry an order this small.
+     *
+     * Checked here because it needs the quote's dollar figure and nothing after it. The payer
+     * covers the settlement, so this is not about the gas itself — it is about the gas being
+     * charged as a forecast and paid as a fact. The fee is fixed by the deposit address; the
+     * settlement happens later, at whatever the chain charges then. On a large order the
+     * commission absorbs that difference and on a small one it cannot, so below the floor the
+     * order is refused rather than taken at a loss nobody would notice for months.
+     *
+     * Refused rather than silently repriced: the merchant asked for a $2 invoice on BNB Chain,
+     * and quietly making it a $12 one would be worse than saying no.
+     */
+    if (this.minimums && !config.stars) {
+      const verdict = await this.minimums.verdict(
+        config.asset.chain,
+        quote.amountFiatMicros ?? null,
+      );
+      if (!verdict.ok) {
+        throw new InvoiceCreationError(
+          'amount_below_minimum',
+          `An order this small cannot carry its own settlement on ${config.asset.chain} ` +
+            `right now — the minimum is ${formatUsdMicros(verdict.minUsdMicros)}, and it moves ` +
+            'with the chain. TRON and TON have no such floor: the payment lands in your own ' +
+            'wallet and nothing has to be settled.',
+        );
+      }
+    }
 
     /**
      * 4. The commission, decided before the address exists because it feeds the

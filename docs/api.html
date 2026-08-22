@@ -715,6 +715,26 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
         Which also makes TRON the one chain with no <code>networkFeeBps</code> at all. Nothing
         of ours moves the money, so there is no transfer for anyone to pay for.
       </p>
+      <h3>The minimum, and why it moves</h3>
+      <p>
+        Each chain has a smallest order it can carry, derived from live gas rather than set in a
+        table: roughly five hundred times what one settlement costs there. At a quiet tenth of a
+        gwei that is about <strong>$12 on BNB Chain</strong> and rather more on Ethereum; below
+        it, <code>POST /v1/invoices</code> answers <code>422 amount_below_minimum</code> and the
+        hosted checkout shows that network as unavailable rather than letting a customer pick it.
+      </p>
+      <p class="note">
+        The reason is not the gas itself — your customer covered that. It is that the charge is
+        fixed when the invoice is created and the gas is paid when it settles, so a chain that
+        got dearer in between leaves a gap. On a large order the commission absorbs it; on a
+        small one it cannot, and we would rather refuse the order than take it and discover that
+        later.
+      </p>
+      <p class="note">
+        <strong>TRON and TON have no such floor</strong>, down to fifty cents. There is no
+        settlement to pay for, so nothing about the order size can go wrong — which is what
+        those chains are for, and where small orders belong.
+      </p>
     </div>
   </section>
 
@@ -1326,6 +1346,7 @@ curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices/
         <div class="code-row"><b>409</b><code>locked</code><span>A payment is already on its way; the currency cannot change.</span></div>
         <div class="code-row"><b>410</b><code>expired</code><span>The checkout link was real and is now gone. Issue a new one.</span></div>
         <div class="code-row"><b>422</b><code>amount_invalid</code><span>Zero, negative, both amounts at once, or an asset too coarse to express it.</span></div>
+        <div class="code-row"><b>422</b><code>amount_below_minimum</code><span>Too small for that chain right now. The message names the figure; a cheaper chain has no such floor.</span></div>
         <div class="code-row"><b>429</b><code>rate_limited</code><span><code>retry-after</code> says how long.</span></div>
         <div class="code-row"><b>503</b><code>price_unavailable</code><span>No rate we trust right now. Retryable — <code>retryAfterSeconds</code> is a hint. We would rather refuse than misprice your invoice.</span></div>
       </div>

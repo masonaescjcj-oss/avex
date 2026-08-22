@@ -17,10 +17,45 @@ export interface FeePolicyConfig {
   /**
    * Ceiling on settlement cost as a share of invoice value. An invoice is only
    * offered on a chain when the cost of moving its funds stays under this.
+   *
+   * ## Where the number comes from
+   *
+   * The payer covers the settlement, so this is no longer the line between profit and loss on
+   * an ordinary order — it is the margin for the one thing the surcharge cannot cover. The fee
+   * is fixed when the invoice is created, because the deposit address commits to it; the gas is
+   * paid later, at whatever the chain charges then. What we recover is an estimate and what we
+   * pay is a fact.
+   *
+   * So the question is how big an invoice has to be for its commission to absorb a chain that
+   * got dearer in between. If gas multiplies by `k` we recover one cost and pay `k`, leaving a
+   * shortfall of `cost × (k - 1)`, against a commission of `rate × invoice`:
+   *
+   *     invoice ≥ cost × (k - 1) / rate     ⇒     targetFeeRatio = rate / (k - 1)
+   *
+   * At the lowest published rate — 0.4%, the top volume tier — absorbing a **threefold** spike
+   * needs `0.004 / 2 = 0.002`. Which is this number, and it means the floor holds for every
+   * merchant rather than only for the entry tier.
+   *
+   * Three is a judgement about chains rather than arithmetic. BSC sits at a tenth of a gwei for
+   * weeks and has touched three; Ethereum moves further than that in an afternoon. It is not a
+   * worst case — nothing here survives a thirty-fold spike on a small order — and it does not
+   * stand alone: the settlement queue defers anything above `deferAboveUsd` for up to six
+   * hours, so most spikes are waited out rather than paid.
+   *
+   * The cost of setting it here: on BNB Chain at a tenth of a gwei the floor is about $12, and
+   * on Ethereum it is in the hundreds. Small orders belong on the chains that settle for free —
+   * which is what a payer is shown, and the incentive we would have wanted anyway.
    */
   readonly targetFeeRatio: number;
 
-  /** Floor on invoice size, independent of fees. */
+  /**
+   * Floor on invoice size, independent of fees.
+   *
+   * The whole of the minimum on the chains that settle directly. There is no gas to recover on
+   * TRON or TON — the payer's transfer lands in the merchant's own wallet — so nothing there
+   * scales with the chain, and this stays low deliberately: a fifty-cent order costs us nothing
+   * to take, and refusing it would be refusing the case those chains are best at.
+   */
   readonly absoluteMinUsd: number;
 
   /**
@@ -47,7 +82,7 @@ export interface FeePolicyConfig {
 }
 
 export const DEFAULT_FEE_POLICY: FeePolicyConfig = {
-  targetFeeRatio: 0.01,
+  targetFeeRatio: 0.002,
   absoluteMinUsd: 0.5,
   networkFeeMaxBps: 200,
   deferAboveUsd: {

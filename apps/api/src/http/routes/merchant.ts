@@ -559,6 +559,15 @@ export function invoiceCreationErrorResponse(error: InvoiceCreationError): {
       return { status: 409, body: { error: error.code, message: error.message } };
     case 'amount_invalid':
       return { status: 422, body: { error: error.code, message: error.message } };
+    case 'amount_below_minimum':
+      /**
+       * 422, because the request is what is wrong: this amount, on this chain, right now.
+       *
+       * Not a 409 — nothing about the account needs fixing — and not a 503, because retrying
+       * the same request will not help unless the chain gets cheaper. The two things that do
+       * help are a bigger order or a cheaper chain, and the message names the second.
+       */
+      return { status: 422, body: { error: error.code, message: error.message } };
     case 'balance_owed':
       /**
        * 402, which is the one status that means what this means.

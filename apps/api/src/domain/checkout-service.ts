@@ -1,3 +1,4 @@
+import type { ChainMinimums } from './chain-minimums.js';
 import { disclosedFees, surchargeBps } from './commission-ledger.js';
 import type { CommissionLedger } from './commission-ledger.js';
 import {
@@ -123,6 +124,14 @@ export class CheckoutService {
      * checkout working in a deployment that does not bill.
      */
     private readonly ledger?: CommissionLedger | undefined,
+    /**
+     * The smallest order each chain can carry, so a network that would refuse is never offered.
+     *
+     * The same check invoice creation makes, reached from here for the same reason the fee is:
+     * a payer must not be able to tap an option that then answers 422. Optional, and absent
+     * means every network is offered — which is what happened before this existed.
+     */
+    private readonly minimums?: ChainMinimums | undefined,
   ) {}
 
   // ── merchant side ───────────────────────────────────────────────────────────
@@ -421,6 +430,22 @@ export class CheckoutService {
       if (rate !== null && (fee?.accruedFeeBps ?? 0) > 0 && !canAccrue) {
         rate = null;
         reason = 'This currency is temporarily unavailable. Please choose another.';
+      }
+
+      /**
+       * A network too expensive to settle an order this small is shown, and shown as unavailable.
+       *
+       * Offered rather than hidden, like every other reason in this loop — a network that
+       * silently disappears reads as us not supporting it. The wording says the cost is the
+       * chain's rather than quoting our settlement bill: a payer choosing a network needs to
+       * know which one to pick, not what our gas costs.
+       */
+      if (rate !== null && this.minimums) {
+        const verdict = await this.minimums.verdict(entry.chain, amountFiat);
+        if (!verdict.ok) {
+          rate = null;
+          reason = 'This network costs too much to settle an order this small. Choose another.';
+        }
       }
       const surcharge = surchargeBps(fee);
       const charged = applyFeePayer(

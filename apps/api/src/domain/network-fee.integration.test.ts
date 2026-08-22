@@ -8,12 +8,13 @@ import { eq } from 'drizzle-orm';
 
 import { createDatabase, schema } from '../db/client.js';
 import { AuditService } from './audit.js';
+import { ChainMinimums } from './chain-minimums.js';
 import { CheckoutService } from './checkout-service.js';
 import { CommissionLedger } from './commission-ledger.js';
 import { DepositAddressDeriver } from './deposit-address.js';
 import { FeePlanService } from './fee-plan-service.js';
 import type { GasOracle } from './gas-oracle.js';
-import { InvoiceCreationService } from './invoice-creation.js';
+import { InvoiceCreationError, InvoiceCreationService } from './invoice-creation.js';
 import { WalletPoolService } from './wallet-pool-service.js';
 
 /**
@@ -104,6 +105,7 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
     );
 
     const pool = new WalletPoolService(db());
+    const minimums = new ChainMinimums(oracle);
     invoices = new InvoiceCreationService(
       db(),
       deriver,
@@ -112,8 +114,18 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
       audit,
       new CommissionLedger(db()),
       pool,
+      minimums,
     );
-    checkouts = new CheckoutService(db(), invoices, feePlans, deriver, rates, audit);
+    checkouts = new CheckoutService(
+      db(),
+      invoices,
+      feePlans,
+      deriver,
+      rates,
+      audit,
+      undefined,
+      minimums,
+    );
 
     const unique = randomBytes(5).toString('hex');
     const [org] = await db()
@@ -323,6 +335,87 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
       assert.equal(invoice.networkFeeBps, 0);
       assert.equal(invoice.feeBps, 50, 'the plan rate alone');
       assert.equal(BigInt(invoice.amountDue), 20n * 10n ** 18n, 'and the payer is asked the price');
+    } finally {
+      oracle.up = true;
+    }
+  });
+
+  test('an order too small to carry its own settlement is refused', async () => {
+    /**
+     * The floor, enforced for the first time. A $2 order on BNB Chain recovers its 2.4 cents
+     * from the payer and earns a penny of commission — which is fine until the chain is three
+     * times dearer when we come to settle, and then the penny is all there is against seven
+     * cents of gas.
+     *
+     * Refused rather than quietly repriced: the merchant asked for a $2 invoice, and turning it
+     * into a $12 one without saying so would be worse than saying no.
+     */
+    await assert.rejects(
+      invoices.create(
+        orgId,
+        { assetId: bscAssetId, reference: `min-${randomBytes(4).toString('hex')}`, amountFiatMicros: 2_000_000n },
+        actor(),
+      ),
+      (error: unknown) =>
+        error instanceof InvoiceCreationError &&
+        error.code === 'amount_below_minimum' &&
+        // The figure has to be in the message: "too small" without a number is unactionable.
+        /\$12\.00/.test(error.message) &&
+        /TRON/.test(error.message),
+    );
+  });
+
+  test('the same order on a chain that settles directly is fine', async () => {
+    /**
+     * Which is the answer the refusal above points at, and the reason the floor is per chain
+     * rather than a number in the pricing page. On TRON the payer's transfer lands in the
+     * merchant's own wallet: there is no settlement, so there is nothing a small order could
+     * fail to carry.
+     */
+    const invoice = await invoices.create(
+      orgId,
+      { assetId: tronAssetId, reference: `small-${randomBytes(4).toString('hex')}`, amountFiatMicros: 2_000_000n },
+      actor(),
+    );
+    assert.equal(invoice.created, true);
+    assert.equal(invoice.invoice.networkFeeBps, 0);
+  });
+
+  test('a payer is never offered a network that would refuse them', async () => {
+    /**
+     * The two checks are the same check, reached from two places, and this is what would break
+     * if they drifted: a payer taps BNB Chain, and the invoice creation behind the tap answers
+     * 422. They would have no idea what they did wrong, because they did nothing wrong.
+     */
+    const { session } = await checkouts.create(orgId, { amountFiatMicros: 2_000_000n }, actor());
+    const options = await checkouts.options(session.id);
+
+    const bsc = options.find((option) => option.chain === 'bsc');
+    assert.ok(bsc);
+    assert.equal(bsc.available, false);
+    assert.match(bsc.unavailableReason ?? '', /costs too much to settle/);
+
+    // Shown rather than hidden, and the cheap chain is still there to be picked.
+    const tron = options.find((option) => option.chain === 'tron');
+    assert.ok(tron);
+    assert.equal(tron.available, true);
+  });
+
+  test('a gas probe that fails refuses nothing either', async () => {
+    /**
+     * The same direction as the fee: an unreachable RPC endpoint must not turn into a floor
+     * nobody can clear. We take the order and carry the risk, because the alternative is a
+     * third party's bad minute closing a merchant's shop.
+     */
+    oracle.up = false;
+    try {
+      const invoice = await invoices.create(
+        orgId,
+        { assetId: bscAssetId, reference: `blind-${randomBytes(4).toString('hex')}`, amountFiatMicros: 2_000_000n },
+        actor(),
+      );
+      assert.equal(invoice.created, true);
+      assert.equal(invoice.invoice.networkFeeBps, 0);
     } finally {
       oracle.up = true;
     }

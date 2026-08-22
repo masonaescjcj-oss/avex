@@ -24,6 +24,7 @@ import { delayFor } from './domain/rbac.js';
 import { WalletPoolChanges, WalletPoolService } from './domain/wallet-pool-service.js';
 import { paymentValueSource, paymentValueUsd } from './domain/payment-valuation.js';
 import { FeePlanService } from './domain/fee-plan-service.js';
+import { ChainMinimums } from './domain/chain-minimums.js';
 import { RpcGasOracle } from './domain/gas-oracle.js';
 import { InviteService } from './domain/invite-service.js';
 import { InvoiceCreationService } from './domain/invoice-creation.js';
@@ -152,6 +153,15 @@ export function compose(options: ComposeOptions): Composed {
    */
   const gas = new RpcGasOracle(new JsonRpcCaller(env.EVM_RPC_URLS), prices, warn);
 
+  /**
+   * The floor under an invoice, from the same snapshot the fee is priced from.
+   *
+   * One oracle for both, so the figure that decides whether an order is worth taking is the
+   * figure it is charged against. Two probes could disagree by a block and produce an invoice
+   * that was accepted at one gas price and priced at another.
+   */
+  const minimums = new ChainMinimums(gas);
+
   const feePlans = new FeePlanService(db, audit, {
     feeCollectors: env.FEE_COLLECTORS,
     ledger,
@@ -213,6 +223,7 @@ export function compose(options: ComposeOptions): Composed {
     audit,
     ledger,
     walletPool,
+    minimums,
   );
 
   const settlements = new SettlementStore(db);
@@ -234,7 +245,16 @@ export function compose(options: ComposeOptions): Composed {
     reconciliation,
     merchant: new MerchantService(db),
     invoiceCreation,
-    checkouts: new CheckoutService(db, invoiceCreation, feePlans, deriver, rates, audit, ledger),
+    checkouts: new CheckoutService(
+      db,
+      invoiceCreation,
+      feePlans,
+      deriver,
+      rates,
+      audit,
+      ledger,
+      minimums,
+    ),
     webhooks,
     feePlans,
     ledger,
