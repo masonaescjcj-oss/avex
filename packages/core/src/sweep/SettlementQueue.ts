@@ -102,6 +102,22 @@ export class SettlementQueue {
     }
 
     const queue = this.pending.get(adapter.chain) ?? [];
+
+    /**
+     * One entry per invoice, however many times it is offered.
+     *
+     * Whatever feeds this queue reads "invoices that are paid and not settled", and an invoice
+     * stays in that set for as long as it is waiting here — so on a chain that is holding for a
+     * cheaper block, every pass would add the same invoice again. Depth would climb without
+     * anything being wrong, the batch would carry the same flush several times, and the record
+     * of what a transaction covered would name an invoice twice.
+     *
+     * Keyed on the invoice rather than the whole request because the invoice is the identity: a
+     * second offer with a larger `amount` is the same invoice observed after another transfer,
+     * and the forwarder flushes its balance rather than the figure quoted here.
+     */
+    if (queue.some((item) => item.request.invoiceId === request.invoiceId)) return;
+
     queue.push({ request, enqueuedAt: now, attempts: 0 });
     this.pending.set(adapter.chain, queue);
   }

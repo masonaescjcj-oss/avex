@@ -3,7 +3,7 @@ import { describe, test } from 'node:test';
 
 import type { PollOutcome, Watcher } from '@avex/core';
 
-import { DEFAULT_LOOP, runWatchLoop } from './loop.js';
+import { DEFAULT_LOOP, runLoop } from './loop.js';
 
 /**
  * The loop that keeps a watcher polling.
@@ -62,7 +62,7 @@ describe('the watch loop', () => {
     const { sleep } = recordedSleeps();
     const { reached, reach } = gate();
 
-    const handle = runWatchLoop(
+    const handle = runLoop(
       fakeWatcher(async () => {
         polls += 1;
         if (polls >= 3) reach();
@@ -87,7 +87,7 @@ describe('the watch loop', () => {
     let release: (() => void) | null = null;
     const { sleep } = recordedSleeps();
 
-    const handle = runWatchLoop(
+    const handle = runLoop(
       fakeWatcher(async () => {
         await new Promise<void>((resolve) => {
           release = resolve;
@@ -119,7 +119,7 @@ describe('the watch loop', () => {
     const { sleep } = recordedSleeps();
     const { reached, reach } = gate();
 
-    const handle = runWatchLoop(
+    const handle = runLoop(
       fakeWatcher(async () => {
         attempts += 1;
         if (attempts < 3) throw new Error('429 Too Many Requests');
@@ -141,7 +141,7 @@ describe('the watch loop', () => {
 
     let attempts = 0;
     const { reached, reach } = gate();
-    const handle = runWatchLoop(
+    const handle = runLoop(
       fakeWatcher(async () => {
         attempts += 1;
         if (attempts >= 6) reach();
@@ -167,7 +167,7 @@ describe('the watch loop', () => {
     const script = ['fail', 'fail', 'ok', 'fail', 'stop'];
     let index = 0;
     const { reached, reach } = gate();
-    const handle = runWatchLoop(
+    const handle = runLoop(
       fakeWatcher(async () => {
         const step = script[index++];
         if (step === 'stop' || step === undefined) {
@@ -197,7 +197,7 @@ describe('the watch loop', () => {
 
     let attempts = 0;
     const { reached, reach } = gate();
-    const handle = runWatchLoop(
+    const handle = runLoop(
       fakeWatcher(async () => {
         attempts += 1;
         if (attempts >= 3) reach();
@@ -219,7 +219,7 @@ describe('the watch loop', () => {
     const { sleep } = recordedSleeps();
 
     const { reached, reach } = gate();
-    const handle = runWatchLoop(
+    const handle = runLoop(
       fakeWatcher(async () => {
         reach();
         return { ...outcome(500), reorg: { detectedAt: 498, rewoundTo: 434 }, reversed: 2 };
@@ -240,7 +240,7 @@ describe('the watch loop', () => {
     // draining is ordinary.
     const { sleep } = recordedSleeps();
     const { reached, reach } = gate();
-    const handle = runWatchLoop(
+    const handle = runLoop(
       fakeWatcher(async () => {
         reach();
         return outcome(1);

@@ -19,7 +19,7 @@ process that stays up, and none of them can run in a serverless function:
   requests cannot poll.
 - **The background jobs**, if driven by in-process timers. The webhook drain runs every ten
   seconds, and no hosted scheduler fires that often — Vercel Cron's floor is one minute.
-- **The settlement runner**, once it exists, holds a nonce and a queue across attempts.
+- **The settlement runner** holds a nonce and a queue across attempts.
 
 The API itself would run happily in either place. It runs on the process host because the
 watcher is already there and both want the same database pool.
@@ -32,6 +32,8 @@ taking real money, and it is the reason the order below is what it is.
 
 - Non-custodial deposit addresses on EVM: 87-byte clones, 86,546 gas to settle, every parameter
   committed to by the address.
+- Settlement: the watcher process sweeps forwarders, records every transaction, and marks an
+  invoice settled only when a transaction carrying it confirms.
 - TRON end to end: pooled wallets, amount-based matching, the watcher, the commission ledger.
 - Invoices, checkout, receipts, webhooks, the merchant dashboard, the admin panel.
 - The payer pays the network fee; invoices below what a chain can carry are refused.
@@ -80,12 +82,15 @@ billed to the merchant's balance rather than taken on chain, so revenue accrues 
 until a chain that can take a cut is live. It is collected from a later EVM invoice, or by
 asking.
 
-### 6. The settlement runner — *code, not written*
+### 6. The settlement runner — *done, needs a key*
 
-`SettlementQueue` and `SettlementRunner` exist in `@avex/core` with their own tests, and no
-production entry point constructs either. So on an EVM chain payments are detected and credited
-and the funds stay in the forwarder. This is the blocker for BNB Chain and Ethereum, and it is
-the largest remaining piece of work.
+The watcher process now also settles: `startSettlement` builds a signer, a runner and a cycle
+per EVM chain, and `SettlementCycle` reads receipts, marks invoices settled, and hands new work
+to the queue. It runs only when `SETTLEMENT_KEY_HEX` is set, and says so on every startup when
+it is not — a gateway that detects payments and never moves them looks healthy from every angle
+except the merchant's balance.
+
+What that leaves for the operator is the key itself, which is item 8.
 
 ### 7. Deploy the contracts — *needs the operator*
 

@@ -261,6 +261,27 @@ describe('holding settlements until the chain is cheap', () => {
     assert.match(report!.note, /needed no transaction/);
   });
 
+  test('the same invoice offered twice is queued once', async () => {
+    /**
+     * What feeds this queue reads "paid and not settled", and an invoice stays in that set while
+     * it waits here — so on a chain that is holding for a cheaper block, every pass offers the
+     * same invoice again. Without this the depth climbs with nothing wrong, the batch carries
+     * one flush several times, and the record of what a transaction covered names an invoice
+     * twice.
+     */
+    const broadcaster = fakeBroadcaster(() => ok('0xaaa'));
+    const { queue } = queueWith({ gas: snapshot(EXPENSIVE), broadcaster });
+
+    queue.enqueue(request('i1'), 0);
+    queue.enqueue(request('i1'), 1_000);
+    // The same invoice seen after a second transfer, so a larger amount. Still one invoice.
+    queue.enqueue({ ...request('i1'), amount: 40_000_000_000_000_000_000n }, 2_000);
+    assert.equal(queue.depth('bsc'), 1);
+
+    queue.enqueue(request('i2'), 0);
+    assert.equal(queue.depth('bsc'), 2, 'a different invoice is still its own entry');
+  });
+
   test('the batch is bounded, and the rest stays queued', async () => {
     const broadcaster = fakeBroadcaster(() => ok('0xaaa'));
     const { queue } = queueWith({ gas: snapshot(CHEAP), broadcaster });

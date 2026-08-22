@@ -13,7 +13,7 @@ import {
   chainConfig,
   createPriceSources,
 } from '@avex/core';
-import type { Asset, ChainId } from '@avex/core';
+import type { Asset, ChainAdapter, ChainId } from '@avex/core';
 
 import { createDatabase } from './db/client.js';
 import { JOB_LOCKS, withJobLock } from './db/lock.js';
@@ -27,7 +27,8 @@ import { DatabaseWatchStore } from './domain/watch-store.js';
 import { WebhookService } from './domain/webhook-service.js';
 import { loadEnv } from './env.js';
 import { JsonRpcCaller } from './rpc/json-rpc-caller.js';
-import { DEFAULT_LOOP, runWatchLoop } from './watch/loop.js';
+import { startSettlement } from './settle/start.js';
+import { DEFAULT_LOOP, runLoop } from './watch/loop.js';
 import { watchableChains } from './watch/watchable-chains.js';
 import type { LoopHandle } from './watch/loop.js';
 
@@ -177,6 +178,14 @@ async function main(): Promise<void> {
       }));
 
   const handles: LoopHandle[] = [];
+  /**
+   * The adapters, kept as they are built.
+   *
+   * Settlement needs the same one the watcher uses — it is what turns a batch of invoices into
+   * a transaction — and building a second would mean two objects with two ideas of which
+   * contracts count as payments.
+   */
+  const adapters = new Map<ChainId, ChainAdapter>();
 
   for (const chain of chains) {
     const urls = env.EVM_RPC_URLS[chain]!;
@@ -273,8 +282,10 @@ async function main(): Promise<void> {
       settlement: pooled ? 'nothing to settle: the payer paid the merchant directly' : 'not in this process',
     });
 
+    adapters.set(chain, adapter);
+
     handles.push(
-      runWatchLoop(watcher, DEFAULT_LOOP, {
+      runLoop(watcher, DEFAULT_LOOP, {
         onPoll: (outcome) => {
           // Only when something happened, except a reorg, which is always worth a line.
           if (outcome.credited > 0 || outcome.reversed > 0 || outcome.reorg) {
@@ -293,7 +304,34 @@ async function main(): Promise<void> {
     );
   }
 
-  log('watcher started', { chains: handles.length, preparedStatements: prepare });
+  /**
+   * And settlement, in the same process, for every chain that has something to send.
+   *
+   * Here rather than in its own process for two reasons and one non-reason. The adapters, the
+   * database pool and the price service are already built here, and a second process would
+   * build a second copy of all three. And an operator running one gateway should be running one
+   * background service, not two that have to be started in an order. The non-reason is
+   * coupling: a settlement failure must not stop the chain being watched, which is why each
+   * loop is separate and each one's errors are its own.
+   *
+   * Nothing runs at all without a settlement key, and that is said out loud rather than left to
+   * be noticed — a deployment detecting payments and never moving them looks healthy from
+   * every angle except the merchant's balance.
+   */
+  const settlementHandles = await startSettlement({
+    env,
+    db,
+    prices,
+    adapters,
+    log,
+  });
+  handles.push(...settlementHandles);
+
+  log('watcher started', {
+    chains: handles.length - settlementHandles.length,
+    settling: settlementHandles.length,
+    preparedStatements: prepare,
+  });
 
   const shutdown = async (signal: string): Promise<void> => {
     log('shutting down', { signal });

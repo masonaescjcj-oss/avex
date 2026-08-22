@@ -50,7 +50,21 @@ function snapshot(gwei: number, nativePriceUsd = 600): GasSnapshot {
 /** A signer the test drives, including receipts and balance. */
 class FakeSigner implements ChainSigner {
   readonly address = '0x9999999999999999999999999999999999999999';
-  readonly broadcasts: { nonce: number; feePerGasWei: bigint; hash: string }[] = [];
+  /**
+   * Everything the signer was handed, not a summary of it.
+   *
+   * It used to keep only the nonce and the fee, which is how a replacement that broadcast an
+   * empty transaction to the zero address passed this suite: the two fields the assertions
+   * looked at were the two fields that were right.
+   */
+  readonly broadcasts: {
+    nonce: number;
+    feePerGasWei: bigint;
+    hash: string;
+    to: string;
+    data: string;
+    gasLimit: bigint;
+  }[] = [];
   balance = 10n ** 20n;
   startNonce = 7;
   private receipts = new Map<
@@ -67,9 +81,15 @@ class FakeSigner implements ChainSigner {
     return this.balance;
   }
 
-  async broadcast(tx: { nonce: number; feePerGasWei: bigint }) {
+  async broadcast(tx: {
+    nonce: number;
+    feePerGasWei: bigint;
+    to: string;
+    data: string;
+    gasLimit: bigint;
+  }) {
     const hash = `0xtx${this.counter++}`;
-    this.broadcasts.push({ nonce: tx.nonce, feePerGasWei: tx.feePerGasWei, hash });
+    this.broadcasts.push({ ...tx, hash });
     return { hash };
   }
 
@@ -268,6 +288,19 @@ test('a stuck transaction is replaced at the same nonce with a higher fee', asyn
   assert.equal(outcome.replaced.length, 1);
   const replacement = signer.broadcasts.at(-1)!;
   assert.equal(replacement.nonce, original.nonce, 'the same nonce, so it replaces');
+
+  /**
+   * And the same call, which is what makes it a replacement of *this settlement*.
+   *
+   * It was not: the in-flight record carried no `to` or `data`, so a replacement broadcast an
+   * empty transaction to the zero address. That unblocks the nonce and abandons the batch —
+   * and the queue had already counted those invoices as broadcast, so nothing retried them.
+   * The merchant's funds would sit at their deposit address with no record of why.
+   */
+  const first = signer.broadcasts.at(0)!;
+  assert.equal(replacement.to, first.to, 'a replacement must carry the same call');
+  assert.equal(replacement.data, first.data);
+  assert.ok(replacement.to.length > 0, 'and that call must not be empty');
   assert.ok(
     replacement.feePerGasWei > original.feePerGasWei,
     'a replacement must raise the fee or the node discards it',

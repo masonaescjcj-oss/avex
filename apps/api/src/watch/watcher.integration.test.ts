@@ -13,7 +13,7 @@ import { DatabaseAddressBook } from '../domain/address-book.js';
 import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { DatabaseWatchStore } from '../domain/watch-store.js';
 import { WebhookService } from '../domain/webhook-service.js';
-import { runWatchLoop } from './loop.js';
+import { runLoop } from './loop.js';
 
 /**
  * The watcher, wired to the real database and a fake chain.
@@ -462,7 +462,7 @@ describe('the watcher, composed', { skip: databaseUrl ? false : 'DATABASE_URL no
       reached = resolve;
     });
 
-    const handle = runWatchLoop(watcher, { intervalMs: 1, backoffMs: 1, maxBackoffMs: 1 }, {
+    const handle = runLoop(watcher, { intervalMs: 1, backoffMs: 1, maxBackoffMs: 1 }, {
       onPoll: () => {
         polls += 1;
         if (polls >= 2) reached();

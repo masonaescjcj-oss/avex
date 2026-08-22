@@ -42,6 +42,17 @@ export interface InFlightTransaction {
   readonly nonce: number;
   readonly feePerGasWei: bigint;
   readonly gasLimit: bigint;
+  /**
+   * The call this transaction carries, kept so a replacement can be the same call.
+   *
+   * Not here originally, and the omission was a real defect rather than a gap: `replace`
+   * broadcast `to: ''` with empty data at the stuck nonce. That is not a replacement of a
+   * settlement — it is an empty transaction to nowhere, which either fails or succeeds at
+   * doing nothing, and either way the batch it was supposed to carry is gone. The queue had
+   * already counted those invoices as broadcast, so nothing would have retried them.
+   */
+  readonly to: string;
+  readonly data: string;
   readonly invoiceIds: readonly string[];
   readonly broadcastAt: number;
   /** Set when this transaction was replaced by one with the same nonce. */
@@ -244,6 +255,8 @@ export class SettlementRunner {
       nonce,
       feePerGasWei,
       gasLimit: call.gasLimit,
+      to: call.to,
+      data: call.data,
       invoiceIds: batch.map((request) => request.invoiceId),
       broadcastAt: now,
     };
@@ -350,11 +363,17 @@ export class SettlementRunner {
         `${this.config.replacementBumpPercent}% higher fee`,
     });
 
-    // Same nonce on purpose: this replaces the transaction rather than adding one.
+    /**
+     * The same nonce and the same call: this replaces the transaction rather than adding one.
+     *
+     * The call has to be carried on the in-flight record for that to be possible. It was not,
+     * and this line sent an empty transaction to the zero address instead — spending gas to
+     * unblock the nonce while quietly abandoning the settlement it was replacing.
+     */
     const { hash } = await this.signer.broadcast({
       nonce: stuck.nonce,
-      to: '',
-      data: '',
+      to: stuck.to,
+      data: stuck.data,
       gasLimit: stuck.gasLimit,
       feePerGasWei,
     });
@@ -379,6 +398,19 @@ export class SettlementRunner {
   private raise(alert: Alert): void {
     this.alerts.push(alert);
     this.log(`[${alert.severity}] ${alert.kind}: ${alert.detail}`);
+  }
+
+  /**
+   * Invoice ids carried by transactions still in flight.
+   *
+   * What stops an invoice being settled twice. Whatever feeds the queue reads "paid and not
+   * settled", and an invoice stays in that set until a transaction carrying it *confirms* — so
+   * between broadcast and confirmation it is still due, and something has to know it is already
+   * on its way. This is read from memory rather than from the settlements table because the
+   * runner is ahead of the table by however long the write takes.
+   */
+  inFlightInvoiceIds(): readonly string[] {
+    return [...this.inFlight.values()].flatMap((transaction) => [...transaction.invoiceIds]);
   }
 
   /** Drain accumulated alerts, for whatever forwards them to an operator. */

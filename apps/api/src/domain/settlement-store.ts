@@ -151,6 +151,34 @@ export class SettlementStore {
     return rows.map(toRow);
   }
 
+  /**
+   * Invoices that must not be handed to a new settlement, and why.
+   *
+   * Two states, and each is a way of paying twice or paying for nothing:
+   *
+   * **Pending.** A transaction carrying them is in the mempool. If it was broadcast by a process
+   * that has since died, nothing in memory knows about it — so without this the invoices look due
+   * and a second transaction goes out for money that is already on its way. One of the two
+   * flushes then finds an empty address and the gas for it is spent for nothing.
+   *
+   * **Reverted.** Gas was spent and nothing moved. Whatever made it revert — a token that paused
+   * transfers, a payout address that rejects them, an assumption that was wrong — is still true,
+   * so retrying immediately is a loop that bills us every pass. `recordReceipt` says the same
+   * thing about the row; this is what makes it hold. An operator clears it by looking at why.
+   */
+  async blockedInvoiceIds(chain: ChainId): Promise<readonly string[]> {
+    const rows = await this.db
+      .select({ invoiceIds: settlements.invoiceIds, status: settlements.status })
+      .from(settlements)
+      .where(
+        and(
+          eq(settlements.chain, chain),
+          inArray(settlements.status, ['pending', 'reverted']),
+        ),
+      );
+    return [...new Set(rows.flatMap((row) => row.invoiceIds))];
+  }
+
   /** Per-chain counts, stuck transactions, and the nonce holding up the queue. */
   async summary(
     chain: ChainId,

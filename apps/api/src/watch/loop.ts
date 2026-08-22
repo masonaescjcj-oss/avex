@@ -1,12 +1,15 @@
-import type { PollOutcome, Watcher } from '@avex/core';
-
 /**
- * Driving a watcher, forever.
+ * Driving something that does one pass at a time, forever.
  *
- * `Watcher.poll()` does one pass and returns. Something has to call it repeatedly, decide
- * what to do when it throws, and stop when the process is going away — and that is all this
- * file is. It is separate from the watcher because the two fail differently: a bad poll is a
- * chain or provider problem, and a bad loop is an availability problem.
+ * `Watcher.poll()` does one pass and returns, and so does `SettlementCycle.once()`. Something
+ * has to call it repeatedly, decide what to do when it throws, and stop when the process is
+ * going away — and that is all this file is. It is separate from what it drives because the two
+ * fail differently: a bad pass is a chain or provider problem, and a bad loop is an
+ * availability problem.
+ *
+ * Generic over the outcome rather than tied to the watcher, because the settlement cycle wants
+ * exactly this behaviour and a second copy of it would be a second place where a backoff was
+ * tuned or a shutdown was got wrong.
  *
  * The behaviour that matters is what happens on failure. An RPC endpoint that is down, rate
  * limiting us, or lying about the head is the normal weather, not an exception — so the loop
@@ -39,8 +42,13 @@ export interface LoopHandle {
   stop(): Promise<void>;
 }
 
-export interface LoopHooks {
-  readonly onPoll?: ((outcome: PollOutcome) => void) | undefined;
+/** Anything that does one pass and returns what happened. */
+export interface LoopTask<T> {
+  poll(): Promise<T>;
+}
+
+export interface LoopHooks<T> {
+  readonly onPoll?: ((outcome: T) => void) | undefined;
   readonly onError?: ((error: unknown, consecutive: number) => void) | undefined;
   /**
    * Wait, injectable so a test does not have to.
@@ -66,10 +74,10 @@ const realSleep = (ms: number): Promise<void> =>
  * payment and saving its cursor is a payment that gets credited again on restart — the sink
  * is idempotent, so that is survivable, but it is noise in the one log that should be quiet.
  */
-export function runWatchLoop(
-  watcher: Watcher,
+export function runLoop<T>(
+  task: LoopTask<T>,
   options: LoopOptions = DEFAULT_LOOP,
-  hooks: LoopHooks = {},
+  hooks: LoopHooks<T> = {},
 ): LoopHandle {
   const sleep = hooks.sleep ?? realSleep;
   let running = true;
@@ -78,7 +86,7 @@ export function runWatchLoop(
   const finished = (async () => {
     while (running) {
       try {
-        const outcome = await watcher.poll();
+        const outcome = await task.poll();
         consecutiveFailures = 0;
         hooks.onPoll?.(outcome);
         if (running) await sleep(options.intervalMs);
