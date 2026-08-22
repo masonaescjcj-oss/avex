@@ -343,9 +343,9 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
   test('an order too small to carry its own settlement is refused', async () => {
     /**
      * The floor, enforced for the first time. A $2 order on BNB Chain recovers its 2.4 cents
-     * from the payer and earns a penny of commission — which is fine until the chain is three
-     * times dearer when we come to settle, and then the penny is all there is against seven
-     * cents of gas.
+     * from the payer and earns a penny of commission — which is fine until the chain is twice as
+     * dear when we come to settle, and then the penny is all there is against another 2.4 cents
+     * of gas. A doubling on BNB Chain is a tenth of a gwei becoming a fifth, which is a Tuesday.
      *
      * Refused rather than quietly repriced: the merchant asked for a $2 invoice, and turning it
      * into a $12 one without saying so would be worse than saying no.
@@ -360,7 +360,7 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
         error instanceof InvoiceCreationError &&
         error.code === 'amount_below_minimum' &&
         // The figure has to be in the message: "too small" without a number is unactionable.
-        /\$12\.00/.test(error.message) &&
+        /\$6\.00/.test(error.message) &&
         /TRON/.test(error.message),
     );
   });

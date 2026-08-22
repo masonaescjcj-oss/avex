@@ -35,13 +35,15 @@ const BSC: GasSnapshot = {
 describe('the smallest order a chain can carry', () => {
   test('the floor is the settlement cost over the target ratio', async () => {
     /**
-     * 2.4 cents at a ratio of 0.002 is $12, and the multiple is the point: it is not a margin
-     * on the gas — the payer covers that — but on the *forecast*, because the fee is fixed when
-     * the invoice is created and the gas is paid when it settles.
+     * 2.4 cents at a ratio of 0.004 is $6, and the multiple is the point: it is not a margin on
+     * the gas — the payer covers that — but on the *forecast*, because the fee is fixed when the
+     * invoice is created and the gas is paid when it settles. Two hundred and fifty times is
+     * what a 0.4% commission needs to absorb a doubling; past that the settlement queue defers
+     * rather than pays.
      */
     const minimums = new ChainMinimums(oracleOf(BSC));
-    assert.equal(await minimums.minInvoiceUsdMicros('bsc'), usd(12));
-    assert.equal(DEFAULT_FEE_POLICY.targetFeeRatio, 0.002, 'and this is where that comes from');
+    assert.equal(await minimums.minInvoiceUsdMicros('bsc'), usd(6));
+    assert.equal(DEFAULT_FEE_POLICY.targetFeeRatio, 0.004, 'and this is where that comes from');
   });
 
   test('the floor is quoted to the cent, upwards', async () => {
@@ -97,12 +99,12 @@ describe('the smallest order a chain can carry', () => {
 
     const refused = await minimums.verdict('bsc', usd(2));
     assert.equal(refused.ok, false);
-    assert.equal(refused.ok === false && refused.minUsdMicros, usd(12));
+    assert.equal(refused.ok === false && refused.minUsdMicros, usd(6));
 
     // And the boundary itself passes, rather than being off by a cent.
-    assert.deepEqual(await minimums.verdict('bsc', usd(12)), { ok: true });
-    assert.deepEqual(await minimums.verdict('bsc', usd(12.01)), { ok: true });
-    assert.equal((await minimums.verdict('bsc', usd(11.99))).ok, false);
+    assert.deepEqual(await minimums.verdict('bsc', usd(6)), { ok: true });
+    assert.deepEqual(await minimums.verdict('bsc', usd(6.01)), { ok: true });
+    assert.equal((await minimums.verdict('bsc', usd(5.99))).ok, false);
   });
 
   test('an invoice with no dollar value is not judged against a dollar figure', async () => {

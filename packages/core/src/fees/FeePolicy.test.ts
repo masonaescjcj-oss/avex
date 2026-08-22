@@ -34,21 +34,22 @@ test('minimum invoice size rises automatically with gas', () => {
   const spikeMin = policy.minInvoiceUsd(ethereumAt(9));
 
   /**
-   * About $19 at the quiet end, and the figure is five hundred times the 3.76 cents it costs.
+   * About $9.40 at the quiet end, which is two hundred and fifty times the 3.76 cents it costs.
    *
    * That multiple is the whole content of `targetFeeRatio`, and it is not a margin on the gas:
-   * the payer already covers the gas. It is the margin on the *forecast* — the fee is fixed
-   * when the invoice is created and the settlement is paid later, so the commission has to be
-   * able to absorb a chain that got dearer in between. At 0.4% and a threefold spike that lands
-   * on five hundred, and this is where it is spent.
+   * the payer already covers the gas. It is the margin on the *forecast* — the fee is fixed when
+   * the invoice is created and the settlement is paid later, so the commission has to absorb a
+   * chain that got dearer in between. At 0.4% and a doubling that lands on two hundred and
+   * fifty, and this is where it is spent.
    *
-   * Stated as a range because both directions are product facts. Much lower and Ethereum starts
-   * accepting orders whose commission cannot absorb an ordinary spike; much higher and the
-   * floor is doing something other than what its derivation says.
+   * Stated as a range because both directions are product facts. Much lower and a chain starts
+   * accepting orders whose commission cannot absorb an ordinary doubling; much higher and the
+   * floor is doing something other than what its derivation says — it was twice this for a
+   * while, on a threefold spike the settlement queue would have deferred rather than paid.
    */
   assert.ok(
-    cheapMin > 15 && cheapMin < 25,
-    `expected $15-$25 at 0.047 gwei, got $${cheapMin}`,
+    cheapMin > 7 && cheapMin < 12,
+    `expected $7-$12 at 0.047 gwei, got $${cheapMin}`,
   );
 
   /**

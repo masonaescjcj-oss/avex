@@ -718,8 +718,9 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
       <h3>The minimum, and why it moves</h3>
       <p>
         Each chain has a smallest order it can carry, derived from live gas rather than set in a
-        table: roughly five hundred times what one settlement costs there. At a quiet tenth of a
-        gwei that is about <strong>$12 on BNB Chain</strong> and rather more on Ethereum; below
+        table: roughly two hundred and fifty times what one settlement costs there. At a quiet
+        tenth of a gwei that is about <strong>$6 on BNB Chain</strong> and tens of dollars on
+        Ethereum, where one settlement really costs about twenty cents; below
         it, <code>POST /v1/invoices</code> answers <code>422 amount_below_minimum</code> and the
         hosted checkout shows that network as unavailable rather than letting a customer pick it.
       </p>

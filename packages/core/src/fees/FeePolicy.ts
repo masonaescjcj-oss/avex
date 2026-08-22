@@ -32,19 +32,29 @@ export interface FeePolicyConfig {
    *
    *     invoice ≥ cost × (k - 1) / rate     ⇒     targetFeeRatio = rate / (k - 1)
    *
-   * At the lowest published rate — 0.4%, the top volume tier — absorbing a **threefold** spike
-   * needs `0.004 / 2 = 0.002`. Which is this number, and it means the floor holds for every
-   * merchant rather than only for the entry tier.
+   * At the lowest published rate — 0.4%, the top volume tier — absorbing a **doubling** needs
+   * `0.004 / 1 = 0.004`. Which is this number, and taking the lowest rather than the entry rate
+   * means the floor holds for every merchant instead of only for a new one.
    *
-   * Three is a judgement about chains rather than arithmetic. BSC sits at a tenth of a gwei for
-   * weeks and has touched three; Ethereum moves further than that in an afternoon. It is not a
-   * worst case — nothing here survives a thirty-fold spike on a small order — and it does not
-   * stand alone: the settlement queue defers anything above `deferAboveUsd` for up to six
-   * hours, so most spikes are waited out rather than paid.
+   * A doubling and not a worse case, because this number is not the only thing standing between
+   * us and a spike, and setting it as though it were made the floor twice what it needed to be.
+   * The settlement queue defers anything costing more than `deferAboveUsd` for up to six hours —
+   * on BNB Chain that threshold is five cents against a two-and-a-half cent settlement, so
+   * roughly a doubling is where deferring starts and a tripling is waited out rather than paid.
+   * The two mechanisms meet: this covers what the queue would still settle, and the queue covers
+   * what this cannot.
    *
-   * The cost of setting it here: on BNB Chain at a tenth of a gwei the floor is about $12, and
-   * on Ethereum it is in the hundreds. Small orders belong on the chains that settle for free —
-   * which is what a payer is shown, and the incentive we would have wanted anyway.
+   * Nor should one invoice have to survive the worst case alone. Requiring that is like
+   * requiring every order to cover a chargeback by itself: settlements are pooled, most of them
+   * happen at a quiet gas price, and the commission from those is what absorbs the few that do
+   * not.
+   *
+   * The cost of setting it here: on BNB Chain at a tenth of a gwei the floor is about $6, and on
+   * Ethereum it is in the tens of dollars — because a settlement there really does cost about
+   * twenty cents at today's gas. Small orders belong on the chains that settle for free, which
+   * is what a payer is shown. And the way to bring the floor down is to make the settlement
+   * cheaper rather than to thin the margin: four fifths of that 400,000 gas is depositing the
+   * forwarder's own bytecode.
    */
   readonly targetFeeRatio: number;
 
@@ -82,7 +92,7 @@ export interface FeePolicyConfig {
 }
 
 export const DEFAULT_FEE_POLICY: FeePolicyConfig = {
-  targetFeeRatio: 0.002,
+  targetFeeRatio: 0.004,
   absoluteMinUsd: 0.5,
   networkFeeMaxBps: 200,
   deferAboveUsd: {
