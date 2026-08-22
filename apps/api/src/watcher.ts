@@ -215,7 +215,15 @@ async function main(): Promise<void> {
             acceptedAssets: accepted,
             pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
           },
-          { nativePriceUsd: async () => 0 },
+          /**
+           * A real price, and on this chain it is only ever read for a log line.
+           *
+           * TRON settles directly — the payer's transfer reaches the merchant's own wallet — so
+           * `probeGas` here reports no cost to estimate. The TRX figure is still the real one
+           * because a snapshot that lies about a price is a snapshot somebody will eventually
+           * compare against another chain's.
+           */
+          { nativePriceUsd: () => prices.nativePriceUsd(chain) },
           new DatabaseAddressBook(db, chain),
         )
       : new EvmAdapter(
@@ -229,8 +237,16 @@ async function main(): Promise<void> {
             acceptedAssets: accepted,
             pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
           },
-          // Native price, for the gas model. Not consulted during a poll.
-          { nativePriceUsd: async () => 0 },
+          /**
+           * Native price, for the gas model. Not consulted during a poll.
+           *
+           * It was `async () => 0`, which was harmless only while nothing settled. Now that the
+           * settlement queue runs in this process, that zero was the whole cost model: a
+           * settlement priced at $0 is always below `deferAboveUsd`, so the queue would have
+           * broadcast every batch the moment it was queued — at any gas price, during any spike,
+           * with the deferral logic present and inert.
+           */
+          { nativePriceUsd: (target: ChainId) => prices.nativePriceUsd(target) },
           new DatabaseAddressBook(db, chain),
         );
 
