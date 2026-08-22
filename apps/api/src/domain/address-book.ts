@@ -1,3 +1,5 @@
+import { addressKey, foldsAddressCase } from '@avex/core';
+import type { ChainId } from '@avex/core';
 import { and, eq, sql } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
@@ -10,11 +12,15 @@ import { invoices } from '../db/schema.js';
  * that decision, and it is deliberately the only one it makes: a transfer to an address
  * nobody recognises is ignored, never credited to a guess.
  *
- * Case-insensitive, because the two sides disagree about it and both are right. An EVM
- * address is stored here in EIP-55 mixed case, since that is what a merchant reads and what
- * a wallet shows. An RPC log returns it lowercase. Comparing them literally means every
- * payment on every EVM chain goes unrecognised — which is the failure that looks like the
- * chain being quiet rather than like a bug.
+ * The two sides disagree about spelling and both are right. An EVM address is stored here in
+ * EIP-55 mixed case, since that is what a merchant reads and what a wallet shows. An RPC log
+ * returns it lowercase. Comparing them literally means every payment on every EVM chain goes
+ * unrecognised — which is the failure that looks like the chain being quiet rather than a bug.
+ *
+ * Reconciled per chain rather than by lowercasing everything, which is what this did before
+ * TRON. Hex folds safely; base58 does not — folding a TRON address yields a string that is not
+ * an address, and two distinct valid addresses can fold onto each other, which here would
+ * credit a payment to somebody else's invoice. `addressKey` owns that decision.
  *
  * Cached, because a busy block asks the same question for the same address many times and
  * the answer cannot change: an invoice's deposit address is derived once and committed to.
@@ -26,13 +32,13 @@ export class DatabaseAddressBook {
 
   constructor(
     private readonly db: Database,
-    private readonly chain: string,
+    private readonly chain: ChainId,
     /** Bounded so a stream of unknown addresses cannot grow it without limit. */
     private readonly maxCached = 10_000,
   ) {}
 
   async lookup(address: string): Promise<string | null> {
-    const key = address.toLowerCase();
+    const key = addressKey(this.chain, address);
     const cached = this.hits.get(key);
     if (cached !== undefined) return cached;
 
@@ -49,7 +55,20 @@ export class DatabaseAddressBook {
          * wallet. Refusing to recognise it would leave a real transfer credited to nothing,
          * which is the one outcome worse than crediting it late.
          */
-        and(eq(invoices.chain, this.chain), sql`lower(${invoices.depositAddress}) = ${key}`),
+        and(
+          eq(invoices.chain, this.chain),
+          /**
+           * `lower()` on the column only where the chain says folding is safe.
+           *
+           * Written as a branch rather than a helper returning SQL because the two arms are
+           * different queries: the folded one cannot use an index on the column, the exact
+           * one can, and hiding that behind a function would hide it from whoever next reads
+           * a slow query log.
+           */
+          foldsAddressCase(this.chain)
+            ? sql`lower(${invoices.depositAddress}) = ${key}`
+            : eq(invoices.depositAddress, key),
+        ),
       )
       .limit(1);
 

@@ -2,6 +2,17 @@ export * from './types.js';
 
 export * from './chains/ChainAdapter.js';
 export * from './chains/registry.js';
+export * from './chains/address-key.js';
+export {
+  base58Decode,
+  base58Encode,
+  isTronAddress,
+  normalizeTronAddress,
+  tronAddressFromEvmHex,
+  tronAddressToEvmHex,
+  tronAddressToHex,
+  tronAddressesEqual,
+} from './chains/tron/address.js';
 export { EvmAdapter, encodeSettleBatch } from './chains/evm/EvmAdapter.js';
 export type { AddressBook, EvmAdapterConfig, EvmSigner, PriceOracle } from './chains/evm/EvmAdapter.js';
 export * from './chains/evm/create2.js';

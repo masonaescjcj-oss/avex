@@ -1489,6 +1489,7 @@ const CHAINS = {
         chain: 'ethereum',
         displayName: 'Ethereum',
         addressModel: 'unique',
+        addressCase: 'insensitive',
         nativeSymbol: 'ETH',
         nativeDecimals: 18,
         confirmations: { standard: 12, highValue: 32, highValueThresholdUsd: 10_000 },
@@ -1498,6 +1499,7 @@ const CHAINS = {
         chain: 'polygon',
         displayName: 'Polygon PoS',
         addressModel: 'unique',
+        addressCase: 'insensitive',
         nativeSymbol: 'POL',
         nativeDecimals: 18,
         // Polygon PoS has historically produced deep reorgs; stay conservative.
@@ -1508,6 +1510,7 @@ const CHAINS = {
         chain: 'bsc',
         displayName: 'BNB Smart Chain',
         addressModel: 'unique',
+        addressCase: 'insensitive',
         nativeSymbol: 'BNB',
         nativeDecimals: 18,
         confirmations: { standard: 15, highValue: 30, highValueThresholdUsd: 10_000 },
@@ -1521,16 +1524,25 @@ const CHAINS = {
         chain: 'tron',
         displayName: 'TRON',
         addressModel: 'unique',
+        // Base58Check. See `addressCase` above; `tron/address.ts` is the codec.
+        addressCase: 'sensitive',
         nativeSymbol: 'TRX',
         nativeDecimals: 6,
         // TRON blocks are irreversible after 19 confirmations (2/3+1 of 27 SRs).
         confirmations: { standard: 19, highValue: 19, highValueThresholdUsd: 10_000 },
-        settlement: { kind: 'tron', energyPerTransfer: 65_000, bandwidthPerTransfer: 350 },
+        settlement: {
+            kind: 'tron',
+            energyDeployAndFlush: EVM_GAS_DEPLOY_AND_FLUSH,
+            energyFlushOnly: EVM_GAS_FLUSH_ONLY,
+            bandwidthPerTransfer: 350,
+        },
     },
     solana: {
         chain: 'solana',
         displayName: 'Solana',
         addressModel: 'unique',
+        // Base58, without the checksum wrapper TRON adds. Still case-significant.
+        addressCase: 'sensitive',
         nativeSymbol: 'SOL',
         nativeDecimals: 9,
         // 32 slots ≈ the `finalized` commitment level.
@@ -1543,6 +1555,8 @@ const CHAINS = {
         // TON carries a native comment field, so one address serves every invoice
         // and the payer's transfer already lands in the merchant's wallet.
         addressModel: 'shared-memo',
+        // Base64url, and case-significant like the base58 chains.
+        addressCase: 'sensitive',
         nativeSymbol: 'TON',
         nativeDecimals: 9,
         confirmations: { standard: 1, highValue: 3, highValueThresholdUsd: 10_000 },

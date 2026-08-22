@@ -1,5 +1,5 @@
 import type { IncomingPayment, PaymentSink } from '@avex/core';
-import { requiredConfirmations } from '@avex/core';
+import { addressKey, foldsAddressCase, requiredConfirmations } from '@avex/core';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
@@ -237,7 +237,7 @@ export class DatabasePaymentSink implements PaymentSink {
     }
 
     /**
-     * Case-insensitive on the address, and it matters.
+     * How the address is compared, and why it is not simply `=`.
      *
      * The watcher hands over `toChecksumAddress(...)`, and our own deriver stores the same
      * EIP-55 form, so an exact comparison happens to work today. It stops working the moment
@@ -246,17 +246,22 @@ export class DatabasePaymentSink implements PaymentSink {
      * and the failure is silent and total: a real transfer to a real invoice matches nothing
      * and goes to reconciliation as unmatched, which reads as the payer never sending it.
      *
-     * `lower()` on both sides rather than trusting either. The same comparison the address
-     * book makes, for the same reason; the two disagreeing was the bug that made this
-     * comment necessary.
+     * So the case is folded on hex chains, on both sides rather than trusting either. What
+     * this must *not* do is fold on a base58 chain: TRON addresses lose information when
+     * lowercased, and two distinct valid ones can fold onto the same string — here that is a
+     * payment credited to the wrong merchant's invoice, which is worse than not crediting it.
+     * `addressKey` decides; the address book asks it the same question.
      */
+    const key = addressKey(payment.chain, payment.to);
     const [byAddress] = await this.db
       .select()
       .from(invoices)
       .where(
         and(
           eq(invoices.chain, payment.chain),
-          sql`lower(${invoices.depositAddress}) = ${payment.to.toLowerCase()}`,
+          foldsAddressCase(payment.chain)
+            ? sql`lower(${invoices.depositAddress}) = ${key}`
+            : eq(invoices.depositAddress, key),
         ),
       )
       .limit(1);

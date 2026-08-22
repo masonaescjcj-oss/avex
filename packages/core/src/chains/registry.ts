@@ -15,9 +15,31 @@ export type SettlementProfile =
     }
   | {
       readonly kind: 'tron';
-      /** Energy burned by a TRC-20 transfer. Covered by delegation when enabled. */
-      readonly energyPerTransfer: number;
-      /** Bandwidth points per transaction. */
+      /**
+       * Energy for the settlement we actually perform: deploy the forwarder and flush it.
+       *
+       * This replaced a single `energyPerTransfer: 65_000`, which was the cost of a bare
+       * TRC-20 `transfer` — the *payer's* transaction, not ours. Ours deploys a contract in
+       * the same transaction that empties it, exactly as on EVM, and a contract deployment
+       * pays for its own code at a fixed rate per byte on top of execution. Budgeting a
+       * deploy at the price of a transfer understates our own cost by roughly six times, and
+       * it is the number the minimum-invoice calculation is built on.
+       *
+       * TVM executes the same bytecode as the EVM and charges energy per opcode where the EVM
+       * charges gas, so this is the repository's measured EVM figure carried across rather
+       * than a second guess. It is still an estimate: nothing here has run against a TRON
+       * node. Measure on Nile before this decides what a merchant is charged.
+       */
+      readonly energyDeployAndFlush: number;
+      /** Flushing a forwarder that already exists — a second payment to the same address. */
+      readonly energyFlushOnly: number;
+      /**
+       * Bandwidth points per transaction, priced by the network at a fixed 1000 SUN each.
+       *
+       * Small next to energy and deliberately still counted: the free daily allowance is 600
+       * points per account, which one settlement spends, so in production this is paid on
+       * every transaction rather than covered.
+       */
       readonly bandwidthPerTransfer: number;
     }
   | {
@@ -72,6 +94,14 @@ export interface ChainConfig {
   readonly nativeDecimals: number;
 
   /**
+   * Whether two spellings of one address may be compared with the case folded away.
+   *
+   * True of hex, false of base58 and base64url — and it decides which invoice a payment is
+   * credited to, so the reasoning is written out where it is acted on: `chains/address-key.ts`.
+   */
+  readonly addressCase: 'insensitive' | 'sensitive';
+
+  /**
    * Confirmations before a payment is treated as final. Scaled by value: a $5
    * invoice does not need the same reorg protection as a $50,000 one.
    */
@@ -89,6 +119,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     chain: 'ethereum',
     displayName: 'Ethereum',
     addressModel: 'unique',
+    addressCase: 'insensitive',
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
     confirmations: { standard: 12, highValue: 32, highValueThresholdUsd: 10_000 },
@@ -99,6 +130,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     chain: 'polygon',
     displayName: 'Polygon PoS',
     addressModel: 'unique',
+    addressCase: 'insensitive',
     nativeSymbol: 'POL',
     nativeDecimals: 18,
     // Polygon PoS has historically produced deep reorgs; stay conservative.
@@ -110,6 +142,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     chain: 'bsc',
     displayName: 'BNB Smart Chain',
     addressModel: 'unique',
+    addressCase: 'insensitive',
     nativeSymbol: 'BNB',
     nativeDecimals: 18,
     confirmations: { standard: 15, highValue: 30, highValueThresholdUsd: 10_000 },
@@ -124,17 +157,26 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     chain: 'tron',
     displayName: 'TRON',
     addressModel: 'unique',
+    // Base58Check. See `addressCase` above; `tron/address.ts` is the codec.
+    addressCase: 'sensitive',
     nativeSymbol: 'TRX',
     nativeDecimals: 6,
     // TRON blocks are irreversible after 19 confirmations (2/3+1 of 27 SRs).
     confirmations: { standard: 19, highValue: 19, highValueThresholdUsd: 10_000 },
-    settlement: { kind: 'tron', energyPerTransfer: 65_000, bandwidthPerTransfer: 350 },
+    settlement: {
+      kind: 'tron',
+      energyDeployAndFlush: EVM_GAS_DEPLOY_AND_FLUSH,
+      energyFlushOnly: EVM_GAS_FLUSH_ONLY,
+      bandwidthPerTransfer: 350,
+    },
   },
 
   solana: {
     chain: 'solana',
     displayName: 'Solana',
     addressModel: 'unique',
+    // Base58, without the checksum wrapper TRON adds. Still case-significant.
+    addressCase: 'sensitive',
     nativeSymbol: 'SOL',
     nativeDecimals: 9,
     // 32 slots ≈ the `finalized` commitment level.
@@ -148,6 +190,8 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     // TON carries a native comment field, so one address serves every invoice
     // and the payer's transfer already lands in the merchant's wallet.
     addressModel: 'shared-memo',
+    // Base64url, and case-significant like the base58 chains.
+    addressCase: 'sensitive',
     nativeSymbol: 'TON',
     nativeDecimals: 9,
     confirmations: { standard: 1, highValue: 3, highValueThresholdUsd: 10_000 },
