@@ -9,6 +9,7 @@ import { invoices, payments } from '../db/schema.js';
 /** Mirrors `paymentValueSourceEnum`; guarded by the schema drift test. */
 export type PaymentValueSource = 'quote' | 'oracle' | 'merchant_rate' | 'unknown';
 import type { AuditService } from './audit.js';
+import type { CommissionLedger } from './commission-ledger.js';
 import type { WebhookService } from './webhook-service.js';
 
 /**
@@ -37,7 +38,7 @@ export class DatabasePaymentSink implements PaymentSink {
      * second use is why the result is persisted rather than only consulted — see
      * `payments.valueUsdMicros`.
      */
-    private readonly valueUsd: (payment: IncomingPayment) => number,
+    private readonly valueUsd: (payment: IncomingPayment) => number | Promise<number>,
     /**
      * Where the valuation came from, if the caller can say.
      *
@@ -48,6 +49,15 @@ export class DatabasePaymentSink implements PaymentSink {
      */
     private readonly valueSource: (payment: IncomingPayment) => PaymentValueSource = () =>
       'unknown',
+    /**
+     * The commission ledger, optional so the watcher process can run without one.
+     *
+     * Optional rather than required because two processes construct this sink and only one of
+     * them has any business writing to a merchant's balance. Absent, nothing accrues — which is
+     * the safe direction: a missed accrual is revenue we have to ask for, while a double one is
+     * a merchant billed twice for a sale they made once.
+     */
+    private readonly ledger?: CommissionLedger | undefined,
   ) {}
 
   async credit(payment: IncomingPayment): Promise<void> {
@@ -62,7 +72,20 @@ export class DatabasePaymentSink implements PaymentSink {
       throw new UnmatchedPaymentError(payment);
     }
 
-    const needed = requiredConfirmations(payment.chain, this.valueUsd(payment));
+    /**
+     * Valued once, before anything reads it.
+     *
+     * Three things need this figure — how many confirmations to require, what to record on the
+     * payment row, and what commission to accrue — and it now involves a price lookup rather
+     * than a constant, so calling it three times would be three lookups that can disagree with
+     * each other inside one credit.
+     */
+    const valuation = await this.valuation(payment);
+    const valueUsd = valuation.valueUsdMicros === null
+      ? 0
+      : Number(BigInt(valuation.valueUsdMicros)) / 1_000_000;
+
+    const needed = requiredConfirmations(payment.chain, valueUsd);
     if (payment.confirmations < needed) {
       // Visible progress for the payer without releasing anything.
       if (invoice.status === 'pending') {
@@ -86,7 +109,7 @@ export class DatabasePaymentSink implements PaymentSink {
         amount: payment.amount.toString(),
         blockNumber: payment.blockNumber,
         fromAddress: null,
-        ...this.valuation(payment),
+        ...valuation,
       })
       // The exactly-once guarantee, enforced by the database rather than by
       // remembering to check first.
@@ -96,6 +119,47 @@ export class DatabasePaymentSink implements PaymentSink {
       .returning({ id: payments.id });
 
     if (inserted.length === 0) return;
+
+    /**
+     * The commission, for the payments where the chain did not take it.
+     *
+     * Two entries, and only one of them can apply to any invoice. `accruedFeeBps` is non-zero
+     * only on a pooled chain, where the payer paid the merchant's own wallet and nothing of
+     * ours was in the path — so the commission becomes a debt. `recoveryBps` is non-zero only
+     * on an invoice whose fee was raised to collect an earlier debt, and it records what the
+     * raise actually collected rather than what it was expected to.
+     *
+     * After the payment row, deliberately. The unique key on that row is the exactly-once
+     * guarantee for the whole of this method, so anything here runs only for a payment being
+     * credited for the first time — and the ledger's own unique key on (payment, kind) makes
+     * it idempotent again, because "billed twice for one sale" is the failure worth two
+     * defences.
+     *
+     * A payment whose dollar value could not be determined accrues nothing. Guessing at a
+     * commission from an unknown value would put a number a merchant cannot check into a
+     * balance they are asked to pay.
+     */
+    if (this.ledger && valuation.valueUsdMicros !== null) {
+      const valueUsdMicros = BigInt(valuation.valueUsdMicros);
+      if (invoice.accruedFeeBps > 0) {
+        await this.ledger.accrue(this.db, {
+          organizationId: invoice.organizationId,
+          paymentId: inserted[0]!.id,
+          invoiceId: invoice.id,
+          valueUsdMicros,
+          accruedFeeBps: invoice.accruedFeeBps,
+        });
+      }
+      if (invoice.recoveryBps > 0) {
+        await this.ledger.recover(this.db, {
+          organizationId: invoice.organizationId,
+          paymentId: inserted[0]!.id,
+          invoiceId: invoice.id,
+          valueUsdMicros,
+          recoveryBps: invoice.recoveryBps,
+        });
+      }
+    }
 
     const status = await this.recompute(invoice.id);
 
@@ -146,14 +210,14 @@ export class DatabasePaymentSink implements PaymentSink {
    * merchant is never pushed over a billing threshold by a rounding artefact — the
    * direction to be wrong in when the consequence is charging someone.
    */
-  private valuation(payment: IncomingPayment): {
+  private async valuation(payment: IncomingPayment): Promise<{
     valueUsdMicros: string | null;
     valueSource: PaymentValueSource;
-  } {
+  }> {
     const source = this.valueSource(payment);
     let usd: number;
     try {
-      usd = this.valueUsd(payment);
+      usd = await this.valueUsd(payment);
     } catch {
       // A pricing failure must never stop a payment being credited. The merchant's
       // money has arrived; what it was worth in dollars is our bookkeeping problem.
@@ -201,6 +265,26 @@ export class DatabasePaymentSink implements PaymentSink {
     const status = await this.recompute(row.invoiceId);
 
     if (invoice) {
+      /**
+       * The commission goes back with the payment.
+       *
+       * A reorg took the sale away, so a merchant left owing us a cut of it would be paying for
+       * something that did not happen — and they would have no way to notice, because the
+       * balance is a number in a panel rather than a line on an invoice. A compensating entry,
+       * not a delete: the statement is the record, and a line that vanishes is one nobody can
+       * ask about.
+       *
+       * Only the accrual is undone. A `recovery` on a reversed payment is a different problem —
+       * the money was taken on chain by a forwarder we cannot un-deploy — and reversing the
+       * ledger entry for it would say we had collected less than we did.
+       */
+      if (this.ledger) {
+        await this.ledger.reverseAccrual(this.db, {
+          organizationId: invoice.organizationId,
+          paymentId: row.id,
+        });
+      }
+
       await this.audit.record({
         organizationId: invoice.organizationId,
         action: 'payment.reversed',
@@ -304,6 +388,36 @@ export class DatabasePaymentSink implements PaymentSink {
    * block the watcher's poll or silently drop the transfer.
    */
   private async matchPooled(payment: IncomingPayment, atAddress: SQL | undefined) {
+    /**
+     * A transfer we have already credited belongs where we already credited it.
+     *
+     * Checked first, and only on this path, because the pooled rules below deliberately look at
+     * *open* invoices — so a re-scanned block range containing a payment that has since settled
+     * its invoice would find nothing open, raise `UnmatchedPaymentError`, and put a transfer we
+     * handled correctly weeks ago in front of an operator as though it were a stranger's. On
+     * every other chain the address lookup finds the settled invoice and the payment row's own
+     * unique key makes the second credit a no-op; this restores that property here.
+     */
+    const [already] = await this.db
+      .select({ invoiceId: payments.invoiceId })
+      .from(payments)
+      .where(
+        and(
+          eq(payments.chain, payment.chain),
+          eq(payments.txHash, payment.txHash),
+          eq(payments.transferIndex, payment.transferIndex),
+        ),
+      )
+      .limit(1);
+    if (already) {
+      const [invoice] = await this.db
+        .select()
+        .from(invoices)
+        .where(eq(invoices.id, already.invoiceId))
+        .limit(1);
+      if (invoice) return invoice;
+    }
+
     const open = await this.db
       .select()
       .from(invoices)

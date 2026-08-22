@@ -538,6 +538,7 @@
         <a href="#modes">Test and live</a>
         <a href="#money">Amounts</a>
         <a href="#fee-payer">Who pays the fee</a>
+        <a href="#balance">Your balance</a>
         <a href="#checkouts">Checkouts</a>
         <a href="#invoices">Invoices</a>
         <a href="#stars">Telegram Stars</a>
@@ -677,9 +678,78 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
         already be looking at it.
       </p>
       <p class="note">
-        On an asset we take no commission on — Telegram Stars, or a chain we hold no
-        collector address for — <code>feePayer: "payer"</code> changes nothing at all.
-        There is no fee to pass on, and we will not invent one for you to keep.
+        On an asset we take no commission on — Telegram Stars — <code>feePayer: "payer"</code>
+        changes nothing at all. There is no fee to pass on, and we will not invent one for you
+        to keep.
+      </p>
+      <p class="note">
+        <strong>On TRON it works, but not on chain.</strong> There the payment goes straight
+        into your own wallet and no contract of ours is in the path, so there is nothing to
+        split. The commission is charged to your <a href="#balance">balance</a> instead, and
+        <code>feePayer: "payer"</code> still grosses the invoice up — you keep your price and
+        the commission you owe cancels out.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── the balance ──────────────────────────────────────────────────── -->
+  <section class="panel" id="balance">
+    <div class="panel-head"><h2>📉 Your balance</h2></div>
+    <div class="body">
+      <p>
+        On most chains the commission never touches your books: the contract that sweeps a
+        payment to you takes our cut in the same transaction, and there is nothing to settle
+        afterwards. TRON is different, and the difference is in your favour — the payer sends
+        to <em>your own wallet</em>, so there is no contract of ours in the path, no sweep, and
+        no network fee for us to pass on.
+      </p>
+      <p>
+        The commission on those payments has to be collected some other way, so it is charged
+        to a balance. Take $100 on TRON at 0.5% and your balance reads
+        <code>-500000</code> — fifty cents, in micro-dollars, owed to us.
+      </p>
+      <div class="endpoint" data-route="GET /v1/organizations/:orgId/balance">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/balance</span></div>
+        <div class="params">
+          <div class="param"><code>balanceUsdMicros</code><span>Signed. Negative means you owe us.</span></div>
+          <div class="param"><code>creditLimitUsdMicros</code><span>How far the balance may go before invoicing on accruing chains stops.</span></div>
+          <div class="param"><code>canInvoiceOnAccruingChains</code><span><code>false</code> once the limit is passed.</span></div>
+          <div class="param"><code>entries</code><span>The most recent 50, newest first — every movement, with the invoice it came from.</span></div>
+        </div>
+      </div>
+      <pre class="code"><span class="c"># GET /v1/organizations/:orgId/balance</span>
+{
+  <span class="k">"balanceUsdMicros"</span>: <span class="s">"-500000"</span>,
+  <span class="k">"creditLimitUsdMicros"</span>: <span class="s">"500000000"</span>,
+  <span class="k">"canInvoiceOnAccruingChains"</span>: <span class="k">true</span>,
+  <span class="k">"entries"</span>: [
+    { <span class="k">"kind"</span>: <span class="s">"accrual"</span>,  <span class="k">"amountUsdMicros"</span>: <span class="s">"-500000"</span>, <span class="k">"invoiceId"</span>: <span class="s">"…"</span> }
+  ]
+}</pre>
+      <p>
+        <strong>How it is settled.</strong> Your next invoice on a chain where the cut
+        <em>can</em> be taken on chain carries a slightly higher fee, and the extra clears the
+        balance. It is capped at 2% on top of your own rate, so an invoice never has a
+        surprising amount taken out of it — a large balance is cleared over several invoices
+        rather than out of one. The raise applies to you and never to your customer: it is your
+        balance, and grossing it onto a payer would charge them for it.
+      </p>
+      <div class="codes">
+        <div class="code-row"><b>accrual</b><code>−</code><span>Commission on a payment we could not take a cut of.</span></div>
+        <div class="code-row"><b>recovery</b><code>+</code><span>Cleared by the raised fee on a later invoice.</span></div>
+        <div class="code-row"><b>settlement</b><code>+</code><span>You paid us directly.</span></div>
+        <div class="code-row"><b>adjustment</b><code>±</code><span>A correction, with a reason recorded.</span></div>
+      </div>
+      <p class="note">
+        <strong>A reversed payment reverses its commission.</strong> If a reorg takes a payment
+        away, the accrual it created is undone. You are never left owing us a cut of a sale
+        that did not happen.
+      </p>
+      <p class="note">
+        <strong>There is a limit.</strong> Past $500 owed, new invoices on chains that accrue
+        are refused with <code>402 balance_owed</code> until the balance is settled. Chains
+        where the commission is taken on chain keep working — those invoices are what clears
+        it.
       </p>
     </div>
   </section>

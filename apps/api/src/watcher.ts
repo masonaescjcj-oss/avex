@@ -1,12 +1,15 @@
 import {
+  DEFAULT_BREAKER,
   DEFAULT_DISPATCHER,
   DEFAULT_WATCHER,
   EVM_CHAIN_IDS,
   EvmAdapter,
   FetchPoster,
+  PriceService,
   Watcher,
   WebhookDispatcher,
   chainConfig,
+  createPriceSources,
 } from '@avex/core';
 import type { Asset, ChainId } from '@avex/core';
 
@@ -15,7 +18,9 @@ import { JOB_LOCKS, withJobLock } from './db/lock.js';
 import { DatabaseAddressBook } from './domain/address-book.js';
 import { AssetService } from './domain/asset-service.js';
 import { AuditService } from './domain/audit.js';
+import { CommissionLedger } from './domain/commission-ledger.js';
 import { DatabasePaymentSink } from './domain/payment-sink.js';
+import { paymentValueSource, paymentValueUsd } from './domain/payment-valuation.js';
 import { DatabaseWatchStore } from './domain/watch-store.js';
 import { WebhookService } from './domain/webhook-service.js';
 import { loadEnv } from './env.js';
@@ -106,7 +111,50 @@ async function main(): Promise<void> {
    * is slow can never delay a payment being credited. Delivery is the API's job, on its own
    * clock.
    */
-  const sink = new DatabasePaymentSink(db, audit, webhooks, () => 0);
+  /**
+   * Prices, because this process is the one that decides what a payment was worth.
+   *
+   * It passed `() => 0` before, and that zero reached three decisions: how many confirmations to
+   * wait for (value-scaled, so every payment took the shallow count), what to record as the
+   * merchant's assessed volume (so the fee ladder could never move), and now the commission
+   * accrued on chains where no cut is taken on chain (so the fee would never be charged). None
+   * of the three failed visibly.
+   *
+   * Its own `PriceService` rather than a reader of `price_ticks`: those are written as an audit
+   * aid and explicitly not a source of truth. Cached, so a busy block does not become one
+   * outbound request per transfer.
+   */
+  const prices = new PriceService(
+    createPriceSources(env.PRICE_SOURCES),
+    {
+      aggregation: {
+        minSources: env.PRICE_MIN_SOURCES,
+        outlierToleranceBps: env.PRICE_OUTLIER_TOLERANCE_BPS,
+        maxDispersionBps: env.PRICE_MAX_DISPERSION_BPS,
+        maxStalenessMs: env.PRICE_MAX_STALENESS_MS,
+      },
+      breaker: DEFAULT_BREAKER,
+      cacheTtlMs: env.PRICE_CACHE_TTL_MS,
+    },
+  );
+
+  /**
+   * The ledger, so a payment on a pooled chain charges the commission it agreed to.
+   *
+   * This process credits pooled payments, so this process is where the accrual has to happen —
+   * the API never sees the transfer. It cannot recover a balance (that happens at invoice
+   * creation) and it never needs to: an accrual is a write, not a decision.
+   */
+  const ledger = new CommissionLedger(db);
+
+  const sink = new DatabasePaymentSink(
+    db,
+    audit,
+    webhooks,
+    paymentValueUsd(prices),
+    paymentValueSource(),
+    ledger,
+  );
   const state = new DatabaseWatchStore(db);
   /**
    * The asset service, for reading the catalogue and nothing else.

@@ -1,3 +1,4 @@
+import { CommissionLedger } from '../domain/commission-ledger.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
@@ -183,6 +184,7 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     mailer = new ConsoleMailer(env.APP_URL, () => {});
 
     app = buildServer({
+      ledger: new CommissionLedger(database.db),
       env,
       db: database.db,
       audit,
@@ -628,6 +630,7 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
     const suiteMailer = new ConsoleMailer(env.APP_URL, () => {});
 
     app = buildServer({
+      ledger: new CommissionLedger(database.db),
       env,
       db: database.db,
       audit,
@@ -829,6 +832,7 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
     );
 
     app = buildServer({
+      ledger: new CommissionLedger(database.db),
       env,
       db: database.db,
       audit,
@@ -1132,6 +1136,7 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
     payouts = new PayoutAddressService(database.db, audit, mail);
 
     app = buildServer({
+      ledger: new CommissionLedger(database.db),
       env,
       db: database.db,
       audit,

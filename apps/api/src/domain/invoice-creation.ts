@@ -18,6 +18,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { assets, invoices, merchantAssets, payoutAddresses, quotes } from '../db/schema.js';
 import type { AuditService } from './audit.js';
+import type { CommissionLedger } from './commission-ledger.js';
 import { DepositAddressError, type DepositAddressDeriver } from './deposit-address.js';
 import type { FeePlanService } from './fee-plan-service.js';
 
@@ -50,6 +51,7 @@ export class InvoiceCreationError extends Error {
       | 'price_unavailable'
       | 'amount_invalid'
       | 'chain_unsupported'
+      | 'balance_owed'
       | 'not_configured',
     message: string,
   ) {
@@ -139,6 +141,13 @@ export class InvoiceCreationService {
     private readonly feePlans: FeePlanService,
     private readonly rates: RateProvider,
     private readonly audit: AuditService,
+    /**
+     * The commission ledger, for the credit limit on chains that accrue.
+     *
+     * Optional, and its absence means no limit is enforced rather than every invoice being
+     * refused — a deployment without a ledger has no balances to be over a limit on.
+     */
+    private readonly ledger?: CommissionLedger | undefined,
   ) {}
 
   async create(
@@ -195,15 +204,49 @@ export class InvoiceCreationService {
      *    address. Zero and undefined both mean the merchant keeps everything.
      */
     /**
-     * No commission on Stars, and this is a limit rather than a policy.
+     * No commission on Stars.
      *
-     * A percentage is collectable because the forwarder splits it on the way out. Stars
-     * never pass through anything we control, so there is nothing to split — charging for
-     * them would mean invoicing the merchant separately for money we never touched.
+     * A percentage is collectable on EVM because the forwarder splits it on the way out. Stars
+     * never pass through anything we control, so there is nothing to split. That used to be the
+     * end of the argument; it is now a choice rather than a limit, because the commission
+     * ledger can bill what a chain cannot take — which is exactly how pooled chains are
+     * charged. Left uncharged deliberately: Telegram's own cut is already large, and nobody has
+     * decided to add ours on top.
      */
     const fee = config.stars
       ? undefined
-      : await this.feePlans.feeFor(organizationId, config.asset.chain);
+      : await this.feePlans.feeFor(
+          organizationId,
+          config.asset.chain,
+          /**
+           * The invoice's dollar value, for sizing a balance recovery.
+           *
+           * Undefined for an invoice priced in token units, and that is the right answer rather
+           * than a conversion done here: a recovery is a fraction of a dollar figure, and a
+           * figure invented at this line would not be the one the merchant is later shown.
+           */
+          quote.amountFiatMicros ?? undefined,
+        );
+
+    /**
+     * A merchant who owes us too much stops being able to invoice on the chains that accrue.
+     *
+     * This is the actual enforcement behind the balance. Raising the fee on a later invoice
+     * collects, but only from volume that happens to arrive and only 2% of it at a time — a
+     * merchant taking nothing but pooled payments would accrue without limit and the first
+     * anybody would know is a number too large to collect. Chains that take their cut on chain
+     * are unaffected: those invoices *reduce* the balance, so blocking them would make the debt
+     * permanent.
+     */
+    if (this.ledger && (fee?.accruedFeeBps ?? 0) > 0) {
+      if (!(await this.ledger.withinCreditLimit(organizationId))) {
+        throw new InvoiceCreationError(
+          'balance_owed',
+          `This account has an outstanding balance above the limit for ${config.asset.chain}. ` +
+            'Settle it, or invoice on a chain where the commission is taken on chain.',
+        );
+      }
+    }
 
     /**
      * Who bears it, and what that does to the amount.
@@ -216,7 +259,20 @@ export class InvoiceCreationService {
      * default says.
      */
     const feePayer: FeePayer = request.feePayer ?? fee?.feePayer ?? 'merchant';
-    const charged = applyFeePayer(quote.amountDue, fee?.feeBps ?? 0, feePayer);
+    /**
+     * The commission the payer is surcharged, which is not the same as the on-chain fee.
+     *
+     * On a pooled chain nothing is taken on chain and `feeBps` is zero, but the merchant is
+     * still charged — as a balance — so a merchant who passes the commission to their customer
+     * must still be able to. Otherwise moving a customer to TRON would silently make the
+     * merchant absorb a fee they had chosen to pass on.
+     *
+     * `recoveryBps` is deliberately excluded. That part of the fee is the merchant repaying a
+     * balance, and grossing it onto the payer would charge a stranger for somebody else's
+     * account.
+     */
+    const surchargeBps = (fee?.feeBps ?? 0) - (fee?.recoveryBps ?? 0) + (fee?.accruedFeeBps ?? 0);
+    const charged = applyFeePayer(quote.amountDue, Math.max(0, surchargeBps), feePayer);
 
     // 5. Write the quote, then derive the address from the id it was given, then the
     //    invoice. The id has to exist before the address can be derived from it.
@@ -261,7 +317,16 @@ export class InvoiceCreationService {
           invoiceId,
           chain: config.asset.chain,
           payoutAddress,
-          fee,
+          /**
+           * Only the on-chain split reaches the address derivation, and only when it is real.
+           *
+           * The address is a hash over the forwarder's constructor arguments, so passing a
+           * pooled chain's `accruedFeeBps` here would derive an address committed to a fee no
+           * forwarder will ever take — and on a chain that has no forwarder at all.
+           */
+          ...(fee && fee.feeDestination !== undefined && fee.feeBps > 0
+            ? { fee: { feeDestination: fee.feeDestination, feeBps: fee.feeBps } }
+            : {}),
           mode,
         });
       } catch (error) {
@@ -293,6 +358,8 @@ export class InvoiceCreationService {
         payoutAddress,
         feeBps: fee?.feeBps ?? 0,
         feeDestination: fee?.feeDestination ?? null,
+        accruedFeeBps: fee?.accruedFeeBps ?? 0,
+        recoveryBps: fee?.recoveryBps ?? 0,
         // Recorded, not derived: the same 20.1 USDT could be a payer-paid 20 USDT invoice
         // or a merchant-paid 20.1 one, and afterwards nothing else could tell them apart.
         feePayer: charged.surcharge > 0n ? feePayer : 'merchant',

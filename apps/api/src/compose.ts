@@ -17,6 +17,8 @@ import { AuditService } from './domain/audit.js';
 import { AuthService } from './domain/auth-service.js';
 import { CheckoutService } from './domain/checkout-service.js';
 import { DepositAddressDeriver } from './domain/deposit-address.js';
+import { CommissionLedger } from './domain/commission-ledger.js';
+import { paymentValueSource, paymentValueUsd } from './domain/payment-valuation.js';
 import { FeePlanService } from './domain/fee-plan-service.js';
 import { InviteService } from './domain/invite-service.js';
 import { InvoiceCreationService } from './domain/invoice-creation.js';
@@ -118,9 +120,28 @@ export function compose(options: ComposeOptions): Composed {
   // Credits transfers the watcher finds, and queues the callbacks that tell a merchant
   // about them. Enqueueing is a database write, so a slow merchant endpoint can never
   // delay crediting a payment.
-  const paymentSink = new DatabasePaymentSink(db, audit, webhooks, () => 0);
+  /**
+   * What merchants owe us for payments no chain took a cut of.
+   *
+   * Constructed before the sink and the fee plans because both need it: the sink writes the
+   * accrual when a pooled payment is credited, and the fee plans read the balance to size the
+   * recovery onto a later invoice on a chain that can take one.
+   */
+  const ledger = new CommissionLedger(db);
 
-  const feePlans = new FeePlanService(db, audit, { feeCollectors: env.FEE_COLLECTORS });
+  const paymentSink = new DatabasePaymentSink(
+    db,
+    audit,
+    webhooks,
+    paymentValueUsd(prices),
+    paymentValueSource(),
+    ledger,
+  );
+
+  const feePlans = new FeePlanService(db, audit, {
+    feeCollectors: env.FEE_COLLECTORS,
+    ledger,
+  });
 
   /**
    * Address derivation, built from configuration alone.
@@ -145,7 +166,7 @@ export function compose(options: ComposeOptions): Composed {
 
   // The pricing engine, narrowed to the one method invoice creation needs.
   const rates = { requireRate: (symbol: PriceSymbol) => prices.requireRate(symbol) };
-  const invoiceCreation = new InvoiceCreationService(db, deriver, feePlans, rates, audit);
+  const invoiceCreation = new InvoiceCreationService(db, deriver, feePlans, rates, audit, ledger);
 
   const settlements = new SettlementStore(db);
   const reconciliation = new ReconciliationService(db, audit, paymentSink);
@@ -169,6 +190,7 @@ export function compose(options: ComposeOptions): Composed {
     checkouts: new CheckoutService(db, invoiceCreation, feePlans, deriver, rates, audit),
     webhooks,
     feePlans,
+    ledger,
     minPriceSources: env.PRICE_MIN_SOURCES,
     // A real transport still to come; the seam is what matters now.
     mailer,

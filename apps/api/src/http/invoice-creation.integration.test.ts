@@ -1,3 +1,4 @@
+import { CommissionLedger } from '../domain/commission-ledger.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
@@ -154,6 +155,7 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     );
 
     app = buildServer({
+      ledger: new CommissionLedger(db),
       env,
       db,
       audit,

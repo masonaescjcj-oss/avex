@@ -1,3 +1,4 @@
+import type { CommissionLedger } from '../domain/commission-ledger.js';
 import { PriceUnavailableError, type PriceService } from '@avex/core';
 
 import { AssetConfigError } from '../domain/asset-service.js';
@@ -110,6 +111,8 @@ export interface AppContext {
   readonly merchant: MerchantService;
   readonly webhooks: WebhookService;
   readonly feePlans: FeePlanService;
+  /** What each merchant owes for payments no chain took a cut of. */
+  readonly ledger: CommissionLedger;
   readonly invoiceCreation: InvoiceCreationService;
   readonly checkouts: CheckoutService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */

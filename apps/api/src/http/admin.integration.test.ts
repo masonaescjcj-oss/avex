@@ -1,3 +1,4 @@
+import { CommissionLedger } from '../domain/commission-ledger.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
@@ -182,6 +183,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     );
 
     app = buildServer({
+      ledger: new CommissionLedger(db),
       env,
       db,
       audit,
@@ -1984,15 +1986,38 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     assert.equal(fee?.feeDestination, FEE_COLLECTOR_EVM);
   });
 
-  test('a chain with no collector charges nothing rather than burning the fee', async () => {
+  test('a pooled chain charges the rate off chain, with nothing to send it to', async () => {
     /**
-     * `tron` is deliberately absent from the configured collectors. An EVM address is
-     * not a valid TRON one, so substituting the one we do have would send the
-     * commission to an address that cannot receive it — and the forwarder would
-     * either revert or the funds would be gone. No fee is the only safe answer.
+     * This test asserted the opposite until pooled chains existed: `tron` has no configured
+     * collector, and an EVM address is not a valid TRON one, so `feeFor` returned nothing and
+     * every TRON invoice was free.
+     *
+     * Both halves of that were right and the conclusion was wrong. There is genuinely nowhere to
+     * send a fee — the payer pays the merchant's own wallet and no forwarder is involved — so
+     * `feeBps` is zero and `feeDestination` absent. What changed is that the rate is still
+     * charged, as `accruedFeeBps`, and billed to the merchant's balance when the payment is
+     * credited. "We cannot take it on chain" is not the same as "we do not charge for it".
      */
-    const org = await freshMerchant('nocollector');
+    const org = await freshMerchant('pooledfee');
     await feePlanService.ensureForOrganization(org);
+
+    const fee = await feePlanService.feeFor(org, 'tron');
+    assert.equal(fee?.feeBps, 0, 'nothing is taken on chain');
+    assert.equal(fee?.feeDestination, undefined, 'and there is nowhere to take it to');
+    assert.equal(fee?.accruedFeeBps, 50, 'the merchant is still charged their rate');
+    assert.equal(fee?.recoveryBps, 0);
+  });
+
+  test('a waived rate is waived on a pooled chain too', async () => {
+    // The accrual must not become a back door around a negotiated 0%.
+    const org = await freshMerchant('pooledzero');
+    await feePlanService.ensureForOrganization(org);
+    await feePlanService.setFeeBps(
+      { staffId: superadminId, role: 'superadmin' },
+      org,
+      0,
+      'launch partner, commission waived',
+    );
 
     assert.equal(await feePlanService.feeFor(org, 'tron'), undefined);
   });

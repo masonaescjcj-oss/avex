@@ -827,6 +827,39 @@ export const invoices = pgTable(
      */
     feePayer: feePayerEnum('fee_payer').notNull().default('merchant'),
 
+    /**
+     * The commission billed off chain, in basis points.
+     *
+     * Non-zero only on pooled chains, and it is the other half of `fee_bps` rather than a
+     * duplicate of it. On EVM the cut is taken by the forwarder, so `fee_bps` is what we get
+     * and this is zero. On a pooled chain the payer's transfer goes straight to the merchant's
+     * own wallet and there is nothing of ours in the path, so `fee_bps` is zero — truthfully,
+     * because nothing is taken on chain — and this is the rate we bill instead. It becomes a
+     * ledger entry when the payment is credited.
+     *
+     * The two are disjoint by construction, which is what keeps revenue from being counted
+     * twice: `commissionEarned` reads `fee_bps` and the ledger reads this.
+     *
+     * It is still grossed up into `amount_due` when `fee_payer` is `payer`, exactly as
+     * `fee_bps` is. A merchant who passes the commission to their customer should not stop
+     * being able to do that on the one chain where we cannot take it directly.
+     */
+    accruedFeeBps: integer('accrued_fee_bps').notNull().default(0),
+
+    /**
+     * How much of `fee_bps` is repayment of an outstanding balance rather than commission.
+     *
+     * A merchant accrues a debt on pooled chains, where we cannot take a cut on chain. It is
+     * recovered by raising the fee on their next invoice on a chain where we can — so
+     * `fee_bps` on that invoice is their rate plus this. Recorded separately because the two
+     * are different things: the rate is revenue, this is collection of revenue already earned
+     * and already counted. Without the split, `commissionEarned` would count it twice.
+     *
+     * Never grossed up onto the payer. The debt is the merchant's, and charging their customer
+     * for it would be charging a stranger for somebody else's account balance.
+     */
+    recoveryBps: integer('recovery_bps').notNull().default(0),
+
     toleranceBps: integer('tolerance_bps').notNull().default(50),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1081,6 +1114,84 @@ export const unmatchedPayments = pgTable(
  * transaction can neither be found nor replaced. Persisting it is what makes the
  * pipeline recoverable, and the monitor is a by-product.
  */
+/**
+ * What each merchant owes us, entry by entry.
+ *
+ * On EVM the commission is taken by the forwarder in the same transaction that pays the
+ * merchant, so there is nothing to bill and nothing to collect: `feePlanService.commissionEarned`
+ * derives it from what the chain already did. Pooled chains break that. The payer's transfer
+ * goes directly into the merchant's own wallet, we are not in the path, and the commission on
+ * it can only be a debt.
+ *
+ * So this table, and it is a ledger rather than a balance column for the ordinary reason: a
+ * merchant disputing what they owe needs to see which payments it came from, and a single
+ * mutable number cannot answer that. Append-only, and the balance is the sum.
+ *
+ * ## Sign
+ *
+ * Amounts are signed in the *merchant's* frame, so the balance reads the way it reads in their
+ * panel: negative means they owe us. Commission accrued is negative, money recovered or paid is
+ * positive. Stated here because a sign convention that lives only in the code that writes it is
+ * a sign convention that gets inverted by the next person to write to it.
+ */
+export const ledgerEntryKindEnum = pgEnum('ledger_entry_kind', [
+  /** Commission on a payment we could not take a cut of on chain. Negative. */
+  'accrual',
+  /** An accrual undone, because its payment was reversed by a reorg. Positive. */
+  'accrual_reversed',
+  /** Taken on chain by raising the fee on a later invoice. Positive. */
+  'recovery',
+  /** The merchant paid us directly, outside the system. Positive, and always by a human. */
+  'settlement',
+  /** An operator correcting the balance, for a reason they have to write down. */
+  'adjustment',
+]);
+
+export const commissionLedger = pgTable(
+  'commission_ledger',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    kind: ledgerEntryKindEnum('kind').notNull(),
+
+    /**
+     * Signed, in micro-dollars. Negative means the merchant owes us more.
+     *
+     * Micro-dollars rather than token units because a balance carried across chains and assets
+     * has to be one currency, and because it is what `payments.value_usd_micros` already is —
+     * the same figure the rest of the money code reasons in.
+     */
+    amountUsdMicros: numeric('amount_usd_micros', { precision: 38, scale: 0 }).notNull(),
+
+    /** The payment this entry came from, for an accrual, a reversal or a recovery. */
+    paymentId: uuid('payment_id').references(() => payments.id, { onDelete: 'set null' }),
+    invoiceId: uuid('invoice_id').references(() => invoices.id, { onDelete: 'set null' }),
+
+    /** Required on the two kinds a human creates, and checked by the service. */
+    staffId: uuid('staff_id').references(() => staff.id, { onDelete: 'set null' }),
+    note: text('note'),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    /**
+     * One entry of a kind per payment.
+     *
+     * The idempotency that makes re-crediting safe. A payment can be seen again — a re-scanned
+     * block range, a retried job, a reorg that restores what it removed — and accruing twice
+     * would bill a merchant twice for one sale. The kind is part of the key because one payment
+     * legitimately produces an accrual *and* later a reversal.
+     */
+    uniqueIndex('commission_ledger_payment_kind_key')
+      .on(table.paymentId, table.kind)
+      .where(sql`${table.paymentId} is not null`),
+    // The balance query, and the statement a merchant reads.
+    index('commission_ledger_org_idx').on(table.organizationId, table.createdAt),
+  ],
+);
+
 export const settlementStatusEnum = pgEnum('settlement_status', [
   'pending',
   'confirmed',

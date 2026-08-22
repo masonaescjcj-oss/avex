@@ -1,3 +1,4 @@
+import { RECOVERY_CREDIT_LIMIT_USD_MICROS } from '../../domain/commission-ledger.js';
 import { SUPPORTED_CHAINS, amountAfterFee } from '@avex/core';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -341,6 +342,52 @@ export function registerMerchantRoutes(app: FastifyInstance, context: AppContext
     return reply.send(await context.feePlans.forOrganization(granted.organizationId));
   });
 
+  app.get('/v1/organizations/:orgId/balance', async (request, reply) => {
+    /**
+     * What the merchant owes us, and the entries it is made of.
+     *
+     * A balance only exists because of chains where the commission cannot be taken on chain: the
+     * payer pays the merchant's own wallet directly, so our cut becomes a debt instead of a
+     * split. It is recovered by raising the fee on their next invoice on a chain that can take
+     * one, which is why the statement matters as much as the number — a merchant seeing 2.5% on
+     * a BSC invoice deserves to be able to find the TRON payments that put it there.
+     *
+     * `settings:read`, the same permission as the commission rate. Anybody who may see what the
+     * account is charged may see what it owes; hiding it from the people who would pay it serves
+     * nobody.
+     */
+    const granted = await access(request);
+    requirePermission(granted, 'settings:read');
+
+    const [balanceUsdMicros, entries] = await Promise.all([
+      context.ledger.balance(granted.organizationId),
+      context.ledger.entries(granted.organizationId, 50),
+    ]);
+
+    return reply.send({
+      /**
+       * Signed as the panel shows it: negative means they owe us.
+       *
+       * Sent as a string, like every other money figure in this API. A balance in micro-dollars
+       * exceeds what a JSON number can carry exactly once it passes about nine billion, and a
+       * figure that silently loses its last digits is worse in a balance than almost anywhere
+       * else.
+       */
+      balanceUsdMicros: balanceUsdMicros.toString(),
+      creditLimitUsdMicros: RECOVERY_CREDIT_LIMIT_USD_MICROS.toString(),
+      /** False when new invoices on chains that accrue will be refused. */
+      canInvoiceOnAccruingChains: balanceUsdMicros > -RECOVERY_CREDIT_LIMIT_USD_MICROS,
+      entries: entries.map((entry) => ({
+        id: entry.id,
+        kind: entry.kind,
+        amountUsdMicros: entry.amountUsdMicros.toString(),
+        invoiceId: entry.invoiceId,
+        note: entry.note,
+        createdAt: entry.createdAt.toISOString(),
+      })),
+    });
+  });
+
   app.post('/v1/organizations/:orgId/commission/fee-payer', async (request, reply) => {
     const body = z.object({ feePayer: z.enum(['merchant', 'payer']) }).parse(request.body);
     const granted = await access(request);
@@ -495,6 +542,16 @@ export function invoiceCreationErrorResponse(error: InvoiceCreationError): {
       return { status: 409, body: { error: error.code, message: error.message } };
     case 'amount_invalid':
       return { status: 422, body: { error: error.code, message: error.message } };
+    case 'balance_owed':
+      /**
+       * 402, which is the one status that means what this means.
+       *
+       * Not a 409 with the configuration errors: nothing about the merchant's setup is wrong
+       * and there is nothing for them to fix in their integration. They owe us money, and the
+       * chains that accrue it are closed until they do not. Their other chains still work,
+       * which is why this is refused per request rather than by disabling the account.
+       */
+      return { status: 402, body: { error: error.code, message: error.message } };
     case 'price_unavailable':
       // Retryable, and the header says how long to wait rather than leaving a client
       // to guess and hammer us while a source recovers.

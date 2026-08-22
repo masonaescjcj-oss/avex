@@ -1,9 +1,13 @@
+import { chainConfig } from '@avex/core';
+import type { ChainId } from '@avex/core';
 import type { FeePayer } from '@avex/core';
 import { and, count, eq, gte, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
 import { feePlans, invoices, payments } from '../db/schema.js';
 import type { AuditService } from './audit.js';
+import { recoveryBpsFor } from './commission-ledger.js';
+import type { CommissionLedger } from './commission-ledger.js';
 import type { StaffRole } from './staff-rbac.js';
 
 /**
@@ -101,11 +105,27 @@ export interface FeePlanOptions {
    * that burns the merchant's money.
    */
   readonly feeCollectors?: Readonly<Record<string, string>>;
+  /**
+   * The commission ledger, for sizing a balance recovery onto a new invoice.
+   *
+   * Optional: with no ledger, `feeFor` returns the merchant's plain rate and nothing is
+   * recovered. Note the asymmetry with accrual, which needs no ledger here at all — a pooled
+   * invoice records the rate it will be billed at, and the sink is what writes the entry.
+   */
+  readonly ledger?: CommissionLedger;
 }
 
 export class FeePlanService {
   private readonly periodMonths: number;
   private readonly feeCollectors: Readonly<Record<string, string>>;
+  /**
+   * Absent in the deployments that never issue invoices, and in most tests.
+   *
+   * Without it no invoice recovers a balance — which is the safe direction: a merchant charged
+   * their plain rate is a collection we have to chase, while one charged a recovery that was
+   * never owed is money taken by mistake.
+   */
+  private readonly ledger: CommissionLedger | undefined;
 
   constructor(
     private readonly db: Database,
@@ -114,6 +134,7 @@ export class FeePlanService {
   ) {
     this.periodMonths = options.periodMonths ?? DEFAULT_PERIOD_MONTHS;
     this.feeCollectors = options.feeCollectors ?? {};
+    this.ledger = options.ledger;
   }
 
   /**
@@ -132,10 +153,24 @@ export class FeePlanService {
   async feeFor(
     organizationId: string,
     chain: string,
+    /**
+     * What the invoice is worth, in micro-dollars, for sizing a balance recovery.
+     *
+     * Optional because not every caller has it — an invoice priced in token units rather than
+     * fiat has no dollar figure at creation — and a missing value means no recovery on that
+     * invoice rather than a guessed one.
+     */
+    value?: bigint,
   ): Promise<
     | {
-        readonly feeDestination: string;
+        /** Absent on a pooled chain: there is no forwarder and nothing to send a fee to. */
+        readonly feeDestination?: string;
+        /** Taken on chain, and committed to by the deposit address. */
         readonly feeBps: number;
+        /** Billed to the merchant's balance instead, on chains that take nothing. */
+        readonly accruedFeeBps: number;
+        /** The part of `feeBps` that is repayment rather than commission. */
+        readonly recoveryBps: number;
         /** The merchant's default. An individual invoice may still override it. */
         readonly feePayer: FeePayer;
       }
@@ -148,15 +183,54 @@ export class FeePlanService {
       .limit(1);
     if (!plan || plan.feeBps === 0) return undefined;
 
+    /**
+     * A pooled chain takes nothing on chain, and still charges the commission.
+     *
+     * There is no forwarder and no fee destination: the payer pays the merchant's own wallet
+     * directly. So the rate is returned as `accruedFeeBps` — billed to the merchant's balance
+     * when the payment is credited — and `feeBps` is zero, which is the truth about what the
+     * chain does rather than a rate nobody collects.
+     *
+     * Before this, `feeFor` returned `undefined` for any chain without a collector, so every
+     * TRON invoice was free. That is the whole of "apply the commission on TRON": the rate was
+     * already configured, and nothing was reading it.
+     */
+    if (chainConfig(chain as ChainId).addressModel === 'pooled') {
+      return {
+        feeBps: 0,
+        accruedFeeBps: Math.min(plan.feeBps, MAX_FEE_BPS),
+        recoveryBps: 0,
+        feePayer: plan.feePayer,
+      };
+    }
+
     const feeDestination = this.feeCollectors[chain];
     if (!feeDestination) return undefined;
+
+    /**
+     * On a chain that can take a cut, the fee also collects any balance owed.
+     *
+     * The recovery is added on top of the merchant's own rate and capped three ways — see
+     * `recoveryBpsFor`. It is not "take what is owed": the forwarder refuses a fee above 5% by
+     * design, so a large balance is collected over several invoices rather than out of one.
+     */
+    const recoveryBps =
+      this.ledger === undefined || value === undefined
+        ? 0
+        : recoveryBpsFor({
+            balanceUsdMicros: await this.ledger.balance(organizationId),
+            planFeeBps: plan.feeBps,
+            invoiceValueUsdMicros: value,
+          });
 
     // Clamped rather than trusted. The column has a check constraint, but this is the
     // value that reaches a constructor argument, and the forwarder reverts above the
     // ceiling — a revert here would mean a funded address we cannot deploy.
     return {
       feeDestination,
-      feeBps: Math.min(plan.feeBps, MAX_FEE_BPS),
+      feeBps: Math.min(plan.feeBps + recoveryBps, MAX_FEE_BPS),
+      accruedFeeBps: 0,
+      recoveryBps,
       feePayer: plan.feePayer,
     };
   }
@@ -350,7 +424,15 @@ export class FeePlanService {
      * exactly the kind of drift that makes a revenue figure impossible to reconcile
      * against a wallet.
      */
-    const cut = sql<string>`coalesce(sum(floor(${payments.valueUsdMicros} * ${invoices.feeBps} / 10000)), 0)::text`;
+    /**
+     * The commission rate, less the part that was repayment.
+     *
+     * An invoice recovering a balance carries a raised `fee_bps` — the merchant's rate plus the
+     * recovery — and the recovered part is not new revenue: it is collection of commission
+     * already earned on a pooled chain and already counted in the ledger. Summing the whole
+     * `fee_bps` here would count it a second time and overstate what the business made.
+     */
+    const cut = sql<string>`coalesce(sum(floor(${payments.valueUsdMicros} * (${invoices.feeBps} - ${invoices.recoveryBps}) / 10000)), 0)::text`;
 
     const conditions = [
       eq(invoices.mode, 'live'),
