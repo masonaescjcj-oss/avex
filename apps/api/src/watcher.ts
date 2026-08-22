@@ -6,8 +6,10 @@ import {
   EvmAdapter,
   FetchPoster,
   PriceService,
+  TronAdapter,
   Watcher,
   WebhookDispatcher,
+  SUPPORTED_CHAINS,
   chainConfig,
   createPriceSources,
 } from '@avex/core';
@@ -26,6 +28,7 @@ import { WebhookService } from './domain/webhook-service.js';
 import { loadEnv } from './env.js';
 import { JsonRpcCaller } from './rpc/json-rpc-caller.js';
 import { DEFAULT_LOOP, runWatchLoop } from './watch/loop.js';
+import { watchableChains } from './watch/watchable-chains.js';
 import type { LoopHandle } from './watch/loop.js';
 
 /**
@@ -47,14 +50,6 @@ import type { LoopHandle } from './watch/loop.js';
  * nothing else; a payment credited here reaches a merchant through the webhook rows it
  * writes, which the API's own scheduler drains.
  */
-
-/** Which chains this build can actually watch. EVM only, for now. */
-function watchableChains(env: ReturnType<typeof loadEnv>): readonly ChainId[] {
-  return Object.keys(env.EVM_RPC_URLS)
-    .filter((chain): chain is ChainId => chain in EVM_CHAIN_IDS)
-    .filter((chain) => (env.EVM_RPC_URLS[chain]?.length ?? 0) > 0)
-    .filter((chain) => env.FORWARDER_FACTORIES[chain] !== undefined);
-}
 
 /** Throws if anything ever asks it to vet a contract. Nothing here does. */
 const probeStub = {
@@ -216,22 +211,41 @@ async function main(): Promise<void> {
       continue;
     }
 
-    const adapter = new EvmAdapter(
-      {
-        chain,
-        rpcUrl: urls[0]!,
-        create2: {
-          factory: env.FORWARDER_FACTORIES[chain]!,
-          forwarderCreationCode: env.FORWARDER_CREATION_CODE,
-        },
-        acceptedAssets: accepted,
-        pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
-      },
-      // Native price, for the gas model. Not consulted during a poll.
-      { nativePriceUsd: async () => 0 },
-      noSigner,
-      new DatabaseAddressBook(db, chain),
-    );
+    /**
+     * One adapter per address model, chosen from the registry rather than by chain name.
+     *
+     * A pooled chain has no forwarder factory and no signer to pass, so handing it the EVM
+     * adapter would mean inventing both — and the first thing that would do is derive deposit
+     * addresses nobody owns and then look for payments to them.
+     */
+    const pooled = chainConfig(chain).addressModel === 'pooled';
+    const adapter = pooled
+      ? new TronAdapter(
+          {
+            chain,
+            rpcUrl: urls[0]!,
+            acceptedAssets: accepted,
+            pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
+          },
+          { nativePriceUsd: async () => 0 },
+          new DatabaseAddressBook(db, chain),
+        )
+      : new EvmAdapter(
+          {
+            chain,
+            rpcUrl: urls[0]!,
+            create2: {
+              factory: env.FORWARDER_FACTORIES[chain]!,
+              forwarderCreationCode: env.FORWARDER_CREATION_CODE,
+            },
+            acceptedAssets: accepted,
+            pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
+          },
+          // Native price, for the gas model. Not consulted during a poll.
+          { nativePriceUsd: async () => 0 },
+          noSigner,
+          new DatabaseAddressBook(db, chain),
+        );
 
     /**
      * Reorg depth from the chain's own configuration, not a constant.
@@ -269,9 +283,16 @@ async function main(): Promise<void> {
       assetCount: accepted.length,
       ...(accepted.length <= 20 ? { assets: accepted.map((asset) => asset.symbol) } : {}),
       reorgDepth,
-      // Said every time, because "payments are being detected" and "funds are being
-      // moved" are two different claims and only the first one is true here.
-      settlement: 'not in this process',
+      addressModel: chainConfig(chain).addressModel,
+      /**
+       * What settlement means on this chain, said every time.
+       *
+       * On an EVM chain "payments are being detected" and "funds are being moved" are two
+       * different claims and only the first is true in this process. On a pooled chain there is
+       * nothing to move at all — the payer already paid the merchant's wallet — so the line says
+       * which of the two situations this is rather than one sentence covering both.
+       */
+      settlement: pooled ? 'nothing to settle: the payer paid the merchant directly' : 'not in this process',
     });
 
     handles.push(

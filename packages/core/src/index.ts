@@ -19,6 +19,11 @@ export * from './chains/evm/create2.js';
 export { TonAdapter, tonMemo } from './chains/ton/TonAdapter.js';
 export type { TonAdapterConfig } from './chains/ton/TonAdapter.js';
 export { TronAdapter } from './chains/tron/TronAdapter.js';
+export type {
+  TronAdapterConfig,
+  TronAddressBook,
+  TronPriceOracle,
+} from './chains/tron/TronAdapter.js';
 export { SolanaAdapter } from './chains/solana/SolanaAdapter.js';
 
 export * from './fees/FeePolicy.js';

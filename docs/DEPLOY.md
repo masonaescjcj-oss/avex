@@ -32,13 +32,41 @@ DATABASE_URL=… EVM_RPC_URLS=bsc=https://… FORWARDER_FACTORIES=bsc=0x… \
   npm run -w @avex/api watch
 ```
 
-**Sweeping is still not wired.** The watcher detects and credits payments; nothing moves
-funds out of the forwarders yet. `SettlementRunner` exists in `@avex/core` with its own
-tests and consumes a `ChainSigner` — `pendingNonce`/`broadcast`/`receipt`, which
-`EvmChainSigner` implements. `EvmAdapter.settle()` wants a different interface, `EvmSigner`'s
-`sendTransaction`, and nothing implements that one. Two settlement designs, one signer, and
-the watcher passes a stub that throws rather than a cast that would fail the first time
-somebody swept.
+**Sweeping is still not wired — on the EVM chains.** There the watcher detects and credits
+payments and nothing moves funds out of the forwarders yet. `SettlementRunner` exists in
+`@avex/core` with its own tests and consumes a `ChainSigner` — `pendingNonce`/`broadcast`/
+`receipt`, which `EvmChainSigner` implements. `EvmAdapter.settle()` wants a different
+interface, `EvmSigner`'s `sendTransaction`, and nothing implements that one. Two settlement
+designs, one signer, and the watcher passes a stub that throws rather than a cast that would
+fail the first time somebody swept.
+
+**TRON needs none of it, and that is the point.** Its deposit addresses are the merchant's
+own — `addressModel: 'pooled'` — so the payer's transfer lands in their wallet and there is
+nothing to sweep, no key to hold, and no settlement transaction to build. Which removed the
+two hardest parts of a TRON integration: no protobuf encoding and no signing. `TronAdapter`
+polls and nothing else.
+
+It polls over TRON's Ethereum-compatible JSON-RPC rather than TronGrid's own event API, so
+its endpoint belongs in `EVM_RPC_URLS` beside the others:
+
+```
+EVM_RPC_URLS=bsc=https://…,tron=https://api.trongrid.io/jsonrpc
+```
+
+That is not a misfiling. A TRON node speaks `eth_blockNumber`, `eth_getLogs` and
+`eth_getBlockByNumber`, TRC-20 is ERC-20 with a different address encoding, and a `Transfer`
+event is the same event with the same topic — so the adapter shares its shape, its reorg
+handling and its block source with the EVM one. TronGrid's event endpoint pages by timestamp,
+which cannot express "rescan from block N" and therefore cannot survive a reorg honestly.
+
+TRON needs no forwarder factory, and `watchableChains` reflects that: an EVM chain without one
+is skipped, because the addresses it would look for are hashes over a factory that does not
+exist; a pooled chain is watched on its RPC endpoint alone.
+
+What crosses the boundary twice per poll is addresses. The filter goes out as 20-byte hex and
+recipients come back the same way, while everything stored and compared here is Base58Check.
+Getting that wrong finds no payments at all, on the chain expected to carry the most volume,
+and looks exactly like a quiet chain — so both directions are mutation-tested.
 
 ## The front end, on Vercel
 
