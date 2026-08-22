@@ -548,6 +548,7 @@
         <a href="#webhooks">Webhooks</a>
         <a href="#config">Configuration</a>
         <a href="#errors">Errors</a>
+        <a href="#integrations">WooCommerce</a>
       </nav>
     </div>
   </section>
@@ -562,7 +563,7 @@
         <strong>session</strong> for a human in the dashboard.
       </p>
       <pre><span class="c"># Your server. The key carries its own mode and its own permissions.</span>
-curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
+curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
   -H <span class="s">"Authorization: Bearer ak_live_…"</span></pre>
       <p class="note">
         Keys are shown once, at creation, and stored only as a hash — we cannot recover
@@ -887,7 +888,7 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
           <div class="param"><code>ttlMs</code><span>How long they have to choose. One minute to one day; one hour by default.</span></div>
           <div class="param"><code>mode</code><span>Session credentials only. An API key's mode always wins.</span></div>
         </div>
-        <pre>curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/checkouts \
+        <pre>curl -X POST https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/checkouts \
   -H <span class="s">"Authorization: Bearer ak_test_…"</span> \
   -H <span class="s">"Content-Type: application/json"</span> \
   -d <span class="s">'{"amountFiatMicros":"25000000","reference":"order-1042","description":"Order 1042"}'</span>
@@ -895,7 +896,7 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
 <span class="c"># 201 Created</span>
 {
   <span class="k">"id"</span>: <span class="s">"9c1f…"</span>,
-  <span class="k">"url"</span>: <span class="s">"https://pay.avex.example/pay/9c1f…"</span>,
+  <span class="k">"url"</span>: <span class="s">"https://avexpay.net/pay/9c1f…"</span>,
   <span class="k">"status"</span>: <span class="s">"open"</span>,
   <span class="k">"mode"</span>: <span class="s">"test"</span>,
   <span class="k">"amountFiatMicros"</span>: <span class="s">"25000000"</span>,
@@ -948,7 +949,7 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
           <div class="param"><code>ttlMs</code><span>How long the payer has. Fifteen minutes by default.</span></div>
           <div class="param"><code>mode</code><span>Session credentials only.</span></div>
         </div>
-        <pre>curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
+        <pre>curl -X POST https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
   -H <span class="s">"Authorization: Bearer ak_test_…"</span> \
   -H <span class="s">"Content-Type: application/json"</span> \
   -d <span class="s">'{"assetId":"…","amountFiatMicros":"20000000","reference":"order-1042"}'</span>
@@ -1072,7 +1073,7 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
           <div class="param"><code>payload</code><span><code>invoice_payload</code>. Checked against the invoice when sent, which catches a payment reported against the wrong order.</span></div>
         </div>
         <pre><span class="c"># In your bot's successful_payment handler</span>
-curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices/<em>INVOICE_ID</em>/telegram-payment \
+curl -X POST https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices/<em>INVOICE_ID</em>/telegram-payment \
   -H <span class="s">"Authorization: Bearer ak_live_…"</span> \
   -H <span class="s">"Content-Type: application/json"</span> \
   -d <span class="s">'{"chargeId":"...","amountStars":"200","payload":"telegram:4d2a..."}'</span></pre>
@@ -1351,6 +1352,41 @@ curl -X POST https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices/
         <div class="code-row"><b>429</b><code>rate_limited</code><span><code>retry-after</code> says how long.</span></div>
         <div class="code-row"><b>503</b><code>price_unavailable</code><span>No rate we trust right now. Retryable — <code>retryAfterSeconds</code> is a hint. We would rather refuse than misprice your invoice.</span></div>
       </div>
+    </div>
+  </section>
+
+  <!-- ── integrations ─────────────────────────────────────────────────── -->
+  <section class="panel" id="integrations">
+    <div class="panel-head"><h2>🔌 If you are on WooCommerce</h2></div>
+    <div class="body">
+      <p>
+        There is a plugin, and it is the whole integration — you do not call this API at all.
+        Install it, paste an organisation id, an API key and a webhook secret, and orders are
+        paid in crypto. It is in this repository under <code>integrations/woocommerce</code>.
+      </p>
+      <div class="codes">
+        <div class="code-row"><b>you set</b><code>4 fields</code><span>Organisation id, API key, webhook secret, API base.</span></div>
+        <div class="code-row"><b>it sends</b><code>no customer data</code><span>The order total, the order id, your store name, the return URLs. Not a name, an email or an address.</span></div>
+        <div class="code-row"><b>it completes</b><code>on a webhook</code><span>Only a signed webhook marks an order paid. The page a customer returns to never changes an order.</span></div>
+      </div>
+      <p class="note">
+        <strong>The gateway hides itself until it is fully configured.</strong> A gateway missing
+        its webhook secret would take a payment and never complete the order — the customer pays
+        and waits while the shop sees nothing — so it does not appear at checkout at all until
+        all four fields are filled in.
+      </p>
+      <p class="note">
+        Underpaid, overpaid and late payments all put the order <em>on hold</em> rather than
+        failing it. Real money arrived in every one of those cases, and an order marked failed
+        with funds sitting against it is the version of this that loses somebody's payment.
+      </p>
+      <h3>Anything else</h3>
+      <p>
+        Two calls and one webhook. <code>POST /checkouts</code> to get a URL to send the
+        customer to, then handle the webhook to know it was paid — every example on this page is
+        a complete request. If your platform can do those two things, it can take crypto through
+        AVEX, and the <a href="#webhooks">webhook section</a> is the half worth reading twice.
+      </p>
     </div>
   </section>
 

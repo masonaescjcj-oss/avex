@@ -1,14 +1,17 @@
 <?php
 /**
  * Plugin Name:       AVEX Pay for WooCommerce
- * Plugin URI:        https://avex.example/docs
+ * Plugin URI:        https://avexpay.net/docs
  * Description:       Accept USDT, USDC, TON, ETH, BNB, SOL, TRX and POL. Funds settle straight to your own wallet — AVEX never holds them.
  * Version:           1.0.0
  * Requires at least: 6.2
  * Requires PHP:      8.0
+ * Requires Plugins:  woocommerce
  * Author:            AVEX
+ * Author URI:        https://avexpay.net
  * License:           MIT
- * Text Domain:       avex-pay
+ * License URI:       https://opensource.org/licenses/MIT
+ * Text Domain:       avex-pay-for-woocommerce
  *
  * WC requires at least: 8.0
  * WC tested up to:      9.4
@@ -60,7 +63,7 @@ add_action(
 				'admin_notices',
 				static function (): void {
 					echo '<div class="notice notice-warning"><p>'
-						. esc_html__( 'AVEX Pay needs WooCommerce to be active.', 'avex-pay' )
+						. esc_html__( 'AVEX Pay needs WooCommerce to be active.', 'avex-pay-for-woocommerce' )
 						. '</p></div>';
 				}
 			);

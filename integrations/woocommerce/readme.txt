@@ -6,6 +6,7 @@ Tested up to: 6.7
 Requires PHP: 8.0
 Stable tag: 1.0.0
 License: MIT
+License URI: https://opensource.org/licenses/MIT
 
 Accept USDT, USDC, TON, ETH, BNB, SOL, TRX and POL. Funds settle straight to your own
 wallet — AVEX never holds them.
@@ -40,6 +41,38 @@ can only ever pay the address you configured.
 The gateway will not appear at checkout until all four settings are filled in. That is
 deliberate: a gateway missing its webhook secret would take payments and never complete an
 order, so the customer pays and waits while you see nothing.
+
+== External services ==
+
+This plugin sends payment requests to AVEX Pay, which is the payment gateway it is a client
+for. Nothing works without it, and it is a third-party service, so here is exactly what
+leaves your store and when.
+
+**When a customer chooses AVEX Pay at checkout**, the plugin calls
+`https://api.avexpay.net/v1/organizations/<your id>/checkouts` and sends:
+
+* the order total, converted to integer micro-dollars
+* the order id, as `wc-123`, which is what makes a retried checkout return the same payment
+  link instead of opening a second one
+* a description in the form `Order #123 at Your Store` — your order number and your site
+  name, taken from your WordPress settings
+* the return and cancel URLs WooCommerce generated for that order
+
+**No customer data is sent.** Not a name, an email address, a postal address, a phone
+number or an IP address. The gateway does not need them: a payment is matched by the
+deposit address and the amount, not by who sent it. That is a property of how it works
+rather than a policy, so it cannot quietly change in a later version of this plugin.
+
+**When a payment happens**, AVEX calls a URL on your store — `?wc-api=avex_pay` — with the
+invoice, its status and a signature. The plugin verifies the signature before it changes
+anything, and nothing else on that endpoint can complete an order.
+
+The plugin also fetches the invoice from `/v1/invoices/<id>` when it needs to confirm what
+a webhook said, using the same API key.
+
+Service: AVEX Pay — https://avexpay.net
+Terms: https://avexpay.net/terms
+Privacy: https://avexpay.net/privacy
 
 == Frequently Asked Questions ==
 

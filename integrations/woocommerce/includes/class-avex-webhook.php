@@ -211,7 +211,7 @@ final class Avex_Webhook {
 	 */
 	private static function log( string $message ): void {
 		if ( function_exists( 'wc_get_logger' ) ) {
-			wc_get_logger()->warning( $message, array( 'source' => 'avex-pay' ) );
+			wc_get_logger()->warning( $message, array( 'source' => 'avex-pay-for-woocommerce' ) );
 		}
 	}
 }

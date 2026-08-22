@@ -1017,7 +1017,7 @@
           19.99 has no exact binary representation and a shop at that price would be a cent out.
         </p>
         <pre><span class="c"># Ask for $19.99, and get a link to send your customer</span>
-curl -X POST https://api.avex.example/v1/organizations/<span class="v">$ORG</span>/checkouts \
+curl -X POST https://api.avexpay.net/v1/organizations/<span class="v">$ORG</span>/checkouts \
   -H <span class="s">"Authorization: Bearer $AVEX_KEY"</span> \
   -H <span class="s">"Content-Type: application/json"</span> \
   -d <span class="s">'{"amountFiatMicros":"19990000","reference":"order-1042"}'</span>
@@ -1025,8 +1025,8 @@ curl -X POST https://api.avex.example/v1/organizations/<span class="v">$ORG</spa
 <span class="c"># 201 Created</span>
 {
   <span class="k">"id"</span>: <span class="s">"c0ffee00-…"</span>,
-  <span class="k">"url"</span>: <span class="s">"https://pay.avex.example/pay/c0ffee00-…"</span>,
-  <span class="k">"receiptUrl"</span>: <span class="s">"https://pay.avex.example/pay/c0ffee00-…/receipt"</span>,
+  <span class="k">"url"</span>: <span class="s">"https://avexpay.net/pay/c0ffee00-…"</span>,
+  <span class="k">"receiptUrl"</span>: <span class="s">"https://avexpay.net/pay/c0ffee00-…/receipt"</span>,
   <span class="k">"mode"</span>: <span class="s">"live"</span>
 }</pre>
         <p>
@@ -1048,7 +1048,7 @@ curl -X POST https://api.avex.example/v1/organizations/<span class="v">$ORG</spa
           exactly as it would for real money.
         </p>
         <pre><span class="c"># Drive your own handler end to end without spending anything</span>
-curl -X POST https://api.avex.example/v1/organizations/<span class="v">$ORG</span>/invoices/<span class="v">$ID</span>/simulate-payment \
+curl -X POST https://api.avexpay.net/v1/organizations/<span class="v">$ORG</span>/invoices/<span class="v">$ID</span>/simulate-payment \
   -H <span class="s">"Authorization: Bearer $AVEX_TEST_KEY"</span></pre>
         <p>
           A test key cannot open a live invoice however it asks, and a live key cannot opt into

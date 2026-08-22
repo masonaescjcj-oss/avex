@@ -21,10 +21,10 @@ final class Avex_Gateway extends WC_Payment_Gateway {
 	 */
 	public function __construct() {
 		$this->id                 = 'avex_pay';
-		$this->method_title       = __( 'AVEX Pay', 'avex-pay' );
+		$this->method_title       = __( 'AVEX Pay', 'avex-pay-for-woocommerce' );
 		$this->method_description = __(
 			'Accept USDT, USDC, TON, ETH, BNB, SOL, TRX and POL. Funds settle straight to your own wallet — AVEX never holds them.',
-			'avex-pay'
+			'avex-pay-for-woocommerce'
 		);
 		$this->has_fields = false;
 		$this->supports   = array( 'products' );
@@ -45,51 +45,51 @@ final class Avex_Gateway extends WC_Payment_Gateway {
 	public function init_form_fields(): void {
 		$this->form_fields = array(
 			'enabled'      => array(
-				'title'   => __( 'Enable', 'avex-pay' ),
+				'title'   => __( 'Enable', 'avex-pay-for-woocommerce' ),
 				'type'    => 'checkbox',
-				'label'   => __( 'Accept crypto through AVEX Pay', 'avex-pay' ),
+				'label'   => __( 'Accept crypto through AVEX Pay', 'avex-pay-for-woocommerce' ),
 				'default' => 'no',
 			),
 			'title'        => array(
-				'title'       => __( 'Title', 'avex-pay' ),
+				'title'       => __( 'Title', 'avex-pay-for-woocommerce' ),
 				'type'        => 'text',
-				'description' => __( 'What the customer sees at checkout.', 'avex-pay' ),
-				'default'     => __( 'Pay with crypto', 'avex-pay' ),
+				'description' => __( 'What the customer sees at checkout.', 'avex-pay-for-woocommerce' ),
+				'default'     => __( 'Pay with crypto', 'avex-pay-for-woocommerce' ),
 				'desc_tip'    => true,
 			),
 			'description'  => array(
-				'title'   => __( 'Description', 'avex-pay' ),
+				'title'   => __( 'Description', 'avex-pay-for-woocommerce' ),
 				'type'    => 'textarea',
-				'default' => __( 'Pay in USDT, TON, ETH and more. You choose the coin and network on the next page.', 'avex-pay' ),
+				'default' => __( 'Pay in USDT, TON, ETH and more. You choose the coin and network on the next page.', 'avex-pay-for-woocommerce' ),
 			),
 			'api_base'     => array(
-				'title'       => __( 'API base URL', 'avex-pay' ),
+				'title'       => __( 'API base URL', 'avex-pay-for-woocommerce' ),
 				'type'        => 'text',
-				'default'     => 'https://api.avex.example',
-				'description' => __( 'Leave as provided unless AVEX told you otherwise.', 'avex-pay' ),
+				'default'     => 'https://api.avexpay.net',
+				'description' => __( 'Leave as provided unless AVEX told you otherwise.', 'avex-pay-for-woocommerce' ),
 				'desc_tip'    => true,
 			),
 			'organization' => array(
-				'title'       => __( 'Organisation ID', 'avex-pay' ),
+				'title'       => __( 'Organisation ID', 'avex-pay-for-woocommerce' ),
 				'type'        => 'text',
-				'description' => __( 'From your AVEX dashboard.', 'avex-pay' ),
+				'description' => __( 'From your AVEX dashboard.', 'avex-pay-for-woocommerce' ),
 				'desc_tip'    => true,
 			),
 			'api_key'      => array(
-				'title'       => __( 'API key', 'avex-pay' ),
+				'title'       => __( 'API key', 'avex-pay-for-woocommerce' ),
 				'type'        => 'password',
 				'description' => __(
 					'A key with the invoice:create permission. Use an ak_test_ key while you are setting up — nothing will move real money.',
-					'avex-pay'
+					'avex-pay-for-woocommerce'
 				),
 				'desc_tip'    => true,
 			),
 			'webhook_secret' => array(
-				'title'       => __( 'Webhook secret', 'avex-pay' ),
+				'title'       => __( 'Webhook secret', 'avex-pay-for-woocommerce' ),
 				'type'        => 'password',
 				'description' => sprintf(
 					/* translators: %s: the webhook URL to register */
-					__( 'Create an endpoint in AVEX pointing at %s and paste its secret here. Without it, no order will ever be marked paid.', 'avex-pay' ),
+					__( 'Create an endpoint in AVEX pointing at %s and paste its secret here. Without it, no order will ever be marked paid.', 'avex-pay-for-woocommerce' ),
 					esc_url( self::webhook_url() )
 				),
 			),
@@ -149,7 +149,7 @@ final class Avex_Gateway extends WC_Payment_Gateway {
 			(string) $order->get_total(),
 			sprintf(
 				/* translators: 1: order number, 2: site name */
-				__( 'Order %1$s at %2$s', 'avex-pay' ),
+				__( 'Order %1$s at %2$s', 'avex-pay-for-woocommerce' ),
 				$order->get_order_number(),
 				get_bloginfo( 'name' )
 			),
@@ -168,12 +168,12 @@ final class Avex_Gateway extends WC_Payment_Gateway {
 			$order->add_order_note(
 				sprintf(
 					/* translators: %s: error message from AVEX */
-					__( 'AVEX Pay could not open a checkout: %s', 'avex-pay' ),
+					__( 'AVEX Pay could not open a checkout: %s', 'avex-pay-for-woocommerce' ),
 					$checkout['error']
 				)
 			);
 			wc_add_notice(
-				__( 'We could not start the crypto payment. Please try again or choose another method.', 'avex-pay' ),
+				__( 'We could not start the crypto payment. Please try again or choose another method.', 'avex-pay-for-woocommerce' ),
 				'error'
 			);
 			return array( 'result' => 'failure' );
@@ -188,7 +188,7 @@ final class Avex_Gateway extends WC_Payment_Gateway {
 		 */
 		$order->update_meta_data( '_avex_checkout_id', $checkout['id'] );
 		$order->update_meta_data( '_avex_mode', $this->key_mode() );
-		$order->update_status( 'pending', __( 'Waiting for the AVEX Pay checkout.', 'avex-pay' ) );
+		$order->update_status( 'pending', __( 'Waiting for the AVEX Pay checkout.', 'avex-pay-for-woocommerce' ) );
 		$order->save();
 
 		return array(
