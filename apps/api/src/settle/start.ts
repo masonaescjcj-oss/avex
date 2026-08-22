@@ -17,9 +17,8 @@ import { SettlementSource } from '../domain/settlement-source.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import type { Env } from '../env.js';
 import { JsonRpcCaller } from '../rpc/json-rpc-caller.js';
-import type { Mailer } from '../mailer.js';
 import { runLoop, type LoopHandle } from '../watch/loop.js';
-import { AlertForwarder } from './alerts.js';
+import type { AlertForwarder } from './alerts.js';
 import { SettlementCycle } from './cycle.js';
 
 /**
@@ -50,8 +49,14 @@ export interface StartSettlementInput {
   readonly prices: { nativePriceUsd(chain: ChainId): Promise<number> };
   /** The adapters the watcher already built, by chain. */
   readonly adapters: ReadonlyMap<ChainId, ChainAdapter>;
-  /** For operator alerts. The same transport every other message goes out through. */
-  readonly mailer: Mailer;
+  /**
+   * Where a critical alert goes, shared with the watcher.
+   *
+   * Passed in rather than built here so there is one throttle across the process: a gas wallet
+   * emptying and a cursor stalling are two conditions, and two forwarders would each have their
+   * own idea of how recently they had said something.
+   */
+  readonly alerts: AlertForwarder;
   readonly log: (message: string, data?: unknown) => void;
 }
 
@@ -84,7 +89,7 @@ export async function startSettlement(input: StartSettlementInput): Promise<read
   const feePolicy = new FeePolicy(DEFAULT_FEE_POLICY);
 
   /**
-   * Where a critical alert goes, and a line when the answer is nowhere.
+   * A line when critical alerts have nowhere to go.
    *
    * The conditions worth an email are the ones where money has already stopped moving: a gas
    * wallet that cannot cover a settlement, a nonce nothing can get past, a settlement that
@@ -92,13 +97,10 @@ export async function startSettlement(input: StartSettlementInput): Promise<read
    * alerting if somebody is watching the log.
    */
   if (env.OPERATOR_EMAIL === undefined) {
-    log('settlement alerts will not be emailed', {
+    log('alerts will not be emailed', {
       detail: 'set OPERATOR_EMAIL. Critical alerts will still be logged.',
     });
   }
-  const alerts = new AlertForwarder(input.mailer, env.OPERATOR_EMAIL, (message, data) =>
-    log(message, data),
-  );
 
   const handles: LoopHandle[] = [];
 
@@ -161,7 +163,7 @@ export async function startSettlement(input: StartSettlementInput): Promise<read
       source,
       store,
       gas: () => oracle.snapshot(chain),
-      alerts,
+      alerts: input.alerts,
       log: (message, data) => log(message, { chain, ...(data as object | undefined) }),
     });
 

@@ -112,7 +112,25 @@ export type SettleResult =
 
 export interface Alert {
   readonly severity: 'warning' | 'critical';
-  readonly kind: 'low_gas_balance' | 'stuck_transaction' | 'spend_cap' | 'reverted_settlement';
+  /**
+   * What the alert is about, as a stable key rather than prose.
+   *
+   * Whatever forwards these throttles on it, so the set has to be small and the members have to
+   * be conditions rather than events: two stuck transactions are one thing somebody needs to
+   * know about, and a key that varied with the detail would send a message every pass.
+   *
+   * The last two are the watcher's rather than the runner's — a cursor that has stopped advancing
+   * and a chain whose polls keep failing. They live here because there is one alert type in this
+   * codebase and one thing that forwards it, and a second of either would be the one nobody
+   * wired up.
+   */
+  readonly kind:
+    | 'low_gas_balance'
+    | 'stuck_transaction'
+    | 'spend_cap'
+    | 'reverted_settlement'
+    | 'watcher_stalled'
+    | 'watcher_failing';
   readonly detail: string;
 }
 

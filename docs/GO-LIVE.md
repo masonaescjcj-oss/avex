@@ -126,8 +126,12 @@ The same wallet pays gas. It needs a balance and an alarm on that balance.
   settlement, a nonce nothing can get past, a settlement that reverted — are emailed once per
   kind per fifteen minutes. Warnings stay in the log. Without the address everything is logged
   and settlement says so at startup.
-- Still to build: a watcher-cursor-falling-behind alert, and the price circuit breaker opening.
-  Both are visible in the admin panel and neither reaches out.
+- A cursor that stops advancing for ten minutes, or five failed polls in a row, is a critical
+  alert on the same address. That is the failure nobody reports: a payer's transfer confirms, the
+  merchant sees nothing, and each blames the other while every other signal looks healthy.
+- Still to build: an alert when the price circuit breaker opens. It is visible in the admin panel
+  and does not reach out — and unlike the others, a merchant does notice, because their checkout
+  starts refusing currencies.
 - Alerting on: watcher cursor falling behind, a settlement queue that stops draining, the price
   circuit breaker opening, the gas wallet running low.
 - Database backups with point-in-time recovery.

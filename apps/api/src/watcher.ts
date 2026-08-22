@@ -29,8 +29,10 @@ import { loadEnv } from './env.js';
 import { parseSmtpUrl } from './mail/smtp.js';
 import { ConsoleMailer, SmtpMailer } from './mailer.js';
 import { JsonRpcCaller } from './rpc/json-rpc-caller.js';
+import { AlertForwarder } from './settle/alerts.js';
 import { startSettlement } from './settle/start.js';
 import { DEFAULT_LOOP, runLoop } from './watch/loop.js';
+import { WatchHealth } from './watch/health.js';
 import { watchableChains } from './watch/watchable-chains.js';
 import type { LoopHandle } from './watch/loop.js';
 
@@ -198,6 +200,20 @@ async function main(): Promise<void> {
         ...(row.contract === null ? {} : { contract: row.contract }),
       }));
 
+  /**
+   * Whether the watcher is actually watching, and somewhere to say so.
+   *
+   * The alert forwarder is built here rather than inside settlement because a stalled cursor is
+   * the worst failure this process has and it happens whether or not anything settles: nobody
+   * complains, because from a payer's side the transfer confirmed and from a merchant's side the
+   * payer is at fault. One forwarder for both, so a critical alert has one throttle and one
+   * destination.
+   */
+  const health = new WatchHealth();
+  const alerts = new AlertForwarder(mailer, env.OPERATOR_EMAIL, (message, data) =>
+    log(message, data),
+  );
+
   const handles: LoopHandle[] = [];
   /**
    * The adapters, kept as they are built.
@@ -328,14 +344,23 @@ async function main(): Promise<void> {
           if (outcome.credited > 0 || outcome.reversed > 0 || outcome.reorg) {
             log('poll', { ...outcome });
           }
+          /**
+           * And whether the cursor is moving, which is the thing nobody would otherwise notice.
+           *
+           * Fire and forget: the forwarder never throws, and a poll must not wait on a mail
+           * server. `void` rather than an await because this hook is synchronous by design — the
+           * loop's next pass should not be delayed by reporting on the last one.
+           */
+          const alert = health.observed(chain, outcome.scannedTo);
+          if (alert) void alerts.forward([alert]);
         },
         onError: (error, consecutive) => {
-          log('poll failed', {
-            chain,
-            consecutive,
-            detail: error instanceof Error ? error.message : String(error),
-          });
-          void state.recordError(chain, error instanceof Error ? error.message : String(error));
+          const detail = error instanceof Error ? error.message : String(error);
+          log('poll failed', { chain, consecutive, detail });
+          void state.recordError(chain, detail);
+
+          const alert = health.failed(chain, consecutive, detail);
+          if (alert) void alerts.forward([alert]);
         },
       }),
     );
@@ -360,7 +385,8 @@ async function main(): Promise<void> {
     db,
     prices,
     adapters,
-    mailer,
+    // The same forwarder the watcher uses, so one throttle covers every critical alert.
+    alerts,
     log,
   });
   handles.push(...settlementHandles);
