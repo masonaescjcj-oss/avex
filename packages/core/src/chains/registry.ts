@@ -14,35 +14,6 @@ export type SettlementProfile =
       readonly gasFlushNative: number;
     }
   | {
-      readonly kind: 'tron';
-      /**
-       * Energy for the settlement we actually perform: deploy the forwarder and flush it.
-       *
-       * This replaced a single `energyPerTransfer: 65_000`, which was the cost of a bare
-       * TRC-20 `transfer` — the *payer's* transaction, not ours. Ours deploys a contract in
-       * the same transaction that empties it, exactly as on EVM, and a contract deployment
-       * pays for its own code at a fixed rate per byte on top of execution. Budgeting a
-       * deploy at the price of a transfer understates our own cost by roughly six times, and
-       * it is the number the minimum-invoice calculation is built on.
-       *
-       * TVM executes the same bytecode as the EVM and charges energy per opcode where the EVM
-       * charges gas, so this is the repository's measured EVM figure carried across rather
-       * than a second guess. It is still an estimate: nothing here has run against a TRON
-       * node. Measure on Nile before this decides what a merchant is charged.
-       */
-      readonly energyDeployAndFlush: number;
-      /** Flushing a forwarder that already exists — a second payment to the same address. */
-      readonly energyFlushOnly: number;
-      /**
-       * Bandwidth points per transaction, priced by the network at a fixed 1000 SUN each.
-       *
-       * Small next to energy and deliberately still counted: the free daily allowance is 600
-       * points per account, which one settlement spends, so in production this is paid on
-       * every transaction rather than covered.
-       */
-      readonly bandwidthPerTransfer: number;
-    }
-  | {
       readonly kind: 'solana';
       readonly signaturesPerFlush: number;
       /** Lamports locked as rent for an associated token account. Refundable. */
@@ -156,19 +127,17 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
   tron: {
     chain: 'tron',
     displayName: 'TRON',
-    addressModel: 'unique',
+    // Pooled: a few of the merchant's own addresses, the exact amount names the invoice.
+    // Why, and what it costs, in `chains/tron/TronAdapter.ts`.
+    addressModel: 'pooled',
     // Base58Check. See `addressCase` above; `tron/address.ts` is the codec.
     addressCase: 'sensitive',
     nativeSymbol: 'TRX',
     nativeDecimals: 6,
     // TRON blocks are irreversible after 19 confirmations (2/3+1 of 27 SRs).
     confirmations: { standard: 19, highValue: 19, highValueThresholdUsd: 10_000 },
-    settlement: {
-      kind: 'tron',
-      energyDeployAndFlush: EVM_GAS_DEPLOY_AND_FLUSH,
-      energyFlushOnly: EVM_GAS_FLUSH_ONLY,
-      bandwidthPerTransfer: 350,
-    },
+    // Nothing to settle: the payer's transfer already reached the merchant's own wallet.
+    settlement: { kind: 'direct' },
   },
 
   solana: {

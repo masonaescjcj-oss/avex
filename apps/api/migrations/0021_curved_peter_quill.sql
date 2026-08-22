@@ -1,0 +1,18 @@
+CREATE TABLE "deposit_wallets" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"organization_id" uuid NOT NULL,
+	"chain" text NOT NULL,
+	"address" text NOT NULL,
+	"label" text,
+	"retired_at" timestamp with time zone,
+	"created_by_user_id" uuid,
+	"pending_change_id" uuid,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+ALTER TABLE "deposit_wallets" ADD CONSTRAINT "deposit_wallets_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "deposit_wallets" ADD CONSTRAINT "deposit_wallets_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "deposit_wallets" ADD CONSTRAINT "deposit_wallets_pending_change_id_pending_changes_id_fk" FOREIGN KEY ("pending_change_id") REFERENCES "public"."pending_changes"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "deposit_wallets_address_key" ON "deposit_wallets" USING btree ("organization_id","chain","address");--> statement-breakpoint
+CREATE INDEX "deposit_wallets_pool_idx" ON "deposit_wallets" USING btree ("organization_id","chain") WHERE "deposit_wallets"."retired_at" is null;--> statement-breakpoint
+CREATE INDEX "deposit_wallets_address_idx" ON "deposit_wallets" USING btree ("chain","address");

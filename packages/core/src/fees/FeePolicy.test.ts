@@ -75,65 +75,30 @@ test('TON settles for free and carries only the absolute floor', () => {
   assert.equal(policy.minInvoiceUsd(snapshot), DEFAULT_FEE_POLICY.absoluteMinUsd);
 });
 
-test('TRON settlement is never free, whatever the energy comes from', () => {
+test('TRON settles for nothing, because nothing is sent', () => {
   /**
-   * This test used to assert the opposite — that delegated energy costs nothing — and that
-   * assertion is why the bug survived. Staked TRX yields a finite daily allowance, so a
-   * settlement spends a scarce thing whether or not TRX is burned for it. Zero is the one
-   * answer that is definitely wrong: it makes the minimum-invoice figure zero too, and every
-   * dust invoice on TRON then looks profitable.
+   * This test has been three things, and the history is the point.
+   *
+   * It first asserted that delegated energy made a TRON settlement free. That was wrong: we
+   * were sending a transaction, and staked TRX buys a finite daily allowance rather than an
+   * unlimited supply, so the cost was real and the zero made the minimum invoice on this chain
+   * zero too. It then asserted a price for that energy, from one of three supply models.
+   *
+   * Now it asserts zero again — and this time it is true for a different reason. TRON is a
+   * pooled chain: the deposit addresses are the merchant's own, so the payer's transfer is the
+   * only transaction and we send nothing at all. A zero that follows from there being no
+   * transaction is not the same claim as a zero that follows from having prepaid for one.
    */
-  const snapshot: GasSnapshot = {
-    chain: 'tron',
-    nativePriceUsd: 0.3,
-    sunPerEnergy: 420,
-    observedAt: 0,
-  };
+  const snapshot: GasSnapshot = { chain: 'tron', nativePriceUsd: 0.3, observedAt: 0 };
+  const policy = new FeePolicy();
 
-  const burning = new FeePolicy({ ...DEFAULT_FEE_POLICY, tronEnergy: { source: 'burn' } });
-  const rented = new FeePolicy({
-    ...DEFAULT_FEE_POLICY,
-    tronEnergy: { source: 'rented', sunPerEnergy: 42 },
-  });
-  const staked = new FeePolicy({
-    ...DEFAULT_FEE_POLICY,
-    tronEnergy: { source: 'staked', sunPerEnergy: 20 },
-  });
+  const cost = policy.settlementCostUsd(snapshot);
+  assert.equal(cost.usd, 0);
+  assert.equal(policy.minInvoiceUsd(snapshot), DEFAULT_FEE_POLICY.absoluteMinUsd);
 
-  for (const [name, policy] of [
-    ['burn', burning],
-    ['rented', rented],
-    ['staked', staked],
-  ] as const) {
-    assert.ok(policy.settlementCostUsd(snapshot).usd > 0, `${name} must cost something`);
-  }
-
-  /**
-   * And the ordering is the whole point of the field: a cheaper energy source lowers the cost
-   * and therefore the smallest invoice we can take on TRON. If this ordering ever inverts,
-   * the arithmetic is wrong rather than the configuration.
-   */
-  assert.ok(rented.settlementCostUsd(snapshot).usd < burning.settlementCostUsd(snapshot).usd);
-  assert.ok(staked.settlementCostUsd(snapshot).usd < rented.settlementCostUsd(snapshot).usd);
-  assert.ok(staked.minInvoiceUsd(snapshot) < burning.minInvoiceUsd(snapshot));
-});
-
-test('TRON with a burned-energy price missing is an error, not a free settlement', () => {
-  /**
-   * The snapshot is the live source for the burn price. If it arrives without one — a probe
-   * that failed, a stub in a test — the only safe answer is to refuse: a substituted default
-   * would put a made-up number underneath a merchant's minimum invoice.
-   */
-  const noPrice: GasSnapshot = { chain: 'tron', nativePriceUsd: 0.3, observedAt: 0 };
-  const burning = new FeePolicy({ ...DEFAULT_FEE_POLICY, tronEnergy: { source: 'burn' } });
-  assert.throws(() => burning.settlementCostUsd(noPrice), /sunPerEnergy required/);
-
-  // A stated price needs no snapshot, which is the point of stating it.
-  const rented = new FeePolicy({
-    ...DEFAULT_FEE_POLICY,
-    tronEnergy: { source: 'rented', sunPerEnergy: 42 },
-  });
-  assert.ok(rented.settlementCostUsd(noPrice).usd > 0);
+  // And no live gas figure is needed to say so, which is the observable difference: the old
+  // burn path threw without `sunPerEnergy`.
+  assert.doesNotThrow(() => policy.settlementCostUsd(snapshot));
 });
 
 test('checkout ranking puts the cheapest chain first and drops the unaffordable', () => {

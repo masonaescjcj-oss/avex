@@ -1,4 +1,5 @@
 import type { ChainAdapter, SettlementRequest, SettlementResult } from '../chains/ChainAdapter.js';
+import { chainConfig } from '../chains/registry.js';
 import type { FeePolicy } from '../fees/FeePolicy.js';
 import type { ChainId } from '../types.js';
 
@@ -58,8 +59,17 @@ export class SettlementQueue {
     const adapter = this.adapters.get(request.asset.chain);
     if (!adapter) throw new Error(`no adapter for chain ${request.asset.chain}`);
 
-    // Shared-memo chains have already delivered the funds to the merchant.
-    if (adapter.addressModel === 'shared-memo') {
+    /**
+     * Chains that settle on receipt have nothing to enqueue.
+     *
+     * Asked of the registry rather than of the address model, because two different models
+     * answer yes and for the same reason: TON's one shared address and TRON's pool of the
+     * merchant's own addresses both receive the payer's transfer directly, so the funds are
+     * already where they are going. Keying off `addressModel === 'shared-memo'` — which is what
+     * this did — silently enqueued every pooled invoice for a sweep that has no signer, no
+     * destination different from the one it is already at, and nothing to move.
+     */
+    if (chainConfig(adapter.chain).settlement.kind === 'direct') {
       this.log(`${request.invoiceId}: ${adapter.chain} settles on receipt, not enqueued`);
       return;
     }

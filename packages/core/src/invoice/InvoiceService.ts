@@ -204,6 +204,25 @@ export class InvoiceService {
     if (adapter.addressModel === 'shared-memo') {
       return payment.memo ? this.store.findByMemo(payment.chain, payment.memo) : null;
     }
+
+    /**
+     * Pooled chains are refused here rather than matched by address.
+     *
+     * On a pooled chain many open invoices share one address and the amount is what names
+     * them, so `findByDepositAddress` would return whichever the store found first — a payment
+     * credited to the wrong invoice, silently, on the chain that is expected to carry the most
+     * volume. `InvoiceStore` has no method that could answer the real question, and inventing
+     * one here would be speculative: the production path is `DatabasePaymentSink`, which does
+     * the amount matching and the ambiguity rules against SQL. This service is exercised only
+     * by its own tests today, so the honest thing is to fail loudly if that ever changes.
+     */
+    if (adapter.addressModel === 'pooled') {
+      throw new Error(
+        `${payment.chain} is a pooled chain; matching needs the amount and belongs in the ` +
+          'database sink, not InvoiceService',
+      );
+    }
+
     return this.store.findByDepositAddress(payment.chain, payment.to);
   }
 

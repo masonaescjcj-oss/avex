@@ -6,6 +6,17 @@ import * as schema from './schema.js';
 export type Database = ReturnType<typeof createDatabase>['db'];
 
 /**
+ * The handle inside `db.transaction(async (tx) => …)`.
+ *
+ * Named so a service can take one as a parameter. Most here do their work in a callback and
+ * let the type be inferred, which is fine when the transaction begins and ends in one method.
+ * It is not fine when a method's guarantee depends on the caller's transaction still being
+ * open — the wallet allocator holds an advisory lock for exactly that reason — and a parameter
+ * is how that requirement gets stated in the signature instead of in a comment.
+ */
+export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
+
+/**
  * Whether this connection string points at a transaction-mode pooler.
  *
  * A guess, and a deliberately narrow one: the two markers below are what managed Postgres

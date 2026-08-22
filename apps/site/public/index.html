@@ -1523,19 +1523,17 @@ const CHAINS = {
     tron: {
         chain: 'tron',
         displayName: 'TRON',
-        addressModel: 'unique',
+        // Pooled: a few of the merchant's own addresses, the exact amount names the invoice.
+        // Why, and what it costs, in `chains/tron/TronAdapter.ts`.
+        addressModel: 'pooled',
         // Base58Check. See `addressCase` above; `tron/address.ts` is the codec.
         addressCase: 'sensitive',
         nativeSymbol: 'TRX',
         nativeDecimals: 6,
         // TRON blocks are irreversible after 19 confirmations (2/3+1 of 27 SRs).
         confirmations: { standard: 19, highValue: 19, highValueThresholdUsd: 10_000 },
-        settlement: {
-            kind: 'tron',
-            energyDeployAndFlush: EVM_GAS_DEPLOY_AND_FLUSH,
-            energyFlushOnly: EVM_GAS_FLUSH_ONLY,
-            bandwidthPerTransfer: 350,
-        },
+        // Nothing to settle: the payer's transfer already reached the merchant's own wallet.
+        settlement: { kind: 'direct' },
     },
     solana: {
         chain: 'solana',

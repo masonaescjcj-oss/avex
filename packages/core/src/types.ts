@@ -33,7 +33,24 @@ export type ChainId =
  *                  field. Strictly better where available — zero settlement cost,
  *                  because funds land directly in the destination wallet.
  */
-export type AddressModel = 'unique' | 'shared-memo';
+/**
+ * How a chain tells one invoice's payment from another's.
+ *
+ * `unique` — one address per invoice, derived so that funds sent there can only reach the
+ * merchant. EVM and Solana.
+ *
+ * `shared-memo` — one address for everything, and the payer's transfer carries a comment
+ * naming the invoice. TON.
+ *
+ * `pooled` — a handful of the merchant's own addresses, and the invoice is named by the exact
+ * amount it asks for. TRON, because TRC-20 transfers carry no memo and a per-invoice contract
+ * pays for its own code on every first sweep. The payer's transfer lands in the merchant's
+ * wallet directly, so there is no settlement transaction at all — which is what makes it the
+ * cheapest model on that chain rather than merely the cheapest-looking one. The cost is that
+ * two payers on one address who both send the wrong amount cannot be told apart, and that case
+ * goes to a human.
+ */
+export type AddressModel = 'unique' | 'shared-memo' | 'pooled';
 
 export type AssetKind = 'native' | 'erc20' | 'trc20' | 'spl' | 'jetton';
 

@@ -148,6 +148,20 @@
       "when": 1787126870793,
       "tag": "0020_new_carnage",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1787374513740,
+      "tag": "0021_curved_peter_quill",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1787374831307,
+      "tag": "0022_careful_hitman",
+      "breakpoints": true
     }
   ]
 }

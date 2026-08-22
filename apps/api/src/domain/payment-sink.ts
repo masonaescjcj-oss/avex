@@ -1,6 +1,7 @@
 import type { IncomingPayment, PaymentSink } from '@avex/core';
-import { addressKey, foldsAddressCase, requiredConfirmations } from '@avex/core';
+import { addressKey, chainConfig, foldsAddressCase, requiredConfirmations } from '@avex/core';
 import { and, eq, isNull, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
 import { invoices, payments } from '../db/schema.js';
@@ -253,19 +254,84 @@ export class DatabasePaymentSink implements PaymentSink {
      * `addressKey` decides; the address book asks it the same question.
      */
     const key = addressKey(payment.chain, payment.to);
-    const [byAddress] = await this.db
+    const atAddress = and(
+      eq(invoices.chain, payment.chain),
+      foldsAddressCase(payment.chain)
+        ? sql`lower(${invoices.depositAddress}) = ${key}`
+        : eq(invoices.depositAddress, key),
+    );
+
+    /**
+     * On a pooled chain the address is not the identity; the exact amount is.
+     *
+     * Several open invoices share one of the merchant's own wallets, each asking for a slightly
+     * different amount. Looking up by address alone — which is what every other chain does and
+     * what this method did — would return whichever row Postgres found first and credit a
+     * stranger's payment to it. That is why this branch exists rather than a comment warning
+     * about it.
+     */
+    if (chainConfig(payment.chain).addressModel === 'pooled') {
+      return this.matchPooled(payment, atAddress);
+    }
+
+    const [byAddress] = await this.db.select().from(invoices).where(atAddress).limit(1);
+    return byAddress ?? null;
+  }
+
+  /**
+   * Which invoice a payment to a pooled wallet belongs to.
+   *
+   * Three outcomes, in the order they are tried, and the third is the interesting one.
+   *
+   * 1. **An open invoice asks for exactly this amount.** The ordinary case, and unambiguous:
+   *    every open invoice on a wallet is given a distinct amount for precisely this lookup.
+   *
+   * 2. **No exact match, and exactly one invoice is open here.** The payer sent the wrong
+   *    amount — their exchange rounded the withdrawal, or they typed the round number — and
+   *    there is only one invoice it could be for. Credited, and the existing over/under
+   *    classification records the difference: an underpayment keeps the shortfall rather than
+   *    failing, because real money arrived and saying otherwise would be a lie. This is what
+   *    the allocator's preference for idle wallets buys.
+   *
+   * 3. **No exact match and more than one invoice open here.** Nothing on the chain says which
+   *    of them this was for, so nothing here guesses. Returning null sends it to the unmatched
+   *    queue for an operator, which is where the payer's support ticket will meet it.
+   *
+   * Note what case 3 does *not* do: wait. An earlier sketch had it hold the payment in the hope
+   * that the other invoices would be settled by exact matches and leave only one candidate.
+   * That is a real and useful inference, but it is a later pass over the queue rather than a
+   * decision at receive time — a `credit` call that returns "come back later" would either
+   * block the watcher's poll or silently drop the transfer.
+   */
+  private async matchPooled(payment: IncomingPayment, atAddress: SQL | undefined) {
+    const open = await this.db
       .select()
       .from(invoices)
-      .where(
-        and(
-          eq(invoices.chain, payment.chain),
-          foldsAddressCase(payment.chain)
-            ? sql`lower(${invoices.depositAddress}) = ${key}`
-            : eq(invoices.depositAddress, key),
-        ),
-      )
-      .limit(1);
-    return byAddress ?? null;
+      .where(and(atAddress, sql`${invoices.status} in ('pending', 'confirming')`));
+
+    const exact = open.filter((invoice) => BigInt(invoice.amountDue) === payment.amount);
+    /**
+     * More than one exact match should be impossible, and is treated as ambiguous rather than
+     * resolved arbitrarily.
+     *
+     * The allocator's lock is what makes it impossible; a bug there, or rows written by
+     * something else, would produce two invoices at one amount. Taking the first would credit a
+     * coin flip. This is the assertion that turns that bug into an operator's queue item.
+     */
+    if (exact.length === 1) return exact[0]!;
+    if (exact.length > 1) return null;
+
+    if (open.length === 1) return open[0]!;
+
+    /**
+     * Zero open invoices is not the same as several, but the answer is the same.
+     *
+     * A payment to a pooled wallet with nothing open is most likely a late payer whose invoice
+     * expired — still their money, still needing a human. `invoices.status` excludes expired
+     * rows here deliberately: crediting an expired invoice automatically would let a payment
+     * arriving days later reopen a settled order.
+     */
+    return null;
   }
 
   private async amountPaid(invoiceId: string): Promise<string> {

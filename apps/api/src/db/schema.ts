@@ -653,7 +653,105 @@ export const payoutAddresses = pgTable(
   ],
 );
 
+/**
+ * The wallet pool for shared-address chains.
+ *
+ * TRC-20 has no memo field, which is the whole reason this table exists. On EVM each invoice
+ * gets its own address, derived by CREATE2 from the merchant's payout address so that funds
+ * sent to it can only reach them; on TON one address serves every invoice because the payer's
+ * transfer carries a comment that names it. TRON has neither. A per-invoice forwarder there
+ * pays for its own contract code on every first sweep, and a single address cannot tell two
+ * payers apart.
+ *
+ * So: a handful of the merchant's *own* addresses, and an invoice is identified by the exact
+ * amount it asks for rather than by its address or a memo. The payer's transfer lands directly
+ * in the merchant's wallet — there is no sweep, no settlement transaction, and no window in
+ * which anybody but the merchant controls the funds. That is what makes it the cheapest option
+ * on this chain rather than merely the cheapest-looking one.
+ *
+ * Separate from `payout_addresses` deliberately. That table holds at most one active address
+ * per chain — enforced by a partial unique index — because an EVM forwarder's address is a
+ * hash over exactly one destination, and relaxing it would make "which address did this
+ * invoice commit to" unanswerable. Here the plural is the point.
+ *
+ * A wallet is added through the same delayed change as a payout address (`payout_address:write`,
+ * 24 hours) and for the same reason: this is a place money lands, so an attacker holding a
+ * session must not be able to add their own and start receiving payments before anybody looks.
+ */
+export const depositWallets = pgTable(
+  'deposit_wallets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    chain: text('chain').notNull(),
+    /** Stored in the chain's canonical form — Base58Check on TRON, never case-folded. */
+    address: text('address').notNull(),
+    /** The merchant's own name for it, so a support conversation can refer to one. */
+    label: text('label'),
+
+    /**
+     * Retired rather than deleted, and still matched against.
+     *
+     * A wallet taken out of the pool stops being handed to new invoices, but invoices already
+     * pointing at it are still open and payments to it are still that merchant's money. A
+     * deleted row would turn every one of those into an unmatched payment.
+     */
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    /** The delayed change this wallet came from. Null only for the first, seeded set. */
+    pendingChangeId: uuid('pending_change_id').references(() => pendingChanges.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    /**
+     * One row per address per organisation, retired or not.
+     *
+     * Not partial on `retired_at`: re-adding a wallet that was retired must revive that row
+     * rather than insert a second one, because two rows for one address would let the
+     * allocator believe it has two independent wallets and hand the same address to two
+     * invoices as though they were on separate ones.
+     */
+    uniqueIndex('deposit_wallets_address_key').on(
+      table.organizationId,
+      table.chain,
+      table.address,
+    ),
+    // The allocator's query: this organisation's live wallets on one chain.
+    index('deposit_wallets_pool_idx')
+      .on(table.organizationId, table.chain)
+      .where(sql`${table.retiredAt} is null`),
+    /**
+     * And the watcher's: which organisation owns this address.
+     *
+     * Across organisations, because a transfer arrives with an address and nothing else. Two
+     * merchants could in principle register the same address — they are their own wallets, and
+     * nothing stops a reseller from using one for two accounts — so this is an index rather
+     * than a unique constraint, and the amount is what separates the invoices either way.
+     */
+    index('deposit_wallets_address_idx').on(table.chain, table.address),
+  ],
+);
+
 // ── Invoices and observed payments ────────────────────────────────────────────
+
+/**
+ * Chains whose deposit addresses are pooled, as SQL.
+ *
+ * Needed as a literal because a partial index's predicate must be immutable — it cannot call
+ * into the application to ask which chains are pooled. `db/schema.pooled.test.ts` asserts this
+ * list equals the chains the registry marks `addressModel: 'pooled'`, so adding one there
+ * without a migration here is a failing test rather than a unique-constraint violation on the
+ * second invoice.
+ */
+export const POOLED_CHAINS = ['tron'] as const;
+const POOLED_CHAINS_SQL = sql`array['tron']::text[]`;
 
 export const invoiceStatusEnum = pgEnum('invoice_status', [
   'pending',
@@ -749,10 +847,20 @@ export const invoices = pgTable(
      * and the memo is what distinguishes them. A blanket unique index on (chain,
      * address) makes those chains unusable after their very first invoice, which is
      * exactly what it did until a TON test caught it.
+     *
+     * And on a *pooled* chain many invoices share each of a handful of addresses with no memo
+     * at all — the exact amount is what names them. So those chains are excluded here too.
+     * Their invariant is "no two *open* invoices on one address ask for the same amount", which
+     * no index can express: `status in ('pending','confirming')` is not immutable, so Postgres
+     * refuses to index on it. It is held instead by `WalletPoolService.allocate`, which
+     * serialises allocations per (organisation, chain) with a transaction-scoped advisory lock
+     * and re-reads the open amounts inside it. Naming the chains in SQL duplicates a fact the
+     * chain registry already owns, so `POOLED_CHAINS` below is checked against the registry by
+     * a test rather than left to agree by luck.
      */
     uniqueIndex('invoices_chain_deposit_key')
       .on(table.chain, table.depositAddress)
-      .where(sql`${table.memo} is null`),
+      .where(sql`${table.memo} is null and ${table.chain} <> all(${POOLED_CHAINS_SQL})`),
     /**
      * And the memo carries the same weight there that the address does elsewhere: two
      * invoices on one shared wallet with the same memo could not be told apart, so a

@@ -30,51 +30,7 @@ export interface FeePolicyConfig {
    */
   readonly deferAboveUsd: Readonly<Record<ChainId, number>>;
 
-  /** Where TRON energy comes from, and what it costs us. See `TronEnergySupply`. */
-  readonly tronEnergy: TronEnergySupply;
 }
-
-/**
- * How this deployment pays for TRON energy.
- *
- * There are three ways and they differ by a factor of ten, which is why "add TRON cheaply" is
- * a question about this field and not about the adapter.
- *
- * The previous version of this was a boolean, `tronEnergyDelegation`, and when it was true the
- * settlement cost was reported as **$0** — "the cost is staked TRX, not burned per transfer".
- * That reasoning is half right and the conclusion is wrong in the direction that loses money.
- * Staked TRX yields a *daily allowance* of energy, not an unlimited supply: every settlement
- * spends a share of a finite quota, and once the day's quota is gone the next settlement
- * either fails or falls back to burning TRX at the network's full price. Priced at zero, the
- * fee policy will happily accept invoices whose settlement costs more than they earn, and the
- * minimum-invoice figure — the one number standing between us and losing money on small
- * payments — is computed from it.
- *
- * So every source carries a price, and there is no way to spell "free".
- */
-export type TronEnergySupply =
-  /**
-   * Burn TRX per transaction, at whatever the network charges. The honest fallback and the
-   * most expensive: the price comes from `GasSnapshot.sunPerEnergy`, live.
-   */
-  | { readonly source: 'burn' }
-  /**
-   * Rent energy from a provider for the length of the transaction. Usually the cheapest way
-   * to run a gateway, because the capital stays with the provider — but the price is a market
-   * and belongs in configuration, not in this file.
-   */
-  | { readonly source: 'rented'; readonly sunPerEnergy: number }
-  /**
-   * Our own staked TRX, delegated to the settlement account.
-   *
-   * `sunPerEnergy` here is an amortised figure the operator states: the carrying cost of the
-   * staked TRX divided by the energy it yields over the same period. It is not zero, and this
-   * type will not let it be omitted.
-   */
-  | { readonly source: 'staked'; readonly sunPerEnergy: number };
-
-/** Bandwidth is priced by the network itself, and not by us. */
-const SUN_PER_BANDWIDTH_POINT = 1_000;
 
 export const DEFAULT_FEE_POLICY: FeePolicyConfig = {
   targetFeeRatio: 0.01,
@@ -87,14 +43,6 @@ export const DEFAULT_FEE_POLICY: FeePolicyConfig = {
     solana: 0.01,
     ton: 0,
   },
-  /**
-   * Burning, as the default, because it is the only source that needs no local knowledge.
-   *
-   * A deployment that has staked or rented should say so — that is the cheap path and it
-   * lowers the minimum invoice. Defaulting *to* the cheap path would mean a deployment that
-   * has arranged nothing quotes prices as though it had.
-   */
-  tronEnergy: { source: 'burn' },
 };
 
 export interface ChainAvailability {
@@ -142,33 +90,6 @@ export class FeePolicy {
           detail:
             `${profile.gasDeployAndFlushToken} gas (CREATE2 deploy + flush) ` +
             `@ ${gwei.toFixed(4)} gwei`,
-        };
-      }
-
-      case 'tron': {
-        const supply = this.config.tronEnergy;
-        /**
-         * The burn price is live and the other two are stated, and neither may be missing.
-         *
-         * Throwing rather than substituting a default: a settlement cost quietly computed
-         * from a made-up energy price is the same failure as the $0 this replaced, only
-         * harder to spot.
-         */
-        const sunPerEnergy =
-          supply.source === 'burn' ? snapshot.sunPerEnergy : supply.sunPerEnergy;
-        if (sunPerEnergy === undefined) {
-          throw new Error('tron: GasSnapshot.sunPerEnergy required when energy is burned');
-        }
-
-        const energy = profile.energyDeployAndFlush;
-        const bandwidthSun = profile.bandwidthPerTransfer * SUN_PER_BANDWIDTH_POINT;
-        const trx = (energy * sunPerEnergy + bandwidthSun) / 1e6;
-        return {
-          chain: 'tron',
-          usd: trx * price,
-          detail:
-            `${energy} energy (CREATE2 deploy + flush) @ ${sunPerEnergy} SUN ` +
-            `${supply.source} + ${profile.bandwidthPerTransfer} bandwidth`,
         };
       }
 
