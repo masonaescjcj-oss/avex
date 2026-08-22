@@ -163,7 +163,7 @@ supabase secrets set --env-file .env.production
 ```
 
 Set on the function: `DATABASE_URL` (pooled), `DIRECT_DATABASE_URL`, `APP_URL`,
-`MEMO_SECRET`, `FORWARDER_FACTORIES`, `FORWARDER_IMPLEMENTATIONS`, `FEE_COLLECTORS`,
+`MEMO_SECRET`, `SMTP_URL`, `MAIL_FROM`, `FORWARDER_FACTORIES`, `FORWARDER_IMPLEMENTATIONS`, `FEE_COLLECTORS`,
 `EVM_RPC_URLS`, `CRON_SECRET`, and `RUN_JOBS_IN_PROCESS=false`.
 
 Do **not** set `SETTLEMENT_KEY_HEX` here. Nothing in this process sweeps funds, so it has no

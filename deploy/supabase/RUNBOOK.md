@@ -55,6 +55,8 @@ Secrets — `supabase secrets set KEY=value`, or `--env-file`:
 | `CRON_SECRET` | 32+ random bytes, for the scheduler hook |
 | `RUN_JOBS_IN_PROCESS` | `false` |
 | `FORWARDER_FACTORIES` | `bsc=0x…` once the factory is deployed |
+| `SMTP_URL` | `smtps://user:pass@host:465` — **required in production**: without it nothing is emailed and the console transport logs instead |
+| `MAIL_FROM` | the address mail comes from, on a domain with SPF and DKIM set up |
 | `FORWARDER_IMPLEMENTATIONS` | `chain=address` of the deployed `ForwarderLogic` every deposit address delegates to |
 | `FEE_COLLECTORS` | `bsc=0x…` |
 | `EVM_RPC_URLS` | `bsc=https://…,https://…` — several, they geofence |

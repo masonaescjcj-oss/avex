@@ -1,4 +1,14 @@
 import type { Role } from './domain/rbac.js';
+import {
+  emailAlreadyRegistered,
+  emailVerification,
+  memberInvite,
+  membershipRevoked,
+  payoutChangeQueued,
+  roleChanged,
+  type MailMessage,
+} from './mail/templates.js';
+import { sendMail, type SmtpConfig } from './mail/smtp.js';
 
 /**
  * Transactional email.
@@ -48,116 +58,127 @@ export interface Mailer {
   ): Promise<void>;
 }
 
-/** Development transport: records messages and logs them, sends nothing. */
-export class ConsoleMailer implements Mailer {
-  readonly sent: { to: string; subject: string; body: string }[] = [];
+/**
+ * What every transport shares: one composition of every message, and one place to send it.
+ *
+ * The copy used to live in `ConsoleMailer`, which was fine while that was the only transport.
+ * A second one would have meant a second copy of a hundred lines of wording — and the copy
+ * that drifts is the one nobody reads, which here would be the one real merchants receive.
+ * So a transport now implements `deliver` and inherits every message.
+ */
+export abstract class ComposedMailer implements Mailer {
+  constructor(protected readonly appUrl: string) {}
 
-  constructor(
-    private readonly appUrl: string,
-    private readonly log: (message: string) => void = console.log,
-  ) {}
+  protected abstract deliver(to: string, message: MailMessage): Promise<void>;
 
-  private record(to: string, subject: string, body: string): void {
-    this.sent.push({ to, subject, body });
-    this.log(`[mail] to=${to} subject="${subject}"\n${body}`);
-  }
-
-  /**
-   * The link has to land on a page that exists.
-   *
-   * The dashboard is one page and reads what it should do from its query — `?signup=1` opens
-   * the signup form, `?verify=` spends a token — so this points there rather than at a
-   * `/verify-email` route nothing serves. It pointed at one for a while, and the effect was
-   * that every real signup ended on a 404 with the address left unconfirmed.
-   */
   async sendEmailVerification(email: string, token: string): Promise<void> {
-    this.record(
-      email,
-      'Confirm your email address',
-      `Confirm your email to finish setting up AVEX Pay:\n${this.appUrl}/dashboard?verify=${encodeURIComponent(token)}`,
-    );
+    await this.deliver(email, emailVerification(this.appUrl, token));
   }
 
   async sendEmailAlreadyRegisteredNotice(email: string): Promise<void> {
-    this.record(
-      email,
-      'Someone tried to sign up with your email',
-      `Someone attempted to create an AVEX Pay account with this address. If it was you, sign in instead: ${this.appUrl}/dashboard`,
-    );
+    await this.deliver(email, emailAlreadyRegistered(this.appUrl));
   }
 
   async sendMemberInvite(
     email: string,
     details: { organizationName: string; role: Role; token: string; expiresAt: Date },
   ): Promise<void> {
-    this.record(
-      email,
-      `You have been invited to ${details.organizationName} on AVEX Pay`,
-      [
-        `You were invited to join ${details.organizationName} as ${details.role}.`,
-        '',
-        // Accepting needs an account for this address, so the link says so rather than
-        // dropping somebody on a sign-in form with no idea which account to use.
-        `Accept it with the account for ${email} — create one if you do not have it yet:`,
-        `${this.appUrl}/dashboard?invite=${encodeURIComponent(details.token)}`,
-        '',
-        `This invitation expires ${details.expiresAt.toISOString()}.`,
-      ].join('\n'),
-    );
+    await this.deliver(email, memberInvite(this.appUrl, email, details));
   }
 
   async sendMembershipRevoked(email: string, details: { organizationId: string }): Promise<void> {
-    this.record(
-      email,
-      'Your access to an AVEX Pay organisation was removed',
-      [
-        'Your membership of an organisation on AVEX Pay has been removed, so you no longer',
-        'have access to its dashboard.',
-        '',
-        // The one thing they might reasonably want to check: their own account is intact.
-        'Your account itself is unchanged. If this was not expected, speak to whoever runs',
-        `that organisation. Reference: ${details.organizationId}`,
-      ].join('\n'),
-    );
+    await this.deliver(email, membershipRevoked(details));
   }
 
   async sendRoleChanged(
     email: string,
     details: { organizationId: string; from: Role; to: Role },
   ): Promise<void> {
-    this.record(
-      email,
-      'What you can do on AVEX Pay has changed',
-      [
-        `Your role changed from ${details.from} to ${details.to}.`,
-        '',
-        // Both ends, because "you are now an admin" reads as a promotion either way and the
-        // recipient is the person best placed to notice if it was not.
-        'If that is not what you expected, speak to whoever runs that organisation.',
-        `Reference: ${details.organizationId}`,
-        '',
-        `${this.appUrl}/dashboard?tab=team`,
-      ].join('\n'),
-    );
+    await this.deliver(email, roleChanged(this.appUrl, details));
   }
 
   async sendPayoutChangeQueued(
     email: string,
     details: { chain: string; newAddress: string; effectiveAt: Date },
   ): Promise<void> {
-    this.record(
-      email,
-      'Payout address change scheduled',
-      [
-        `A change to your ${details.chain} payout address is scheduled.`,
-        `New address: ${details.newAddress}`,
-        `Takes effect: ${details.effectiveAt.toISOString()}`,
-        '',
-        'If you did not request this, cancel it now and change your password:',
-        // Straight to the tab that cancels it. This notice is the only thing standing between
-        // a stolen session and a redirected payout, so it does not get to say "go and find it".
-        `${this.appUrl}/dashboard?tab=payouts`,
-      ].join('\n'),
-    );
+    await this.deliver(email, payoutChangeQueued(this.appUrl, details));
+  }
+}
+
+/** Development transport: records messages and logs them, sends nothing. */
+export class ConsoleMailer extends ComposedMailer {
+  readonly sent: { to: string; subject: string; body: string }[] = [];
+
+  constructor(
+    appUrl: string,
+    private readonly log: (message: string) => void = console.log,
+  ) {
+    super(appUrl);
+  }
+
+  protected async deliver(to: string, message: MailMessage): Promise<void> {
+    this.sent.push({ to, subject: message.subject, body: message.body });
+    this.log(`[mail] to=${to} subject="${message.subject}"\n${message.body}`);
+  }
+}
+
+/**
+ * The real one: one SMTP submission per message.
+ *
+ * ## Why a failure here does not fail the request
+ *
+ * Every one of these messages is a notice about something that has already happened — an
+ * account was created, an address change was queued, a member was removed. The state is
+ * committed before the mail is composed. So a mail server having a bad minute must not turn a
+ * successful signup into a 500, which would leave a merchant with an account they were told
+ * they did not get.
+ *
+ * The exception is the one message that is a capability rather than a notice: email
+ * verification. A signup whose verification mail never left is an account nobody can confirm,
+ * and swallowing that would strand the merchant with no way to tell why. So it is the one
+ * failure this class rethrows, and the caller answers honestly.
+ *
+ * Both are logged either way. A gateway whose notices are silently disappearing is worse than
+ * one that never sent them, because the delay on a payout address change is only a protection
+ * if somebody was told.
+ */
+export class SmtpMailer extends ComposedMailer {
+  constructor(
+    appUrl: string,
+    private readonly config: SmtpConfig,
+    private readonly from: string,
+    private readonly fromName: string,
+    private readonly warn: (message: string) => void = console.warn,
+  ) {
+    super(appUrl);
+  }
+
+  override async sendEmailVerification(email: string, token: string): Promise<void> {
+    // Rethrown, unlike everything else here: see the note on the class.
+    await this.send(email, emailVerification(this.appUrl, token), { rethrow: true });
+  }
+
+  protected async deliver(to: string, message: MailMessage): Promise<void> {
+    await this.send(to, message, { rethrow: false });
+  }
+
+  private async send(
+    to: string,
+    message: MailMessage,
+    options: { readonly rethrow: boolean },
+  ): Promise<void> {
+    try {
+      await sendMail(this.config, {
+        from: this.from,
+        fromName: this.fromName,
+        to,
+        subject: message.subject,
+        body: message.body,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.warn(`[mail] failed to=${to} subject="${message.subject}" — ${detail}`);
+      if (options.rethrow) throw error;
+    }
   }
 }

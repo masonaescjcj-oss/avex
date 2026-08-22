@@ -138,6 +138,29 @@ const schema = z.object({
    */
   FORWARDER_IMPLEMENTATIONS: z.string().default('').transform(parsePairs),
 
+  /**
+   * Where transactional mail goes out, as `smtps://user:pass@host:465`.
+   *
+   * Unset means nothing is sent: the console transport records and logs every message instead,
+   * which is right for development and is a launch blocker in production. `compose` says so at
+   * startup rather than leaving it to be discovered by a merchant whose verification mail never
+   * arrived.
+   *
+   * SMTP rather than a provider's HTTP API because it is the transport that works with any
+   * provider — including a regional one, which matters here. See `mail/smtp.ts`.
+   */
+  SMTP_URL: z.string().optional(),
+
+  /**
+   * The address these messages come from, and the name beside it.
+   *
+   * Must be an address the SMTP server is willing to send as, which for every hosted provider
+   * means a domain that has been verified with SPF and DKIM. Without those the mail is
+   * delivered to spam, which for a verification link is the same as not delivered.
+   */
+  MAIL_FROM: z.string().email().default('no-reply@avexpay.net'),
+  MAIL_FROM_NAME: z.string().default('AVEX Pay'),
+
   /** One wallet per shared-address chain, as `chain=address`. TON today. */
   SHARED_DEPOSIT_WALLETS: z.string().default('').transform(parsePairs),
 

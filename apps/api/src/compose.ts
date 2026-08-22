@@ -38,7 +38,8 @@ import { SettlementStore } from './domain/settlement-store.js';
 import { StaffAuthService } from './domain/staff-auth.js';
 import { WebhookService } from './domain/webhook-service.js';
 import type { Env } from './env.js';
-import { ConsoleMailer } from './mailer.js';
+import { ConsoleMailer, SmtpMailer } from './mailer.js';
+import { parseSmtpUrl } from './mail/smtp.js';
 import { JsonRpcCaller } from './rpc/json-rpc-caller.js';
 import { buildServer } from './http/server.js';
 import type { AppContext } from './http/server.js';
@@ -112,7 +113,28 @@ export function compose(options: ComposeOptions): Composed {
     [...prices.coverage().keys()],
   );
 
-  const mailer = new ConsoleMailer(env.APP_URL);
+  /**
+   * The real transport when one is configured, and a loud console when not.
+   *
+   * Announced either way. A deployment silently logging its verification mails to stdout looks
+   * exactly like a working one until the first merchant tries to confirm an address — and the
+   * twenty-four-hour delay on a payout address change protects nobody if the notice about it
+   * went to a log file.
+   */
+  const mailer =
+    env.SMTP_URL === undefined
+      ? (warn(
+          'SMTP_URL is not set: transactional mail is logged, not sent. Email verification, ' +
+            'invitations and payout-change notices will not reach anyone.',
+        ),
+        new ConsoleMailer(env.APP_URL, warn))
+      : new SmtpMailer(
+          env.APP_URL,
+          parseSmtpUrl(env.SMTP_URL),
+          env.MAIL_FROM,
+          env.MAIL_FROM_NAME,
+          warn,
+        );
   const payouts = new PayoutAddressService(db, audit, mailer);
   const invites = new InviteService(db, audit);
   const memberships = new MembershipService(db, audit, mailer);
