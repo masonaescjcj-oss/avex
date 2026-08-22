@@ -59,6 +59,7 @@ async function main(): Promise<void> {
           webhooks: context.webhooks,
           feePlans: context.feePlans,
           payouts: context.payouts,
+          walletChanges: context.walletChanges,
         },
         app.log,
       )

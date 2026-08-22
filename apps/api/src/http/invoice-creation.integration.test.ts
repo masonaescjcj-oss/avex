@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
 
-import { DEFAULT_AGGREGATION, DEFAULT_BREAKER, PriceService, WebhookDispatcher } from '@avex/core';
+import { DEFAULT_AGGREGATION, DEFAULT_BREAKER, PriceService, WebhookDispatcher, tronAddressFromEvmHex } from '@avex/core';
 import type { PriceSource } from '@avex/core';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -10,6 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import { issueApiKey } from '../auth/tokens.js';
 import { createDatabase, schema } from '../db/client.js';
 import { CommissionLedger } from '../domain/commission-ledger.js';
+import { WalletPoolChanges, WalletPoolService } from '../domain/wallet-pool-service.js';
 import { AdminService } from '../domain/admin-service.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
@@ -68,6 +69,7 @@ const offlineCaller = {
 
 describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is not set' }, () => {
   let app: FastifyInstance;
+  let walletPool: WalletPoolService;
   let close: () => Promise<void>;
   let db: ReturnType<typeof createDatabase>['db'];
   let feePlans: FeePlanService;
@@ -135,9 +137,14 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
           ethereum: { factory: FACTORY, forwarderCreationCode: CREATION_CODE },
         },
         shared: { ton: TON_WALLET },
+        // TRON, so a pooled invoice can be created here at all — `payableAssets` and the
+        // deriver both filter to the chains this list names.
+        pooled: ['tron'],
       },
       'invoice-suite-memo-secret',
     );
+
+    walletPool = new WalletPoolService(db);
 
     const settlements = new SettlementStore(db);
     const reconciliation = new ReconciliationService(db, audit, {
@@ -152,10 +159,14 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       feePlans,
       { requireRate: (symbol) => prices.requireRate(symbol) },
       audit,
+      new CommissionLedger(db),
+      walletPool,
     );
 
     app = buildServer({
       ledger: new CommissionLedger(db),
+      walletPool,
+      walletChanges: new WalletPoolChanges(db, walletPool, audit, mailer),
       env,
       db,
       audit,
@@ -1742,4 +1753,173 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     // It is counted as a payment we could not price, which is what it is.
     assert.equal(after.unpricedPayments, before.unpricedPayments + 1);
   });
+  /**
+   * The amount the invoice would have asked for with no disambiguator on it.
+   *
+   * Read from the quote rather than assumed from the fiat figure: `amountFiatMicros` is dollars
+   * and `amount_due` is token units, so the two differ by the live price — comparing a token
+   * amount against 20_000_000 tests the price feed rather than the allocator.
+   */
+  async function quotedAmount(invoiceId: string): Promise<bigint> {
+    const [row] = await db
+      .select({ amountDue: schema.quotes.amountDue })
+      .from(schema.quotes)
+      .innerJoin(schema.invoices, eq(schema.invoices.quoteId, schema.quotes.id))
+      .where(eq(schema.invoices.id, invoiceId));
+    return BigInt(row!.amountDue);
+  }
+
+  /**
+   * A pool with exactly this many live wallets, whatever the tests before left behind.
+   *
+   * These tests share one organisation, so a wallet registered by an earlier case is still in
+   * the pool — and "the allocator chose the only wallet" is not a claim you can make about a
+   * pool of three. Retiring rather than deleting, because that is what the service does and
+   * what production will look like.
+   */
+  async function resetPool(count: number): Promise<readonly string[]> {
+    for (const row of await walletPool.list({ organizationId: orgId, chain: 'tron' })) {
+      await walletPool.retire({ organizationId: orgId, walletId: row.id });
+    }
+    const addresses: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const address = tronAddressFromEvmHex(`0x${randomBytes(20).toString('hex')}`);
+      await walletPool.register({ organizationId: orgId, chain: 'tron', address });
+      addresses.push(address);
+    }
+    return addresses;
+  }
+
+  // ── pooled chains ──────────────────────────────────────────────────────────
+  //
+  // The last connection: an invoice on a chain whose deposit address is one of the merchant's
+  // own wallets. Everything else about the model was built and tested in isolation; these are
+  // the tests that prove an invoice actually comes out of it.
+
+  test('a pooled invoice takes a wallet from the pool and a unique amount', async () => {
+    const assetId = await enableAsset({ chain: 'tron', symbol: 'USDT', decimals: 6 });
+    await addPayoutAddress('tron', 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t');
+    const [wallet] = await resetPool(1);
+
+    const response = await open({ assetId, amountFiatMicros: '20000000' });
+    assert.equal(response.statusCode, 201, response.body);
+    const invoice = response.json() as { id: string; depositAddress: string; amountDue: string };
+
+    assert.equal(invoice.depositAddress, wallet, "the merchant's own wallet, not a derived one");
+
+    /**
+     * The amount carries a disambiguator, and it is what makes the wallet shareable.
+     *
+     * Between one and 9999 smallest units above the price — under a cent on a six-decimal
+     * token — and never zero, so no open invoice ever asks for the round number a truncating
+     * exchange would produce.
+     */
+    const base = await quotedAmount(invoice.id);
+    const due = BigInt(invoice.amountDue);
+    assert.ok(due > base, `${due} must exceed the quoted ${base}`);
+    assert.ok(due - base <= 9999n, `${due - base} is outside the disambiguator's range`);
+  });
+
+  test('two invoices at one price get two amounts on the same wallet', async () => {
+    /**
+     * The point of the whole design. One wallet, two open invoices, and the only thing telling
+     * them apart is the amount — so if these ever collide, neither payment can be attributed.
+     */
+    const assetId = await enableAsset({ chain: 'tron', symbol: 'USDT', decimals: 6 });
+    await addPayoutAddress('tron');
+    const [wallet] = await resetPool(1);
+
+    const first = await open({ assetId, amountFiatMicros: '20000000', reference: `p-${randomBytes(4).toString('hex')}` });
+    const second = await open({ assetId, amountFiatMicros: '20000000', reference: `p-${randomBytes(4).toString('hex')}` });
+    assert.equal(first.statusCode, 201, first.body);
+    assert.equal(second.statusCode, 201, second.body);
+
+    const a = first.json() as { depositAddress: string; amountDue: string };
+    const b = second.json() as { depositAddress: string; amountDue: string };
+    assert.equal(a.depositAddress, b.depositAddress, 'one wallet, because there is only one');
+    assert.notEqual(a.amountDue, b.amountDue);
+  });
+
+  test('an idle wallet is used before a busy one', async () => {
+    const assetId = await enableAsset({ chain: 'tron', symbol: 'USDT', decimals: 6 });
+    await addPayoutAddress('tron');
+    await resetPool(2);
+
+    const one = (await open({ assetId, amountFiatMicros: '20000000', reference: `i-${randomBytes(4).toString('hex')}` })).json() as { depositAddress: string };
+    const two = (await open({ assetId, amountFiatMicros: '20000000', reference: `i-${randomBytes(4).toString('hex')}` })).json() as { depositAddress: string };
+
+    /**
+     * Different wallets, because a wallet holding one open invoice can absorb a payment for the
+     * wrong amount and a wallet holding two cannot. Spending the idle one first is what keeps
+     * the ambiguous case rare.
+     */
+    assert.notEqual(one.depositAddress, two.depositAddress);
+  });
+
+  test('a merchant with no wallet is told to add one, not given a broken invoice', async () => {
+    const assetId = await enableAsset({ chain: 'tron', symbol: 'USDT', decimals: 6 });
+    await addPayoutAddress('tron');
+
+    /**
+     * An empty pool, which here means every wallet retired.
+     *
+     * That is the state a merchant reaches by taking a wallet out of service rather than by
+     * never adding one, and it must read the same: nothing to allocate.
+     */
+    await resetPool(0);
+
+    const response = await open({ assetId, amountFiatMicros: '20000000' });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.json().error, 'no_deposit_wallet');
+  });
+
+  test('a test invoice on a pooled chain never touches the pool', async () => {
+    /**
+     * Two reasons, and the second is the one that costs money. A test invoice must not consume
+     * an amount on a real wallet — that slot belongs to a real order — and it must not be
+     * payable, which is why `derive` answers it with an address no wallet will accept.
+     */
+    const assetId = await enableAsset({ chain: 'tron', symbol: 'USDT', decimals: 6 });
+    await addPayoutAddress('tron');
+    const [wallet] = await resetPool(1);
+
+    const response = await open({ assetId, amountFiatMicros: '20000000', mode: 'test' });
+    assert.equal(response.statusCode, 201, response.body);
+    const invoice = response.json() as { id: string; depositAddress: string; amountDue: string };
+
+    assert.match(invoice.depositAddress, /^AVEXTEST-TRON-/);
+    // And no disambiguator: there is nothing to be unique against.
+    assert.equal(BigInt(invoice.amountDue), await quotedAmount(invoice.id));
+  });
+
+  test('the commission on a pooled invoice is billed, not taken on chain', async () => {
+    /**
+     * The two rates, on one invoice, doing different jobs. Nothing is taken on chain because
+     * there is no forwarder — so `feeBps` is zero and there is no fee destination — and the
+     * merchant is still charged their rate through `accruedFeeBps`, which becomes a ledger entry
+     * when the payment is credited.
+     */
+    const assetId = await enableAsset({ chain: 'tron', symbol: 'USDT', decimals: 6 });
+    await addPayoutAddress('tron');
+    const [wallet] = await resetPool(1);
+
+    const response = await open({ assetId, amountFiatMicros: '20000000' });
+    const invoice = response.json() as { id: string; feeBps: number };
+    assert.equal(invoice.feeBps, 0, 'nothing is taken on chain');
+
+    const [row] = await db
+      .select({
+        feeBps: schema.invoices.feeBps,
+        feeDestination: schema.invoices.feeDestination,
+        accruedFeeBps: schema.invoices.accruedFeeBps,
+        recoveryBps: schema.invoices.recoveryBps,
+      })
+      .from(schema.invoices)
+      .where(eq(schema.invoices.id, invoice.id));
+    assert.equal(row!.feeBps, 0);
+    assert.equal(row!.feeDestination, null);
+    assert.equal(row!.accruedFeeBps, 50, 'the rate the merchant is billed');
+    assert.equal(row!.recoveryBps, 0);
+  });
+
 });

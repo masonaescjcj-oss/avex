@@ -1,6 +1,7 @@
 import { PriceUnavailableError, type PriceService } from '@avex/core';
 
 import type { CommissionLedger } from '../domain/commission-ledger.js';
+import type { WalletPoolChanges, WalletPoolService } from '../domain/wallet-pool-service.js';
 import { AssetConfigError } from '../domain/asset-service.js';
 import type { AssetService } from '../domain/asset-service.js';
 import { PayoutAddressError } from '../domain/payout-service.js';
@@ -68,7 +69,11 @@ import { checkoutErrorResponse, registerCheckoutRoutes } from './routes/checkout
 import { JOB_NAMES, isJobName, runAllJobs, runJob } from '../jobs.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
-import { registerPayoutRoutes, payoutErrorResponse } from './routes/payouts.js';
+import {
+  registerDepositWalletRoutes,
+  registerPayoutRoutes,
+  payoutErrorResponse,
+} from './routes/payouts.js';
 import { registerPriceRoutes } from './routes/prices.js';
 import {
   invoiceCreationErrorResponse,
@@ -113,6 +118,10 @@ export interface AppContext {
   readonly feePlans: FeePlanService;
   /** What each merchant owes for payments no chain took a cut of. */
   readonly ledger: CommissionLedger;
+  /** The merchant's own deposit wallets, on chains whose addresses are not derivable. */
+  readonly walletPool: WalletPoolService;
+  /** Adding one, on the same delay as a payout address. */
+  readonly walletChanges: WalletPoolChanges;
   readonly invoiceCreation: InvoiceCreationService;
   readonly checkouts: CheckoutService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */
@@ -551,6 +560,7 @@ export function buildServer(context: AppContext): FastifyInstance {
       webhooks: context.webhooks,
       feePlans: context.feePlans,
       payouts: context.payouts,
+      walletChanges: context.walletChanges,
     };
     const outcomes = requested === undefined
       ? await runAllJobs(deps)
@@ -569,6 +579,7 @@ export function buildServer(context: AppContext): FastifyInstance {
   registerPriceRoutes(app, context);
   registerAssetRoutes(app, context);
   registerPayoutRoutes(app, context);
+  registerDepositWalletRoutes(app, context);
   registerMerchantRoutes(app, context);
   registerCheckoutRoutes(app, context);
   registerAdminRoutes(app, context);

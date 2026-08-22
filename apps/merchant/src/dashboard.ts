@@ -1,3 +1,5 @@
+import { SUPPORTED_CHAINS, chainConfig } from '@avex/core';
+
 /**
  * The merchant dashboard's own decisions, as pure functions.
  *
@@ -723,4 +725,20 @@ export function ledgerRows(
       when: entry.createdAt,
     };
   });
+}
+
+/**
+ * Which of these chains use a wallet pool.
+ *
+ * From the shared chain registry rather than a list written here, so the page and the server
+ * cannot disagree about which chains work this way — and adding a second pooled chain later
+ * changes one fact in one place instead of two in two.
+ */
+export function pooledChains(chains: readonly string[]): readonly string[] {
+  return chains
+    .filter((chain): chain is (typeof SUPPORTED_CHAINS)[number] =>
+      (SUPPORTED_CHAINS as readonly string[]).includes(chain),
+    )
+    .filter((chain) => chainConfig(chain).addressModel === 'pooled')
+    .sort();
 }

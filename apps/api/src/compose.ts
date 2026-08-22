@@ -1,10 +1,12 @@
 import {
+  chainConfig,
   ContractProbe,
   createPriceSources,
   DEFAULT_BREAKER,
   DEFAULT_DISPATCHER,
   FetchPoster,
   PriceService,
+  SUPPORTED_CHAINS,
   WebhookDispatcher,
 } from '@avex/core';
 import type { PriceSymbol } from '@avex/core';
@@ -18,6 +20,8 @@ import { AuthService } from './domain/auth-service.js';
 import { CheckoutService } from './domain/checkout-service.js';
 import { DepositAddressDeriver } from './domain/deposit-address.js';
 import { CommissionLedger } from './domain/commission-ledger.js';
+import { delayFor } from './domain/rbac.js';
+import { WalletPoolChanges, WalletPoolService } from './domain/wallet-pool-service.js';
 import { paymentValueSource, paymentValueUsd } from './domain/payment-valuation.js';
 import { FeePlanService } from './domain/fee-plan-service.js';
 import { InviteService } from './domain/invite-service.js';
@@ -160,13 +164,44 @@ export function compose(options: ComposeOptions): Composed {
         ]),
       ),
       shared: env.SHARED_DEPOSIT_WALLETS,
+      /**
+       * Read from the chain registry rather than from configuration, because it is not a
+       * deployment choice. A chain is pooled because of how its transfers work — TRC-20 carries
+       * no memo and a per-invoice contract pays for its own code — and no environment variable
+       * changes that.
+       */
+      pooled: SUPPORTED_CHAINS.filter((chain) => chainConfig(chain).addressModel === 'pooled'),
     },
     env.MEMO_SECRET,
   );
 
+  /** The merchant's own deposit wallets, for the chains whose addresses are not derivable. */
+  const walletPool = new WalletPoolService(db);
+  /**
+   * Adding a wallet, on the payout address's delay and using its own notice.
+   *
+   * The delay comes from the RBAC table rather than a constant here, so the two protections
+   * cannot drift: `payout_address:write` is what both routes require.
+   */
+  const walletChanges = new WalletPoolChanges(
+    db,
+    walletPool,
+    audit,
+    mailer,
+    delayFor('payout_address:write') ?? 24 * 60 * 60 * 1000,
+  );
+
   // The pricing engine, narrowed to the one method invoice creation needs.
   const rates = { requireRate: (symbol: PriceSymbol) => prices.requireRate(symbol) };
-  const invoiceCreation = new InvoiceCreationService(db, deriver, feePlans, rates, audit, ledger);
+  const invoiceCreation = new InvoiceCreationService(
+    db,
+    deriver,
+    feePlans,
+    rates,
+    audit,
+    ledger,
+    walletPool,
+  );
 
   const settlements = new SettlementStore(db);
   const reconciliation = new ReconciliationService(db, audit, paymentSink);
@@ -191,6 +226,8 @@ export function compose(options: ComposeOptions): Composed {
     webhooks,
     feePlans,
     ledger,
+    walletPool,
+    walletChanges,
     minPriceSources: env.PRICE_MIN_SOURCES,
     // A real transport still to come; the seam is what matters now.
     mailer,

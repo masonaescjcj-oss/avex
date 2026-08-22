@@ -1,4 +1,5 @@
 import type { FeePlanService } from './domain/fee-plan-service.js';
+import type { WalletPoolChanges } from './domain/wallet-pool-service.js';
 import type { PayoutAddressService } from './domain/payout-service.js';
 import type { WebhookService } from './domain/webhook-service.js';
 import type { Database } from './db/client.js';
@@ -39,6 +40,11 @@ export interface JobDependencies {
   readonly db: Database;
   readonly webhooks: WebhookService;
   readonly feePlans: FeePlanService;
+  /**
+   * Optional so an older caller still type-checks, and absent means wallet additions are never
+   * applied — which is visible (a merchant's scheduled wallet never arrives) rather than silent.
+   */
+  readonly walletChanges?: WalletPoolChanges;
   readonly payouts: PayoutAddressService;
 }
 
@@ -90,9 +96,18 @@ const DEFINITIONS: Readonly<Record<JobName, JobDefinition>> = {
   payouts: {
     lock: JOB_LOCKS.payoutChanges,
     everyMs: 60_000,
-    run: async ({ payouts }) => {
-      const count = await payouts.applyDueChanges();
-      return count > 0 ? { count } : null;
+    /**
+     * Both kinds of scheduled destination change, on one clock and under one lock.
+     *
+     * A deposit wallet on a pooled chain is a payout destination — the payer's transfer lands
+     * in it and nothing ever moves the funds — so it waits the same twenty-four hours and is
+     * applied by the same tick. Two jobs would be two locks, two intervals and two chances for
+     * one of them to be forgotten in a deployment.
+     */
+    run: async ({ payouts, walletChanges }) => {
+      const addresses = await payouts.applyDueChanges();
+      const wallets = walletChanges === undefined ? 0 : await walletChanges.applyDueChanges();
+      return addresses + wallets > 0 ? { addresses, wallets } : null;
     },
   },
 };

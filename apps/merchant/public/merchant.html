@@ -545,6 +545,34 @@
           </form>
         </div>
       </div>
+
+      <div class="panel" id="wallets-panel" hidden>
+        <div class="panel-head"><h2>👛 Your own wallets on TRON</h2></div>
+        <div class="panel-body">
+          <p class="note">
+            On TRON your customers pay straight into a wallet of yours — no contract of ours in
+            the path, nothing to sweep, and no network fee for us to pass on. Register three to
+            five addresses and we hand them out; each invoice asks for a very slightly different
+            amount, a fraction of a cent apart, and that is how two payments to one address are
+            told apart.
+          </p>
+          <p class="warn-note">
+            Your first wallet is usable at once. Every one after it waits 24 hours and everyone
+            in your organization is emailed, because these are addresses your money lands in —
+            the same protection a payout address gets, for the same reason. Retiring one is
+            immediate.
+          </p>
+          <div class="scroll"><table id="wallet-table"></table></div>
+          <form id="wallet-form">
+            <div class="row">
+              <label>Chain<select id="wallet-chain"></select></label>
+              <label>Address<input class="mono" id="wallet-address" placeholder="T…" required></label>
+              <label>Label<input id="wallet-label" placeholder="optional"></label>
+              <button class="primary" type="submit">Add wallet</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </section>
 
     <!-- webhooks -->
@@ -1110,13 +1138,147 @@ function symbolClaimedElsewhere(chain, contract, symbol) {
 }
 
 /**
- * The merchant dashboard's own decisions, as pure functions.
+ * Measured settlement gas for the EVM forwarder, shared by every EVM chain.
  *
- * Everything here answers a question the page has to get right and that a reader cannot
- * check by looking: whether a merchant is ready to take a live payment, what an invoice
- * status means for them, how close they are to a cheaper commission. Rendering can be
- * eyeballed; these cannot, so they live in a module with tests.
+ * Identical bytecode means identical gas; only the price of gas differs, and that
+ * comes from a live snapshot rather than from this table. Both figures are measured
+ * against the compiled contract by contracts/test/settlement-gas.test.mjs, which
+ * fails if they drift — they are claims about bytecode, and a comment cannot check
+ * itself.
+ *
+ * The marginal cost of one more invoice in a batch, not the cost of a whole
+ * transaction: the 21,000-gas floor is paid once however many invoices ride along,
+ * so charging it per invoice would make every batch look uneconomic.
  */
+/**
+ * CREATE2 deploy of a forwarder plus a token flush: 385,000 measured, rounded up.
+ *
+ * Dominated by the code deposit — 200 gas for each of the runtime's ~1,570 bytes —
+ * which is why deferring settlement until gas is cheap matters so much more here
+ * than the arithmetic inside the contract does.
+ */
+const EVM_GAS_DEPLOY_AND_FLUSH = 400_000;
+/**
+ * Flushing a forwarder that already exists: 17,300 measured, plus 25,000 for
+ * creating the payout account when it has never held this asset.
+ *
+ * An order of magnitude below a deploy, because there is no code to write. Kept as
+ * its own figure so a re-sweep of an existing forwarder is not deferred as though
+ * it cost a deployment.
+ */
+const EVM_GAS_FLUSH_ONLY = 45_000;
+const CHAINS = {
+    ethereum: {
+        chain: 'ethereum',
+        displayName: 'Ethereum',
+        addressModel: 'unique',
+        addressCase: 'insensitive',
+        nativeSymbol: 'ETH',
+        nativeDecimals: 18,
+        confirmations: { standard: 12, highValue: 32, highValueThresholdUsd: 10_000 },
+        settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
+    },
+    polygon: {
+        chain: 'polygon',
+        displayName: 'Polygon PoS',
+        addressModel: 'unique',
+        addressCase: 'insensitive',
+        nativeSymbol: 'POL',
+        nativeDecimals: 18,
+        // Polygon PoS has historically produced deep reorgs; stay conservative.
+        confirmations: { standard: 64, highValue: 128, highValueThresholdUsd: 10_000 },
+        settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
+    },
+    bsc: {
+        chain: 'bsc',
+        displayName: 'BNB Smart Chain',
+        addressModel: 'unique',
+        addressCase: 'insensitive',
+        nativeSymbol: 'BNB',
+        nativeDecimals: 18,
+        confirmations: { standard: 15, highValue: 30, highValueThresholdUsd: 10_000 },
+        settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
+    },
+    // Highest stablecoin volume of any chain here, and the one Iranian payers
+    // reach for first — but the last to be built, because energy delegation is a
+    // prerequisite and it is the only chain whose adapter shares nothing with the
+    // EVM implementation.
+    tron: {
+        chain: 'tron',
+        displayName: 'TRON',
+        // Pooled: a few of the merchant's own addresses, the exact amount names the invoice.
+        // Why, and what it costs, in `chains/tron/TronAdapter.ts`.
+        addressModel: 'pooled',
+        // Base58Check. See `addressCase` above; `tron/address.ts` is the codec.
+        addressCase: 'sensitive',
+        nativeSymbol: 'TRX',
+        nativeDecimals: 6,
+        // TRON blocks are irreversible after 19 confirmations (2/3+1 of 27 SRs).
+        confirmations: { standard: 19, highValue: 19, highValueThresholdUsd: 10_000 },
+        // Nothing to settle: the payer's transfer already reached the merchant's own wallet.
+        settlement: { kind: 'direct' },
+    },
+    solana: {
+        chain: 'solana',
+        displayName: 'Solana',
+        addressModel: 'unique',
+        // Base58, without the checksum wrapper TRON adds. Still case-significant.
+        addressCase: 'sensitive',
+        nativeSymbol: 'SOL',
+        nativeDecimals: 9,
+        // 32 slots ≈ the `finalized` commitment level.
+        confirmations: { standard: 32, highValue: 32, highValueThresholdUsd: 10_000 },
+        settlement: { kind: 'solana', signaturesPerFlush: 1, ataRentLamports: 2_039_280 },
+    },
+    ton: {
+        chain: 'ton',
+        displayName: 'TON',
+        // TON carries a native comment field, so one address serves every invoice
+        // and the payer's transfer already lands in the merchant's wallet.
+        addressModel: 'shared-memo',
+        // Base64url, and case-significant like the base58 chains.
+        addressCase: 'sensitive',
+        nativeSymbol: 'TON',
+        nativeDecimals: 9,
+        confirmations: { standard: 1, highValue: 3, highValueThresholdUsd: 10_000 },
+        settlement: { kind: 'direct' },
+    },
+};
+const SUPPORTED_CHAINS = Object.keys(CHAINS);
+function chainConfig(chain) {
+    const config = CHAINS[chain];
+    if (!config)
+        throw new Error(`unsupported chain: ${chain}`);
+    return config;
+}
+/** Confirmations required for a payment of the given USD value. */
+function requiredConfirmations(chain, valueUsd) {
+    const { confirmations } = chainConfig(chain);
+    return valueUsd >= confirmations.highValueThresholdUsd
+        ? confirmations.highValue
+        : confirmations.standard;
+}
+/**
+ * EIP-155 chain ids, which a signed transaction must carry.
+ *
+ * Separate from the rest of the chain config because getting one wrong has a specific
+ * and nasty consequence: a transaction signed for the wrong chain id is a valid
+ * transaction on *that* chain, so it can be replayed there by anyone who sees it.
+ * They are written out rather than fetched from the node, so a misconfigured RPC
+ * endpoint cannot quietly change which chain we are signing for.
+ */
+const EVM_CHAIN_IDS = {
+    ethereum: 1,
+    bsc: 56,
+    polygon: 137,
+};
+function evmChainId(chain) {
+    const id = EVM_CHAIN_IDS[chain];
+    if (id === undefined)
+        throw new Error(`no EIP-155 chain id is known for ${chain}`);
+    return id;
+}
+
 function statusView(status) {
     switch (status) {
         case 'paid':
@@ -1622,6 +1784,19 @@ function ledgerRows(entries, formatUsd) {
         };
     });
 }
+/**
+ * Which of these chains use a wallet pool.
+ *
+ * From the shared chain registry rather than a list written here, so the page and the server
+ * cannot disagree about which chains work this way — and adding a second pooled chain later
+ * changes one fact in one place instead of two in two.
+ */
+function pooledChains(chains) {
+    return chains
+        .filter((chain) => SUPPORTED_CHAINS.includes(chain))
+        .filter((chain) => chainConfig(chain).addressModel === 'pooled')
+        .sort();
+}
 
 /**
  * Preview mode: the dashboard driven by canned answers instead of an API.
@@ -1792,6 +1967,31 @@ const BALANCE = {
         { id: 'led-2', kind: 'recovery', amountUsdMicros: '180000', invoiceId: null, note: null, createdAt: ago(60 * 12) },
     ],
 };
+/**
+ * A pool with one live wallet and one waiting out its delay.
+ *
+ * Both rows, because they are the two states the panel renders differently — and the pending
+ * one carries the Cancel control that the whole twenty-four hours exists for.
+ */
+const WALLETS = {
+    wallets: [
+        {
+            id: 'w1',
+            chain: 'tron',
+            address: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+            label: 'main',
+            retiredAt: null,
+        },
+    ],
+    pending: [
+        {
+            id: 'wc1',
+            chain: 'tron',
+            address: 'TWKxbjHnf3EY3mZvYUcaLLxLBnMhqUXsQ4',
+            effectiveAt: ahead(60 * 19),
+        },
+    ],
+};
 const INVOICES = [
     {
         id: '4d2a9c1b-1111-4111-8111-111111111111',
@@ -1907,6 +2107,7 @@ function previewRoutes() {
         ['POST /members', { status: 202, body: { status: 'invited', id: 'inv-new', superseded: 0 } }],
         ['GET /commission', ok(COMMISSION)],
         ['GET /balance', ok(BALANCE)],
+        ['GET /deposit-wallets', ok(WALLETS)],
         [
             'GET /reports/volume',
             ok({
@@ -2000,6 +2201,22 @@ function previewRoutes() {
                 body: {
                     error: 'preview',
                     message: 'This is a preview with canned data — nothing here can be changed.',
+                },
+            },
+        ],
+        /**
+         * Adding or retiring a wallet, refused for the same reason.
+         *
+         * A preview that accepted these would be the worst kind: the merchant would believe they
+         * had registered an address their customers were about to be asked to pay.
+         */
+        [
+            'POST /deposit-wallets',
+            {
+                status: 409,
+                body: {
+                    error: 'preview',
+                    message: 'This is a preview with canned data — no wallet can be added.',
                 },
             },
         ],
@@ -2898,6 +3115,140 @@ function matchPreview(method, url, routes = previewRoutes()) {
     ]);
   }
 
+  /**
+   * The wallet pool, shown only on the chains that have one.
+   *
+   * Hidden entirely when the merchant accepts nothing pooled. A panel explaining a TRON-only
+   * mechanism to somebody who takes only BSC is a paragraph they have to read to find out it
+   * does not apply to them.
+   */
+  function renderWallets() {
+    const data = cache.wallets;
+    const panel = el('wallets-panel');
+    /**
+     * Which of the merchant's chains are pooled, taken from the currencies they can accept.
+     *
+     * `pooledChains` comes from the shared chain registry, so the page cannot disagree with the
+     * server about which chains work this way — the list is one fact in one place.
+     */
+    const chains = pooledChains([...new Set((cache.assets || []).map((asset) => asset.chain))]);
+    if (!data || chains.length === 0) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+
+    fill(el('wallet-chain'), chains.map((chain) => h('option', { value: chain, text: chain })));
+
+    const wallets = (data.wallets || []).filter((wallet) => chains.includes(wallet.chain));
+    const pending = data.pending || [];
+
+    const rows = [
+      /**
+       * Scheduled additions first, because they are the ones somebody might need to stop.
+       *
+       * A pending row is the whole point of the delay: if it is buried under a list of wallets
+       * that are already working, the member who did not request it will not see it.
+       */
+      ...pending.map((change) =>
+        h('tr', {}, [
+          h('td', { class: 'mono', text: change.chain }),
+          h('td', { class: 'mono', title: change.address, text: shortenAddress(change.address) }),
+          h('td', { text: '—' }),
+          h('td', {}, [h('span', { class: 'pill', 'data-tone': 'warn', text: 'in ' + (formatUntil(change.effectiveAt) ?? 'moments') })]),
+          h('td', {}, [
+            h('button', {
+              class: 'ghost',
+              type: 'button',
+              text: 'Cancel',
+              onclick: () => void cancelWallet(change.id),
+            }),
+          ]),
+        ]),
+      ),
+      ...wallets.map((wallet) =>
+        h('tr', {}, [
+          h('td', { class: 'mono', text: wallet.chain }),
+          h('td', { class: 'mono', title: wallet.address, text: shortenAddress(wallet.address) }),
+          h('td', { text: wallet.label ?? '—' }),
+          h('td', {}, [
+            h('span', {
+              class: 'pill',
+              'data-tone': wallet.retiredAt ? 'dead' : 'good',
+              text: wallet.retiredAt ? 'retired' : 'in use',
+            }),
+          ]),
+          h('td', {}, [
+            wallet.retiredAt
+              ? null
+              : h('button', {
+                  class: 'ghost',
+                  type: 'button',
+                  text: 'Retire',
+                  onclick: () => void retireWallet(wallet.id),
+                }),
+          ]),
+        ]),
+      ),
+    ];
+
+    fill(el('wallet-table'), rows.length === 0
+      ? [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No wallets yet. Add one to start taking TRON payments.' })])])]
+      : [
+          h('thead', {}, [h('tr', {}, ['Chain', 'Address', 'Label', 'State', ''].map((label) => h('th', { text: label })))]),
+          h('tbody', {}, rows),
+        ]);
+  }
+
+  async function retireWallet(walletId) {
+    try {
+      await api('/v1/organizations/' + orgId + '/deposit-wallets/' + walletId, { method: 'DELETE' });
+      flash('Retired. Payments to invoices already open on it are still credited.', 'ok');
+      await refresh('payouts');
+    } catch (problem) {
+      flash(problem.message, 'error');
+    }
+  }
+
+  async function cancelWallet(changeId) {
+    try {
+      await api('/v1/organizations/' + orgId + '/deposit-wallets/pending/' + changeId, {
+        method: 'DELETE',
+      });
+      flash('Cancelled. That wallet will not be added.', 'ok');
+      await refresh('payouts');
+    } catch (problem) {
+      flash(problem.message, 'error');
+    }
+  }
+
+  el('wallet-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      const label = el('wallet-label').value.trim();
+      const body = await api('/v1/organizations/' + orgId + '/deposit-wallets', {
+        method: 'POST',
+        body: JSON.stringify({
+          chain: el('wallet-chain').value,
+          address: el('wallet-address').value.trim(),
+          ...(label === '' ? {} : { label }),
+        }),
+      });
+      el('wallet-address').value = '';
+      el('wallet-label').value = '';
+      /**
+       * The server's own message, not one written here.
+       *
+       * The two outcomes differ in the only way that matters — usable now, or in a day — and
+       * the API already says which. Re-deciding it in the page is how the two come to disagree.
+       */
+      flash(body.message, body.status === 'pending' ? 'warn' : 'ok');
+      await refresh('payouts');
+    } catch (problem) {
+      flash(problem.message, 'error');
+    }
+  });
+
   el('payout-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
@@ -3563,10 +3914,16 @@ function matchPreview(method, url, routes = previewRoutes()) {
       } else if (view === 'assets') {
         await reloadAssets();
       } else if (view === 'payouts') {
-        const [assets, payouts] = await Promise.all([api(base + '/assets'), api(base + '/payout-addresses')]);
+        const [assets, payouts, wallets] = await Promise.all([
+          api(base + '/assets'),
+          api(base + '/payout-addresses'),
+          api(base + '/deposit-wallets'),
+        ]);
         cache.assets = assetList(assets);
         cache.payouts = payouts.addresses || payouts.payoutAddresses || payouts;
+        cache.wallets = wallets;
         renderPayouts();
+        renderWallets();
       } else if (view === 'webhooks') {
         const [endpoints, deliveries] = await Promise.all([
           api(base + '/webhook-endpoints'),

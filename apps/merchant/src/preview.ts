@@ -182,6 +182,32 @@ const BALANCE = {
   ],
 };
 
+/**
+ * A pool with one live wallet and one waiting out its delay.
+ *
+ * Both rows, because they are the two states the panel renders differently — and the pending
+ * one carries the Cancel control that the whole twenty-four hours exists for.
+ */
+const WALLETS = {
+  wallets: [
+    {
+      id: 'w1',
+      chain: 'tron',
+      address: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+      label: 'main',
+      retiredAt: null,
+    },
+  ],
+  pending: [
+    {
+      id: 'wc1',
+      chain: 'tron',
+      address: 'TWKxbjHnf3EY3mZvYUcaLLxLBnMhqUXsQ4',
+      effectiveAt: ahead(60 * 19),
+    },
+  ],
+};
+
 const INVOICES = [
   {
     id: '4d2a9c1b-1111-4111-8111-111111111111',
@@ -301,6 +327,7 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
     ['POST /members', { status: 202, body: { status: 'invited', id: 'inv-new', superseded: 0 } }],
     ['GET /commission', ok(COMMISSION)],
     ['GET /balance', ok(BALANCE)],
+    ['GET /deposit-wallets', ok(WALLETS)],
     [
       'GET /reports/volume',
       ok({
@@ -394,6 +421,22 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
         body: {
           error: 'preview',
           message: 'This is a preview with canned data — nothing here can be changed.',
+        },
+      },
+    ],
+    /**
+     * Adding or retiring a wallet, refused for the same reason.
+     *
+     * A preview that accepted these would be the worst kind: the merchant would believe they
+     * had registered an address their customers were about to be asked to pay.
+     */
+    [
+      'POST /deposit-wallets',
+      {
+        status: 409,
+        body: {
+          error: 'preview',
+          message: 'This is a preview with canned data — no wallet can be added.',
         },
       },
     ],

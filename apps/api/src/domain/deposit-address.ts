@@ -49,6 +49,19 @@ export interface DepositAddressConfig {
   readonly evm: Readonly<Record<string, EvmChainConfig>>;
   /** One wallet per shared-address chain, disambiguated by memo. */
   readonly shared: Readonly<Record<string, string>>;
+  /**
+   * Chains whose deposit address comes from the merchant's own wallet pool.
+   *
+   * Named here and nowhere else in this class, because this is the one address model that
+   * cannot be derived. A pooled address is a row in `deposit_wallets` chosen against the
+   * invoices currently open on it — a database read inside the transaction that writes the
+   * invoice — so `derive` refuses them and `WalletPoolService.allocate` answers instead.
+   *
+   * They still belong in `supportedChains()`. That is what the checkout filters its currency
+   * list by, and a chain missing from it is a chain a merchant cannot be offered at all — which
+   * is how TRON came to be silently absent from every checkout after it became pooled.
+   */
+  readonly pooled?: readonly string[];
 }
 
 /**
@@ -75,7 +88,16 @@ export class DepositAddressDeriver {
 
   /** Chains this deployment can currently issue invoices on. */
   supportedChains(): readonly string[] {
-    return [...Object.keys(this.config.evm), ...Object.keys(this.config.shared)].sort();
+    return [
+      ...Object.keys(this.config.evm),
+      ...Object.keys(this.config.shared),
+      ...(this.config.pooled ?? []),
+    ].sort();
+  }
+
+  /** Whether this chain's address comes from a wallet pool rather than from configuration. */
+  isPooled(chain: string): boolean {
+    return (this.config.pooled ?? []).includes(chain);
   }
 
   /**
@@ -149,6 +171,22 @@ export class DepositAddressDeriver {
     const shared = this.config.shared[input.chain];
     if (shared) {
       return { address: shared, memo: memoFor(input.invoiceId, this.memoSecret) };
+    }
+
+    /**
+     * A pooled chain has no derivable address, and saying so is the whole point.
+     *
+     * Falling through to the errors below would report "this deployment has no deposit
+     * configuration for tron", sending an operator to look for a missing environment variable
+     * that does not exist. The caller is supposed to have allocated from the pool before
+     * reaching here; if it did not, this is our bug and it should read like one.
+     */
+    if (this.isPooled(input.chain)) {
+      throw new DepositAddressError(
+        'not_configured',
+        `${input.chain} is a pooled chain: its deposit address comes from the merchant's ` +
+          'wallet pool and must be allocated before the invoice is written, not derived here.',
+      );
     }
 
     /**

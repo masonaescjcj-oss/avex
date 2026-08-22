@@ -19,6 +19,7 @@ import { hashToken } from '../auth/tokens.js';
 import { totpCode } from '../auth/totp.js';
 import { createDatabase, schema } from '../db/client.js';
 import { CommissionLedger } from '../domain/commission-ledger.js';
+import { WalletPoolChanges, WalletPoolService } from '../domain/wallet-pool-service.js';
 import { AdminService } from '../domain/admin-service.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
@@ -184,6 +185,8 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
 
     app = buildServer({
       ledger: new CommissionLedger(db),
+      walletPool: new WalletPoolService(db),
+      walletChanges: new WalletPoolChanges(db, new WalletPoolService(db), audit, mailer),
       env,
       db,
       audit,

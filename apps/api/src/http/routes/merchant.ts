@@ -537,6 +537,14 @@ export function invoiceCreationErrorResponse(error: InvoiceCreationError): {
     case 'asset_unlisted':
     case 'fixed_rate_required':
     case 'fixed_rate_expired':
+    case 'no_deposit_wallet':
+      /**
+       * 409, with the other "set your account up first" cases.
+       *
+       * The merchant enabled a currency on a chain whose deposit addresses are their own
+       * wallets, and registered none. The request is well formed and will work once they have —
+       * which is the same shape as a missing payout address, and the same status.
+       */
     case 'no_payout_address':
     case 'chain_unsupported':
       return { status: 409, body: { error: error.code, message: error.message } };

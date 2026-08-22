@@ -19,6 +19,15 @@ const MODULES = [
   // The curated asset list, so the preview's currency list *is* the real one. The import in
   // `preview.ts` is stripped by the inliner, so the module has to be named here.
   join(here, '..', '..', 'packages', 'core', 'dist', 'assets', 'registry.js'),
+  /**
+   * The chain registry, because the panel asks it which chains use a wallet pool.
+   *
+   * Named here for the same reason the asset list is: the inliner strips the import from
+   * `dashboard.ts`, so a module it depends on has to be concatenated ahead of it. Deciding
+   * "TRON is pooled" in the page instead would put the fact in two places, and the page is the
+   * copy that would go stale.
+   */
+  join(here, '..', '..', 'packages', 'core', 'dist', 'chains', 'registry.js'),
   join(here, 'dist', 'dashboard.js'),
   join(here, 'dist', 'preview.js'),
 ];

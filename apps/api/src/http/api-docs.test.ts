@@ -105,6 +105,8 @@ async function serverRoutes(): Promise<Set<string>> {
 
   const app = buildServer({
     ledger: stub,
+    walletPool: stub,
+    walletChanges: stub,
     env,
     db: stub,
     auth: stub,

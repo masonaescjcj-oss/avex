@@ -15,6 +15,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { createDatabase, schema } from '../db/client.js';
 import { CommissionLedger } from '../domain/commission-ledger.js';
+import { WalletPoolChanges, WalletPoolService } from '../domain/wallet-pool-service.js';
 import { AdminService } from '../domain/admin-service.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
@@ -69,6 +70,8 @@ const offlineCaller = {
 
 describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not set' }, () => {
   let app: FastifyInstance;
+  let ledger: CommissionLedger;
+  let walletPool: WalletPoolService;
   let close: () => Promise<void>;
   let db: ReturnType<typeof createDatabase>['db'];
   let feePlans: FeePlanService;
@@ -128,11 +131,23 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
           polygon: { factory: FACTORY, forwarderCreationCode: CREATION_CODE },
         },
         shared: { ton: TON_WALLET },
+        // TRON, so a pooled currency can reach the options list at all.
+        pooled: ['tron'],
       },
       'checkout-suite-memo-secret',
     );
     const rates = { requireRate: (symbol: never) => prices.requireRate(symbol) };
-    const invoiceCreation = new InvoiceCreationService(db, deriver, feePlans, rates, audit);
+    ledger = new CommissionLedger(db);
+    walletPool = new WalletPoolService(db);
+    const invoiceCreation = new InvoiceCreationService(
+      db,
+      deriver,
+      feePlans,
+      rates,
+      audit,
+      ledger,
+      walletPool,
+    );
 
     const settlements = new SettlementStore(db);
     const reconciliation = new ReconciliationService(db, audit, {
@@ -142,7 +157,9 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     });
 
     app = buildServer({
-      ledger: new CommissionLedger(db),
+      ledger,
+      walletPool,
+      walletChanges: new WalletPoolChanges(db, walletPool, audit, mailer),
       env,
       db,
       audit,
@@ -171,6 +188,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
         deriver,
         rates,
         audit,
+        ledger,
       ),
       webhooks: new WebhookService(
         db,
@@ -1105,6 +1123,69 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     });
     assert.equal(response.statusCode, 200, response.body);
     assert.equal(response.headers['access-control-allow-origin'], undefined);
+  });
+
+  test('a merchant past their balance limit stops offering the accruing chain', async () => {
+    /**
+     * The payer must never meet the merchant's billing state.
+     *
+     * Without this the option is offered, the payer taps it, and `select` answers 402 — a
+     * stranger's checkout failing because of somebody else's account balance, with no
+     * explanation that could be given to them without disclosing it. So the option arrives
+     * unavailable, with a reason about the currency rather than about the merchant.
+     */
+    const assetId = await enableAsset({ chain: 'tron', symbol: 'USDT', decimals: 6 });
+    await ensurePayout('tron');
+    /**
+     * A currency on a chain that takes its cut on chain, set up here rather than assumed.
+     *
+     * It is half the assertion: the refusal has to be limited to the accruing chain, because
+     * invoices on the others are what clear the balance. Relying on an asset an earlier test
+     * happened to enable made this depend on test order.
+     */
+    const evmAssetId = await enableAsset({ chain: 'bsc', symbol: 'USDT', decimals: 18 });
+    await ensurePayout('bsc');
+    await walletPool.register({
+      organizationId: orgId,
+      chain: 'tron',
+      address: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+    });
+
+    const session = JSON.parse(
+      (await createCheckout({ amountFiatMicros: '25000000' })).body,
+    ) as { id: string };
+
+    // Offered while the account is in good standing, so the refusal below is about the balance.
+    const before = JSON.parse((await optionsFor(session.id)).body) as {
+      options: { assetId: string; available: boolean; unavailableReason: string | null }[];
+    };
+    const offered = before.options.find((o) => o.assetId === assetId);
+    assert.equal(offered?.available, true, `not offered: ${offered?.unavailableReason}`);
+
+    await db.insert(schema.commissionLedger).values({
+      organizationId: orgId,
+      kind: 'accrual',
+      amountUsdMicros: '-600000000',
+      note: 'over the limit',
+    });
+
+    const after = JSON.parse((await optionsFor(session.id)).body) as {
+      options: { assetId: string; chain: string; available: boolean; unavailableReason: string | null }[];
+    };
+    const tron = after.options.find((option) => option.assetId === assetId);
+    assert.ok(tron, 'the option is still listed, not hidden');
+    assert.equal(tron.available, false);
+    assert.match(tron.unavailableReason ?? '', /temporarily unavailable/);
+    // And it says nothing about why, because that is not the payer's business.
+    assert.ok(!/balance|owe|commission/i.test(tron.unavailableReason ?? ''));
+
+    // The merchant's other chains are untouched: those invoices are what clear the balance.
+    const evm = after.options.find((option) => option.assetId === evmAssetId);
+    assert.equal(evm?.available, true, `EVM option refused too: ${evm?.unavailableReason}`);
+
+    await db
+      .delete(schema.commissionLedger)
+      .where(eq(schema.commissionLedger.organizationId, orgId));
   });
 
   test('a preflight is answered for an allowed origin', async () => {

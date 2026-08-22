@@ -45,6 +45,18 @@ const FIXTURE = {
    * Zero hides the block entirely, which is correct for an account that has never taken a TRON
    * payment and useless for testing what the block renders.
    */
+  /**
+   * One live wallet and one waiting out its delay — the two states the panel draws differently.
+   */
+  wallets: {
+    wallets: [
+      { id: 'w1', chain: 'tron', address: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', label: 'main', retiredAt: null },
+      { id: 'w2', chain: 'tron', address: 'TWKxbjHnf3EY3mZvYUcaLLxLBnMhqUXsQ4', label: null, retiredAt: '2026-08-01T00:00:00.000Z' },
+    ],
+    pending: [
+      { id: 'wc1', chain: 'tron', address: 'TVyAZdNetsrqLL4nKijTKTpyJA7gV5bRRE', effectiveAt: '2099-01-01T00:00:00.000Z' },
+    ],
+  },
   balance: {
     balanceUsdMicros: '-320000',
     creditLimitUsdMicros: '500000000',
@@ -87,6 +99,8 @@ const FIXTURE = {
       { id: 'a1', symbol: 'USDT', chain: 'bsc', contract: '0x55d3', decimals: 18, kind: 'erc20', curated: true, verdict: 'approved', listed: true, requiresFixedRate: false, enabled: true, pricingMode: 'fiat', fixedRateValidUntil: null },
       { id: 'a2', symbol: 'USDT', chain: 'ton', contract: 'EQCx', decimals: 6, kind: 'jetton', curated: true, verdict: 'approved', listed: true, requiresFixedRate: false, enabled: true, pricingMode: 'fiat', fixedRateValidUntil: null },
       { id: 'a3', symbol: 'MINE', chain: 'bsc', contract: '0x9f2c', decimals: 18, kind: 'erc20', curated: false, verdict: 'review', listed: true, requiresFixedRate: true, enabled: false, pricingMode: null, fixedRateValidUntil: null },
+      // TRON, so the wallet pool has a chain to be about. It is the only pooled one today.
+      { id: 'a4', symbol: 'USDT', chain: 'tron', contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', decimals: 6, kind: 'trc20', curated: true, verdict: 'approved', listed: true, requiresFixedRate: false, enabled: true, pricingMode: 'fiat', fixedRateValidUntil: null },
     ],
   },
   payouts: { addresses: [{ chain: 'bsc', address: '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52', activeFrom: '2026-08-01T00:00:00.000Z', supersededAt: null }] },
@@ -276,6 +290,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       if (path.endsWith('/invites')) return route.fulfill(json(data.invites));
       if (path.endsWith('/commission')) return route.fulfill(json(data.commission));
       if (path.endsWith('/balance')) return route.fulfill(json(data.balance));
+      if (path.endsWith('/deposit-wallets')) return route.fulfill(json(data.wallets));
       if (path.endsWith('/reports/volume')) return route.fulfill(json(data.report));
       if (path.endsWith('/assets')) return route.fulfill(json(data.assets));
       if (path.endsWith('/payout-addresses')) return route.fulfill(json(data.payouts));
@@ -1489,6 +1504,59 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.match(rows[0], /yours/);
     // Exactly one rung is theirs, or the table is telling them two different prices.
     assert.equal(rows.filter((row) => /yours/.test(row)).length, 1);
+    await context.close();
+  });
+
+  // ── the wallet pool ───────────────────────────────────────────────────────
+
+  test('the wallet pool lists what is live, what is retired, and what is waiting', async () => {
+    /**
+     * The pending row is the one that matters. It is the whole reason for the twenty-four hours,
+     * and it carries the control that stops it — so it has to be visible to the member who did
+     * not request it rather than buried under wallets that already work.
+     */
+    const { page, context } = await open();
+    await page.click('nav.tabs button:has-text("Payouts")');
+    await page.waitForTimeout(200);
+
+    const body = await text(page, '#wallets-panel');
+    assert.match(body, /Your own wallets on TRON/);
+    assert.match(body, /in use/);
+    assert.match(body, /retired/);
+    // The scheduled one says how long is left, not just that it is pending.
+    assert.match(body, /in \d/);
+    assert.ok(await page.$('#wallet-table button:has-text("Cancel")'));
+    assert.ok(await page.$('#wallet-table button:has-text("Retire")'));
+    await context.close();
+  });
+
+  test('the pool says plainly that the first wallet is immediate and the rest are not', async () => {
+    /**
+     * A merchant who adds their second wallet and finds it does nothing for a day, with no
+     * warning, will conclude the panel is broken and try again — which is how somebody ends up
+     * with three scheduled wallets they did not want.
+     */
+    const { page, context } = await open();
+    await page.click('nav.tabs button:has-text("Payouts")');
+    await page.waitForTimeout(200);
+    const body = await text(page, '#wallets-panel');
+    assert.match(body, /first wallet is usable at once/);
+    assert.match(body, /waits 24 hours/);
+    assert.match(body, /Retiring one is\s+immediate/);
+    await context.close();
+  });
+
+  test('a merchant with no pooled currency is shown no pool at all', async () => {
+    /**
+     * A panel explaining a TRON-only mechanism to somebody who takes only BSC is a paragraph
+     * they have to read in order to discover it does not apply to them.
+     */
+    const { page, context } = await open({
+      assets: { data: FIXTURE.assets.data.filter((asset) => asset.chain !== 'tron') },
+    });
+    await page.click('nav.tabs button:has-text("Payouts")');
+    await page.waitForTimeout(200);
+    assert.equal(await page.$eval('#wallets-panel', (node) => node.hidden), true);
     await context.close();
   });
 

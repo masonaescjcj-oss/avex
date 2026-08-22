@@ -7,6 +7,7 @@ import {
   fiatToTokenAmount,
   tokenAmountToFiat,
   type Asset,
+  type ChainId,
   type FeePayer,
   type FeeSplit,
   type PriceSymbol,
@@ -19,6 +20,8 @@ import type { Database } from '../db/client.js';
 import { assets, invoices, merchantAssets, payoutAddresses, quotes } from '../db/schema.js';
 import type { AuditService } from './audit.js';
 import { surchargeBps } from './commission-ledger.js';
+import { WalletPoolError } from './wallet-pool-allocator.js';
+import type { WalletPoolService } from './wallet-pool-service.js';
 import type { CommissionLedger } from './commission-ledger.js';
 import { DepositAddressError, type DepositAddressDeriver } from './deposit-address.js';
 import type { FeePlanService } from './fee-plan-service.js';
@@ -49,6 +52,7 @@ export class InvoiceCreationError extends Error {
       | 'fixed_rate_required'
       | 'fixed_rate_expired'
       | 'no_payout_address'
+      | 'no_deposit_wallet'
       | 'price_unavailable'
       | 'amount_invalid'
       | 'chain_unsupported'
@@ -149,6 +153,14 @@ export class InvoiceCreationService {
      * refused — a deployment without a ledger has no balances to be over a limit on.
      */
     private readonly ledger?: CommissionLedger | undefined,
+    /**
+     * The wallet pool, needed only for pooled chains.
+     *
+     * Optional so a deployment offering none of them constructs this service unchanged. Its
+     * absence on a pooled chain is our misconfiguration and is reported as one rather than
+     * silently producing an invoice with no address.
+     */
+    private readonly pool?: WalletPoolService | undefined,
   ) {}
 
   async create(
@@ -308,9 +320,33 @@ export class InvoiceCreationService {
      * payment finds its invoice, doing the job a deposit address does everywhere else —
      * which is why it goes in the same column rather than a new one.
      */
+    /**
+     * A pooled chain is the one case where the address is not known before the write.
+     *
+     * Everywhere else the deposit address comes from configuration and an id — a CREATE2 hash,
+     * or one shared wallet plus a memo — so it can be computed and then written. A pooled
+     * address is chosen against the invoices currently open on the merchant's wallets, and the
+     * amount is chosen to be unique among them, so both have to be decided inside the
+     * transaction that writes this invoice. Otherwise two concurrent creations read the same
+     * state and produce two invoices asking for one amount at one address, which is the single
+     * state this design cannot untangle afterwards.
+     *
+     * Test mode is excluded deliberately: `derive` answers a test invoice with an address no
+     * wallet will accept, and a test invoice must not consume a slot in a real pool or become
+     * payable by accident.
+     */
+    const pooled =
+      !config.stars && mode !== 'test' && this.deriver.isPooled(config.asset.chain);
+
     let target;
     if (config.stars) {
       target = { address: `${TELEGRAM_RAIL}:${invoiceId}`, memo: undefined };
+    } else if (pooled) {
+      /**
+       * Filled in by the allocation below. Not `undefined` here so the row builder can be one
+       * function rather than two: the alternative was duplicating a twenty-field insert.
+       */
+      target = { address: '', memo: undefined };
     } else {
       try {
         target = this.deriver.derive({
@@ -337,37 +373,94 @@ export class InvoiceCreationService {
       }
     }
 
-    const [created] = await this.db
-      .insert(invoices)
-      .values({
-        id: invoiceId,
-        organizationId,
-        assetId: config.asset.id,
-        quoteId: quoteRow!.id,
-        reference: request.reference ?? null,
-        /**
-         * The grossed-up figure when the payer bears the fee, so this is deliberately not
-         * the quote's amount. The quote records what the goods cost; the invoice records
-         * what the payer is asked to send, which is that plus the disclosed commission.
-         */
-        amountDue: charged.amountDue.toString(),
-        mode,
-        chain: config.asset.chain,
-        depositAddress: target.address,
-        memo: target.memo ?? null,
-        payoutAddress,
-        feeBps: fee?.feeBps ?? 0,
-        feeDestination: fee?.feeDestination ?? null,
-        accruedFeeBps: fee?.accruedFeeBps ?? 0,
-        recoveryBps: fee?.recoveryBps ?? 0,
-        // Recorded, not derived: the same 20.1 USDT could be a payer-paid 20 USDT invoice
-        // or a merchant-paid 20.1 one, and afterwards nothing else could tell them apart.
-        feePayer: charged.surcharge > 0n ? feePayer : 'merchant',
-        toleranceBps: config.toleranceBps,
-        expiresAt: new Date(quote.expiresAt),
-      })
-      .onConflictDoNothing()
-      .returning();
+    /**
+     * The row, as a function of the two things a pooled chain decides late.
+     *
+     * One builder rather than two copies of a twenty-field insert: the fields that differ are
+     * the address and the amount, and a second copy is how one of them ends up stale.
+     */
+    const invoiceRow = (address: string, amountDue: bigint) => ({
+      id: invoiceId,
+      organizationId,
+      assetId: config.asset.id,
+      quoteId: quoteRow!.id,
+      reference: request.reference ?? null,
+      /**
+       * The grossed-up figure when the payer bears the fee, so this is deliberately not
+       * the quote's amount. The quote records what the goods cost; the invoice records
+       * what the payer is asked to send, which is that plus the disclosed commission.
+       */
+      amountDue: amountDue.toString(),
+      mode,
+      chain: config.asset.chain,
+      depositAddress: address,
+      memo: target.memo ?? null,
+      payoutAddress,
+      feeBps: fee?.feeBps ?? 0,
+      feeDestination: fee?.feeDestination ?? null,
+      accruedFeeBps: fee?.accruedFeeBps ?? 0,
+      recoveryBps: fee?.recoveryBps ?? 0,
+      // Recorded, not derived: the same 20.1 USDT could be a payer-paid 20 USDT invoice
+      // or a merchant-paid 20.1 one, and afterwards nothing else could tell them apart.
+      feePayer: charged.surcharge > 0n ? feePayer : 'merchant',
+      toleranceBps: config.toleranceBps,
+      expiresAt: new Date(quote.expiresAt),
+    });
+
+    let created;
+    if (pooled) {
+      if (!this.pool) {
+        throw new InvoiceCreationError(
+          'not_configured',
+          `${config.asset.chain} is a pooled chain and this deployment has no wallet pool ` +
+            'service wired. Our misconfiguration, not the request.',
+        );
+      }
+      const pool = this.pool;
+      try {
+        created = await this.db.transaction(async (tx) => {
+          const allocation = await pool.allocate(tx, {
+            organizationId,
+            chain: config.asset.chain as ChainId,
+            /**
+             * The base is the grossed-up figure, so the disambiguator sits on top of what the
+             * payer was going to be asked for either way. Adding it before the gross-up would
+             * put a fraction of a cent of commission on a fraction of a cent of disambiguator,
+             * which is arithmetic nobody could reproduce from the invoice.
+             */
+            base: charged.amountDue,
+            decimals: config.asset.decimals,
+          });
+          const [row] = await tx
+            .insert(invoices)
+            .values(invoiceRow(allocation.address, allocation.amountDue))
+            .onConflictDoNothing()
+            .returning();
+          return row;
+        });
+      } catch (error: unknown) {
+        if (error instanceof WalletPoolError) {
+          /**
+           * The merchant's problem, reported as theirs.
+           *
+           * `pool_empty` is the one that will actually happen: they enabled a pooled currency
+           * and never registered a wallet for it. Reported as a configuration error, like a
+           * missing payout address, rather than as an internal failure.
+           */
+          throw new InvoiceCreationError(
+            error.code === 'pool_empty' ? 'no_deposit_wallet' : 'not_configured',
+            error.message,
+          );
+        }
+        throw error;
+      }
+    } else {
+      [created] = await this.db
+        .insert(invoices)
+        .values(invoiceRow(target.address, charged.amountDue))
+        .onConflictDoNothing()
+        .returning();
+    }
 
     /**
      * A conflict means another request created this reference between our first look

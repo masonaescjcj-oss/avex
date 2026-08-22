@@ -17,6 +17,7 @@ import { createDatabase } from '../db/client.js';
 import { issueApiKey } from '../auth/tokens.js';
 import { apiKeys, memberships, organizationInvites } from '../db/schema.js';
 import { CommissionLedger } from '../domain/commission-ledger.js';
+import { WalletPoolChanges, WalletPoolService } from '../domain/wallet-pool-service.js';
 import { AdminService } from '../domain/admin-service.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
@@ -188,6 +189,8 @@ describe('member invitations', { skip: databaseUrl ? false : 'DATABASE_URL not s
 
     app = buildServer({
       ledger: new CommissionLedger(db),
+      walletPool: new WalletPoolService(db),
+      walletChanges: new WalletPoolChanges(db, new WalletPoolService(db), audit, mailer),
       env,
       db,
       audit,

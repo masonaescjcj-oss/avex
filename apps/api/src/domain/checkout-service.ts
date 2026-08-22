@@ -333,18 +333,11 @@ export class CheckoutService {
       ? true
       : await this.ledger.withinCreditLimit(session.organizationId);
     /**
-     * Not reachable yet, and deliberately written before it is.
+     * Reachable as of the pooled-invoice wiring, and mutation-tested.
      *
-     * `payableAssets` filters to chains `DepositAddressDeriver.supportedChains()` knows, and a
-     * pooled chain is in neither of its two maps — its deposit address comes from the merchant's
-     * wallet pool in the database, not from configuration. So no pooled asset reaches this loop
-     * until the allocator is wired into invoice creation, and there is no end-to-end test of
-     * this branch because there is no path to it.
-     *
-     * Written now anyway, because the alternative is worse: the day pooled invoices start being
-     * created, the first merchant over their limit would have their *customers* see a 402 at
-     * checkout. That is a payer meeting somebody else's billing state, and it is much easier to
-     * put the guard here than to remember it later.
+     * The reason it exists: an account past its limit would otherwise show the payer a TRON
+     * option, take their tap, and answer 402 — a stranger meeting somebody else's billing
+     * state, with no explanation that could be given without disclosing it.
      */
 
     for (const entry of payable) {

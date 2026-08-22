@@ -19,6 +19,7 @@ import { eq } from 'drizzle-orm';
 
 import { createDatabase, schema } from '../db/client.js';
 import { CommissionLedger } from '../domain/commission-ledger.js';
+import { WalletPoolChanges, WalletPoolService } from '../domain/wallet-pool-service.js';
 import { PriceTickWriter } from '../domain/price-repository.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
@@ -185,6 +186,14 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
 
     app = buildServer({
       ledger: new CommissionLedger(database.db),
+      walletPool: new WalletPoolService(database.db),
+      walletChanges: new WalletPoolChanges(
+        database.db,
+        new WalletPoolService(database.db),
+        audit,
+        // No wallet notice is sent in these cases; the transport only has to exist.
+        new ConsoleMailer('http://localhost', () => {}),
+      ),
       env,
       db: database.db,
       audit,
@@ -631,6 +640,14 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
 
     app = buildServer({
       ledger: new CommissionLedger(database.db),
+      walletPool: new WalletPoolService(database.db),
+      walletChanges: new WalletPoolChanges(
+        database.db,
+        new WalletPoolService(database.db),
+        audit,
+        // No wallet notice is sent in these cases; the transport only has to exist.
+        new ConsoleMailer('http://localhost', () => {}),
+      ),
       env,
       db: database.db,
       audit,
@@ -833,6 +850,14 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
 
     app = buildServer({
       ledger: new CommissionLedger(database.db),
+      walletPool: new WalletPoolService(database.db),
+      walletChanges: new WalletPoolChanges(
+        database.db,
+        new WalletPoolService(database.db),
+        audit,
+        // No wallet notice is sent in these cases; the transport only has to exist.
+        new ConsoleMailer('http://localhost', () => {}),
+      ),
       env,
       db: database.db,
       audit,
@@ -1137,6 +1162,14 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
 
     app = buildServer({
       ledger: new CommissionLedger(database.db),
+      walletPool: new WalletPoolService(database.db),
+      walletChanges: new WalletPoolChanges(
+        database.db,
+        new WalletPoolService(database.db),
+        audit,
+        // No wallet notice is sent in these cases; the transport only has to exist.
+        new ConsoleMailer('http://localhost', () => {}),
+      ),
       env,
       db: database.db,
       audit,

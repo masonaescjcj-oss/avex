@@ -545,6 +545,34 @@
           </form>
         </div>
       </div>
+
+      <div class="panel" id="wallets-panel" hidden>
+        <div class="panel-head"><h2>👛 Your own wallets on TRON</h2></div>
+        <div class="panel-body">
+          <p class="note">
+            On TRON your customers pay straight into a wallet of yours — no contract of ours in
+            the path, nothing to sweep, and no network fee for us to pass on. Register three to
+            five addresses and we hand them out; each invoice asks for a very slightly different
+            amount, a fraction of a cent apart, and that is how two payments to one address are
+            told apart.
+          </p>
+          <p class="warn-note">
+            Your first wallet is usable at once. Every one after it waits 24 hours and everyone
+            in your organization is emailed, because these are addresses your money lands in —
+            the same protection a payout address gets, for the same reason. Retiring one is
+            immediate.
+          </p>
+          <div class="scroll"><table id="wallet-table"></table></div>
+          <form id="wallet-form">
+            <div class="row">
+              <label>Chain<select id="wallet-chain"></select></label>
+              <label>Address<input class="mono" id="wallet-address" placeholder="T…" required></label>
+              <label>Label<input id="wallet-label" placeholder="optional"></label>
+              <button class="primary" type="submit">Add wallet</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </section>
 
     <!-- webhooks -->
@@ -1543,6 +1571,140 @@
     ]);
   }
 
+  /**
+   * The wallet pool, shown only on the chains that have one.
+   *
+   * Hidden entirely when the merchant accepts nothing pooled. A panel explaining a TRON-only
+   * mechanism to somebody who takes only BSC is a paragraph they have to read to find out it
+   * does not apply to them.
+   */
+  function renderWallets() {
+    const data = cache.wallets;
+    const panel = el('wallets-panel');
+    /**
+     * Which of the merchant's chains are pooled, taken from the currencies they can accept.
+     *
+     * `pooledChains` comes from the shared chain registry, so the page cannot disagree with the
+     * server about which chains work this way — the list is one fact in one place.
+     */
+    const chains = pooledChains([...new Set((cache.assets || []).map((asset) => asset.chain))]);
+    if (!data || chains.length === 0) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+
+    fill(el('wallet-chain'), chains.map((chain) => h('option', { value: chain, text: chain })));
+
+    const wallets = (data.wallets || []).filter((wallet) => chains.includes(wallet.chain));
+    const pending = data.pending || [];
+
+    const rows = [
+      /**
+       * Scheduled additions first, because they are the ones somebody might need to stop.
+       *
+       * A pending row is the whole point of the delay: if it is buried under a list of wallets
+       * that are already working, the member who did not request it will not see it.
+       */
+      ...pending.map((change) =>
+        h('tr', {}, [
+          h('td', { class: 'mono', text: change.chain }),
+          h('td', { class: 'mono', title: change.address, text: shortenAddress(change.address) }),
+          h('td', { text: '—' }),
+          h('td', {}, [h('span', { class: 'pill', 'data-tone': 'warn', text: 'in ' + (formatUntil(change.effectiveAt) ?? 'moments') })]),
+          h('td', {}, [
+            h('button', {
+              class: 'ghost',
+              type: 'button',
+              text: 'Cancel',
+              onclick: () => void cancelWallet(change.id),
+            }),
+          ]),
+        ]),
+      ),
+      ...wallets.map((wallet) =>
+        h('tr', {}, [
+          h('td', { class: 'mono', text: wallet.chain }),
+          h('td', { class: 'mono', title: wallet.address, text: shortenAddress(wallet.address) }),
+          h('td', { text: wallet.label ?? '—' }),
+          h('td', {}, [
+            h('span', {
+              class: 'pill',
+              'data-tone': wallet.retiredAt ? 'dead' : 'good',
+              text: wallet.retiredAt ? 'retired' : 'in use',
+            }),
+          ]),
+          h('td', {}, [
+            wallet.retiredAt
+              ? null
+              : h('button', {
+                  class: 'ghost',
+                  type: 'button',
+                  text: 'Retire',
+                  onclick: () => void retireWallet(wallet.id),
+                }),
+          ]),
+        ]),
+      ),
+    ];
+
+    fill(el('wallet-table'), rows.length === 0
+      ? [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No wallets yet. Add one to start taking TRON payments.' })])])]
+      : [
+          h('thead', {}, [h('tr', {}, ['Chain', 'Address', 'Label', 'State', ''].map((label) => h('th', { text: label })))]),
+          h('tbody', {}, rows),
+        ]);
+  }
+
+  async function retireWallet(walletId) {
+    try {
+      await api('/v1/organizations/' + orgId + '/deposit-wallets/' + walletId, { method: 'DELETE' });
+      flash('Retired. Payments to invoices already open on it are still credited.', 'ok');
+      await refresh('payouts');
+    } catch (problem) {
+      flash(problem.message, 'error');
+    }
+  }
+
+  async function cancelWallet(changeId) {
+    try {
+      await api('/v1/organizations/' + orgId + '/deposit-wallets/pending/' + changeId, {
+        method: 'DELETE',
+      });
+      flash('Cancelled. That wallet will not be added.', 'ok');
+      await refresh('payouts');
+    } catch (problem) {
+      flash(problem.message, 'error');
+    }
+  }
+
+  el('wallet-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      const label = el('wallet-label').value.trim();
+      const body = await api('/v1/organizations/' + orgId + '/deposit-wallets', {
+        method: 'POST',
+        body: JSON.stringify({
+          chain: el('wallet-chain').value,
+          address: el('wallet-address').value.trim(),
+          ...(label === '' ? {} : { label }),
+        }),
+      });
+      el('wallet-address').value = '';
+      el('wallet-label').value = '';
+      /**
+       * The server's own message, not one written here.
+       *
+       * The two outcomes differ in the only way that matters — usable now, or in a day — and
+       * the API already says which. Re-deciding it in the page is how the two come to disagree.
+       */
+      flash(body.message, body.status === 'pending' ? 'warn' : 'ok');
+      await refresh('payouts');
+    } catch (problem) {
+      flash(problem.message, 'error');
+    }
+  });
+
   el('payout-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
@@ -2208,10 +2370,16 @@
       } else if (view === 'assets') {
         await reloadAssets();
       } else if (view === 'payouts') {
-        const [assets, payouts] = await Promise.all([api(base + '/assets'), api(base + '/payout-addresses')]);
+        const [assets, payouts, wallets] = await Promise.all([
+          api(base + '/assets'),
+          api(base + '/payout-addresses'),
+          api(base + '/deposit-wallets'),
+        ]);
         cache.assets = assetList(assets);
         cache.payouts = payouts.addresses || payouts.payoutAddresses || payouts;
+        cache.wallets = wallets;
         renderPayouts();
+        renderWallets();
       } else if (view === 'webhooks') {
         const [endpoints, deliveries] = await Promise.all([
           api(base + '/webhook-endpoints'),
