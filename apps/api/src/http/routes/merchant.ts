@@ -94,6 +94,7 @@ function serialiseInvoice(invoice: {
   depositAddress: string;
   memo: string | null;
   feeBps: number;
+  networkFeeBps: number;
   feePayer: 'merchant' | 'payer';
   toleranceBps: number;
   createdAt: Date;
@@ -117,8 +118,16 @@ function serialiseInvoice(invoice: {
     depositAddress: invoice.depositAddress,
     memo: invoice.memo,
     feeBps: invoice.feeBps,
+    /**
+     * The part of `feeBps` that pays for the transfer rather than for us.
+     *
+     * Returned so the total is explainable: a merchant on 0.5% who sees 62 basis points on an
+     * invoice is owed the twelve, and the answer — what the chain charged to move this payment,
+     * added to what the payer sends — is not one they could work out from anything else here.
+     */
+    networkFeeBps: invoice.networkFeeBps,
     feePayer: invoice.feePayer,
-    /** What reaches the merchant when `amountDue` arrives, after the commission. */
+    /** What reaches the merchant when `amountDue` arrives, after the whole split. */
     amountNet: amountAfterFee(BigInt(invoice.amountDue), invoice.feeBps).toString(),
     toleranceBps: invoice.toleranceBps,
     createdAt: invoice.createdAt.toISOString(),

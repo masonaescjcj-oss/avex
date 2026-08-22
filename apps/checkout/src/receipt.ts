@@ -173,6 +173,15 @@ export function previewReceipt() {
     transfers: [],
     feeBps: 0,
     feeIncluded: '0',
+    /**
+     * A network fee the preview actually shows, because the line exists to be checked.
+     *
+     * Seventeen basis points of $20.10 is about 3.4 cents — a BSC settlement at a realistic gas
+     * price. A preview that zeroed it would render a page with the row hidden, which is the one
+     * state nobody needs a preview of.
+     */
+    networkFeeBps: 17,
+    networkFeeIncluded: '34170854271186784',
     issuedAt: '2026-08-18T09:00:00.000Z',
     paidAt,
   };

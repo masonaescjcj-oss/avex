@@ -319,6 +319,7 @@
         else was charged.
       -->
       <div class="row" id="row-fee" hidden><dt id="fee-label">Service fee</dt><dd id="fee"></dd></div>
+      <div class="row" id="row-network-fee" hidden><dt id="network-fee-label">Network fee</dt><dd id="network-fee"></dd></div>
       <div class="row"><dt>Issued</dt><dd id="issued-at">—</dd></div>
     </dl>
 
@@ -501,6 +502,15 @@ function previewReceipt() {
         transfers: [],
         feeBps: 0,
         feeIncluded: '0',
+        /**
+         * A network fee the preview actually shows, because the line exists to be checked.
+         *
+         * Seventeen basis points of $20.10 is about 3.4 cents — a BSC settlement at a realistic gas
+         * price. A preview that zeroed it would render a page with the row hidden, which is the one
+         * state nobody needs a preview of.
+         */
+        networkFeeBps: 17,
+        networkFeeIncluded: '34170854271186784',
         issuedAt: '2026-08-18T09:00:00.000Z',
         paidAt,
     };
@@ -613,6 +623,25 @@ function previewReceipt() {
         'Service fee (' + (receipt.feeBps / 100).toFixed(2).replace(/\.?0+$/, '') + '%)';
       el('fee').textContent =
         formatUnits(receipt.feeIncluded, receipt.decimals) + ' ' + receipt.symbol + ' of the above';
+    }
+
+    /**
+     * The transfer's own cost, as its own line.
+     *
+     * Kept separate from the service fee because they are separate charges with separate
+     * causes: one is what this gateway costs, the other is what the chain charged to move the
+     * money. A payer reading a receipt six months later, wondering why $20 of goods cost
+     * $20.14, is owed the second line rather than left to assume the first grew.
+     */
+    if (receipt.networkFeeBps > 0 && receipt.networkFeeIncluded !== '0') {
+      el('row-network-fee').hidden = false;
+      el('network-fee-label').textContent =
+        'Network fee (' + (receipt.networkFeeBps / 100).toFixed(2).replace(/\.?0+$/, '') + '%)';
+      el('network-fee').textContent =
+        formatUnits(receipt.networkFeeIncluded, receipt.decimals) +
+        ' ' +
+        receipt.symbol +
+        ' of the above';
     }
 
     el('issued-at').textContent = new Date(receipt.issuedAt).toLocaleString();

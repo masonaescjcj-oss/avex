@@ -848,6 +848,7 @@
               is answering.
             -->
             <div class="summary-row" id="summary-fee-row" hidden><dt id="summary-fee-label">Service fee</dt><dd id="summary-fee">—</dd></div>
+            <div class="summary-row" id="summary-network-fee-row" hidden><dt id="summary-network-fee-label">Network fee</dt><dd id="summary-network-fee">—</dd></div>
             <div class="summary-row total"><dt>You send</dt><dd id="summary-total">—</dd></div>
           </dl>
         </div>
@@ -1156,6 +1157,15 @@
          */
         feeIncluded: network.feeIncluded ?? '0',
         feeBps: network.feeBps ?? 0,
+        /**
+         * And what the chain charges to move it, which is on every network we settle on.
+         *
+         * The reason this belongs per network rather than per currency: the same USDT costs a
+         * few cents to move on one chain and nothing on another, and that difference is most of
+         * what a payer is choosing between here.
+         */
+        networkFeeIncluded: network.networkFeeIncluded ?? '0',
+        networkFeeBps: network.networkFeeBps ?? 0,
         address: null,
       }));
     }
@@ -1430,6 +1440,7 @@
       el('summary-amount').textContent = '$' + INVOICE_USD.toFixed(2);
       // Nothing is chosen, so there is no chain and therefore no known commission.
       el('summary-fee-row').hidden = true;
+      el('summary-network-fee-row').hidden = true;
       // The rate is a property of the currency, so it is knowable as soon as one is
       // picked — and must not read '1 USDT = $1.00' before anything is.
       el('summary-rate').textContent =
@@ -1528,6 +1539,8 @@
       // what the payer is being held to, and its figure is the one a dispute would cite.
       feeIncluded: payment.feeIncluded ?? '0',
       feeBps: payment.feeBps ?? 0,
+      networkFeeIncluded: payment.networkFeeIncluded ?? '0',
+      networkFeeBps: payment.networkFeeBps ?? 0,
       invoiceId: payment.invoiceId,
       toleranceBps: payment.toleranceBps,
     };
@@ -1544,18 +1557,36 @@
    * the percentage explains where it came from.
    */
   function renderFeeLine() {
-    const row = el('summary-fee-row');
-    const included = selected && selected.feeIncluded ? String(selected.feeIncluded) : '0';
-    if (!selected || included === '0' || !selected.feeBps) {
+    feeLine('summary-fee-row', 'summary-fee-label', 'summary-fee', 'Service fee', 'feeBps', 'feeIncluded');
+    /**
+     * The cost of the transfer, on its own line.
+     *
+     * Two lines rather than one total, because a payer comparing networks is comparing this
+     * number and folding it into "Service fee" would tell them we got dearer when the chain
+     * did. It is shown whoever bears the commission — nobody can absorb what the chain charges.
+     */
+    feeLine(
+      'summary-network-fee-row',
+      'summary-network-fee-label',
+      'summary-network-fee',
+      'Network fee',
+      'networkFeeBps',
+      'networkFeeIncluded',
+    );
+  }
+
+  /** One disclosed line: hidden when there is nothing to disclose, never shown as a zero. */
+  function feeLine(rowId, labelId, valueId, label, bpsKey, amountKey) {
+    const row = el(rowId);
+    const included = selected && selected[amountKey] ? String(selected[amountKey]) : '0';
+    if (!selected || included === '0' || !selected[bpsKey]) {
       row.hidden = true;
       return;
     }
 
     row.hidden = false;
-    el('summary-fee-label').textContent =
-      'Service fee (' + trimNumber(selected.feeBps / 100) + '%)';
-    el('summary-fee').textContent =
-      formatUnits(included, selected.decimals ?? 0) + ' ' + selected.asset;
+    el(labelId).textContent = label + ' (' + trimNumber(selected[bpsKey] / 100) + '%)';
+    el(valueId).textContent = formatUnits(included, selected.decimals ?? 0) + ' ' + selected.asset;
   }
 
   /** 0.5 rather than 0.50, and 1 rather than 1.00. */

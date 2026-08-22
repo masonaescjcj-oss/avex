@@ -284,7 +284,23 @@ export class InvoiceCreationService {
      * balance, and grossing it onto the payer would charge a stranger for somebody else's
      * account.
      */
-    const charged = applyFeePayer(quote.amountDue, surchargeBps(fee), feePayer);
+    /**
+     * The cost of the transfer, added whoever bears the commission.
+     *
+     * This is the one part of the fee that is not a price: it is what the chain charges to move
+     * the payment, and it is passed to the payer on every invoice on a chain we settle on. A $20
+     * order on a chain where a settlement costs ten cents is issued for $20.10 — the merchant
+     * still receives $20, and the ten cents reaches the collector that funds the gas wallet
+     * through the same on-chain split that takes the commission.
+     *
+     * It reaches this line already decided, because it had to be: it is inside `fee.feeBps`,
+     * which the deposit address is derived from. Nothing here may reconsider it.
+     */
+    const networkFeeBps = fee?.networkFeeBps ?? 0;
+    const charged = applyFeePayer(quote.amountDue, surchargeBps(fee), feePayer, networkFeeBps);
+    /** Whether the *commission* was grossed onto the payer, which the network fee no longer implies. */
+    const commissionPassedOn: FeePayer =
+      feePayer === 'payer' && surchargeBps(fee) > 0 ? 'payer' : 'merchant';
 
     // 5. Write the quote, then derive the address from the id it was given, then the
     //    invoice. The id has to exist before the address can be derived from it.
@@ -400,9 +416,18 @@ export class InvoiceCreationService {
       feeDestination: fee?.feeDestination ?? null,
       accruedFeeBps: fee?.accruedFeeBps ?? 0,
       recoveryBps: fee?.recoveryBps ?? 0,
-      // Recorded, not derived: the same 20.1 USDT could be a payer-paid 20 USDT invoice
-      // or a merchant-paid 20.1 one, and afterwards nothing else could tell them apart.
-      feePayer: charged.surcharge > 0n ? feePayer : 'merchant',
+      networkFeeBps,
+      /**
+       * Recorded, not derived: the same 20.1 USDT could be a payer-paid 20 USDT invoice or a
+       * merchant-paid 20.1 one, and afterwards nothing else could tell them apart.
+       *
+       * The commission's payer specifically, which is why this is not simply "was anything
+       * added". A network fee is added to every invoice on a settling chain, so a surcharge no
+       * longer implies the merchant passed their commission on — and recording `payer` here on
+       * an invoice where they did not would make the payment page disclose the whole fee as
+       * theirs to have paid.
+       */
+      feePayer: commissionPassedOn,
       toleranceBps: config.toleranceBps,
       expiresAt: new Date(quote.expiresAt),
     });
@@ -492,6 +517,9 @@ export class InvoiceCreationService {
         // Recorded because it is the number a merchant is most likely to dispute
         // later, and it cannot be recovered from the address afterwards.
         feeBps: fee?.feeBps ?? 0,
+        // The part of it that paid for the transfer rather than for us, because a merchant
+        // reconciling their settlement against the invoice will find the difference here.
+        networkFeeBps,
         feePayer,
         // What the payer was asked for beyond the price, and what the merchant should
         // expect to receive. Both are the figures a dispute would be about.

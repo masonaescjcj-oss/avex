@@ -660,11 +660,32 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
 
 <span class="c"># 201 Created — amountDue is grossed up, amountNet is what reaches you</span>
 {
-  <span class="k">"amountDue"</span>: <span class="s">"20100502512562814071"</span>,
+  <span class="k">"amountDue"</span>: <span class="s">"20124652095076906358"</span>,
   <span class="k">"amountNet"</span>: <span class="s">"20000000000000000000"</span>,
-  <span class="k">"feeBps"</span>: <span class="s">50</span>,
+  <span class="k">"feeBps"</span>: <span class="s">62</span>,
+  <span class="k">"networkFeeBps"</span>: <span class="s">12</span>,
   <span class="k">"feePayer"</span>: <span class="s">"payer"</span>
 }</pre>
+      <p>
+        <strong>The transfer costs something, and that part is always the customer's.</strong>
+        <code>feeBps</code> above is 62 rather than your 50, and the twelve is
+        <code>networkFeeBps</code>: what the chain charged to move this particular payment,
+        measured when the invoice was created and expressed as a share of it. A $20 order on BNB
+        Chain at a quiet moment is issued for about $20.02; the same order on TRON is issued for
+        $20.00, because there the payment lands in your own wallet and we send nothing.
+      </p>
+      <p class="note">
+        It is not subject to <code>feePayer</code>, and that is deliberate rather than an
+        oversight. The commission is a price you may absorb as a courtesy to your customer;
+        absorbing the cost of the transfer would mean paying to be paid. It is not our revenue
+        either — it reimburses the wallet that pays for your settlements.
+      </p>
+      <p class="note">
+        It is a rate rather than a fixed few cents because it has to be. The deposit address is
+        a hash over the contract's own arguments and the rate is one of them, so what is charged
+        is fixed at the moment the address exists and can never be revisited. A fixed fee would
+        need a second transfer, and there is nobody to send it.
+      </p>
       <p class="note">
         <strong>The customer is told.</strong> On the hosted checkout the commission appears
         as its own line, because a customer charged more than your price and not told why has
@@ -689,6 +710,10 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
         split. The commission is charged to your <a href="#balance">balance</a> instead, and
         <code>feePayer: "payer"</code> still grosses the invoice up — you keep your price and
         the commission you owe cancels out.
+      </p>
+      <p class="note">
+        Which also makes TRON the one chain with no <code>networkFeeBps</code> at all. Nothing
+        of ours moves the money, so there is no transfer for anyone to pay for.
       </p>
     </div>
   </section>
@@ -917,7 +942,8 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
   <span class="k">"amountPaid"</span>: <span class="s">"0"</span>,
   <span class="k">"depositAddress"</span>: <span class="s">"AVEXTEST-BSC-…"</span>,
   <span class="k">"memo"</span>: <span class="k">null</span>,
-  <span class="k">"feeBps"</span>: <span class="s">50</span>,
+  <span class="k">"feeBps"</span>: <span class="s">62</span>,
+  <span class="k">"networkFeeBps"</span>: <span class="s">12</span>,
   <span class="k">"toleranceBps"</span>: <span class="s">50</span>,
   <span class="k">"expiresAt"</span>: <span class="s">"2026-08-18T09:19:00.000Z"</span>
 }</pre>

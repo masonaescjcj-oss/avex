@@ -1,3 +1,4 @@
+import { feeOnAmount } from '@avex/core';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
 import type { Database, Transaction } from '../db/client.js';
@@ -295,6 +296,15 @@ export function recoveryBpsFor(input: {
   readonly planFeeBps: number;
   /** What this invoice is worth, in micro-dollars. Zero for an open-amount invoice. */
   readonly invoiceValueUsdMicros: bigint;
+  /**
+   * The network fee already committed on this invoice, which the recovery has to fit around.
+   *
+   * It affects the headroom and nothing else. The order is deliberate: the merchant's own rate
+   * first because it is the price they agreed, the network fee next because it is money we are
+   * spending on this payment right now, and the recovery last because a balance not collected
+   * today is collected from the next invoice — the one thing here that can wait.
+   */
+  readonly networkFeeBps?: number;
 }): number {
   if (input.balanceUsdMicros >= 0n) return 0;
   if (input.invoiceValueUsdMicros <= 0n) return 0;
@@ -310,7 +320,10 @@ export function recoveryBpsFor(input: {
    */
   const exact = (owed * 10_000n) / input.invoiceValueUsdMicros;
 
-  const headroom = Math.max(0, MAX_FEE_BPS - input.planFeeBps);
+  const headroom = Math.max(
+    0,
+    MAX_FEE_BPS - input.planFeeBps - (input.networkFeeBps ?? 0),
+  );
   const cap = Math.min(RECOVERY_MAX_BPS, headroom);
   if (cap === 0) return 0;
 
@@ -331,11 +344,80 @@ export function recoveryBpsFor(input: {
  *
  * `recoveryBps` is excluded. That part of the fee is the merchant repaying their own balance,
  * and grossing it onto the payer would charge a stranger for somebody else's account.
+ *
+ * `networkFeeBps` is excluded too, for the opposite reason: it is never the merchant's to
+ * absorb, so it is not part of what "passing the commission on" means. It reaches the payer
+ * either way, through `payerFeeBps` below.
  */
-export function surchargeBps(
-  fee: { readonly feeBps?: number; readonly accruedFeeBps?: number; readonly recoveryBps?: number } | undefined,
-): number {
+export function surchargeBps(fee: FeeShape | undefined): number {
   if (!fee) return 0;
-  const total = (fee.feeBps ?? 0) - (fee.recoveryBps ?? 0) + (fee.accruedFeeBps ?? 0);
+  const total =
+    (fee.feeBps ?? 0) -
+    (fee.recoveryBps ?? 0) -
+    (fee.networkFeeBps ?? 0) +
+    (fee.accruedFeeBps ?? 0);
   return Math.max(0, total);
+}
+
+/**
+ * The rates an invoice can carry, as both the live fee decision and the stored row have them.
+ *
+ * One shape rather than two, because the disclosure a payer is shown is computed from the fee
+ * before the invoice exists (at checkout, to price the options) and from the columns afterwards
+ * (on the payment page and the receipt). Those two answers disagreeing is the bug this product
+ * can least afford: a payer told $20.10 and asked for $20.20 has been shown a scam, whatever
+ * the arithmetic behind it was.
+ */
+export interface FeeShape {
+  readonly feeBps?: number;
+  readonly accruedFeeBps?: number;
+  readonly recoveryBps?: number;
+  readonly networkFeeBps?: number;
+}
+
+/**
+ * Everything the payer is asked for beyond the merchant's price, in basis points.
+ *
+ * Two parts, and they answer to different rules. The commission is passed on only when the
+ * merchant chose to pass it on. The network fee is passed on always — it is what moving the
+ * payment costs, and a merchant absorbing it would be paying to be paid.
+ *
+ * This is the figure the checkout discloses and the figure `amount_due` was grossed up by, so
+ * it is written once and read by every surface that quotes a number to a payer.
+ */
+export function payerFeeBps(fee: FeeShape | undefined, feePayer: string): number {
+  if (!fee) return 0;
+  return (feePayer === 'payer' ? surchargeBps(fee) : 0) + (fee.networkFeeBps ?? 0);
+}
+
+/**
+ * The surcharge as a payer is shown it: a total, and the two lines it is made of.
+ *
+ * Two lines rather than one, because they are two different things and a single "fee: 2.2%"
+ * would be the misleading version. One is what we charge for the service, which the merchant
+ * may have chosen to absorb; the other is what the chain charges to move the money, which
+ * nobody can absorb. A payer comparing networks needs to see which of the two is making one
+ * option dearer than another — the answer is almost always the second.
+ *
+ * `commission` is the remainder rather than its own product, so the two lines always sum to the
+ * total the payer was asked for. Flooring each separately can lose a unit, and a breakdown that
+ * does not add up is worse than no breakdown.
+ */
+export function disclosedFees(
+  amountDue: bigint,
+  fee: FeeShape | undefined,
+  feePayer: string,
+): {
+  readonly total: bigint;
+  readonly commission: bigint;
+  readonly network: bigint;
+  readonly commissionBps: number;
+  readonly networkBps: number;
+} {
+  const networkBps = fee?.networkFeeBps ?? 0;
+  const commissionBps = feePayer === 'payer' ? surchargeBps(fee) : 0;
+
+  const total = feeOnAmount(amountDue, commissionBps + networkBps);
+  const network = feeOnAmount(amountDue, networkBps);
+  return { total, commission: total - network, network, commissionBps, networkBps };
 }

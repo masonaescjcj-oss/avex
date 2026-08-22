@@ -113,6 +113,20 @@ export function applyFeePayer(
   netRequested: bigint,
   feeBps: number,
   feePayer: FeePayer,
+  /**
+   * The cost of moving the money, in basis points, borne by the payer whoever bears the
+   * commission.
+   *
+   * Not subject to `feePayer`, and that is the point of it being a separate argument rather
+   * than something the caller adds to `feeBps`. The commission is a price a merchant may
+   * choose to absorb as a courtesy to their customer; the network fee is what the transfer
+   * itself costs, and a merchant absorbing it would be paying to be paid. So a $20 invoice
+   * becomes $20.10 on a chain that costs ten cents to settle, whichever way the commission
+   * is charged.
+   *
+   * Zero by default, so every existing caller keeps its arithmetic exactly.
+   */
+  networkFeeBps = 0,
 ): {
   readonly amountDue: bigint;
   readonly amountNet: bigint;
@@ -120,8 +134,17 @@ export function applyFeePayer(
   /** What the invoice asks for beyond the merchant's price. Zero unless the payer pays. */
   readonly surcharge: bigint;
 } {
-  const amountDue = feePayer === 'payer' ? grossUpForFee(netRequested, feeBps) : netRequested;
-  const feeAmount = feeOnAmount(amountDue, feeBps);
+  const grossedUpBps = (feePayer === 'payer' ? feeBps : 0) + networkFeeBps;
+  const amountDue = grossUpForFee(netRequested, grossedUpBps);
+  /**
+   * Taken out of what arrives whoever it was grossed onto.
+   *
+   * `feeBps + networkFeeBps` rather than `grossedUpBps`: the split the forwarder performs does
+   * not know who was asked to cover it, so a merchant absorbing the commission still has it
+   * deducted here. Which is the difference between the two figures this returns — `surcharge`
+   * is what the payer was asked for beyond the price, `feeAmount` is what leaves the balance.
+   */
+  const feeAmount = feeOnAmount(amountDue, feeBps + networkFeeBps);
   return {
     amountDue,
     amountNet: amountDue - feeAmount,

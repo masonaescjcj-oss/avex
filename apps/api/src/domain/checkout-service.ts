@@ -1,4 +1,4 @@
-import { surchargeBps } from './commission-ledger.js';
+import { disclosedFees, surchargeBps } from './commission-ledger.js';
 import type { CommissionLedger } from './commission-ledger.js';
 import {
   applyFeePayer,
@@ -80,6 +80,17 @@ export interface CheckoutOption {
    * told what somebody else is charged, which is the line this whole field exists to draw.
    */
   readonly feeIncluded: string;
+  /**
+   * What the chain charges to move it, in the asset's smallest unit.
+   *
+   * Always the payer's, and always shown: a merchant may absorb our commission as a courtesy,
+   * but nobody can absorb what the transfer itself costs. Zero on the chains where the payer's
+   * transfer reaches the merchant's own wallet and we send nothing — which is most of the
+   * reason those chains are cheaper.
+   */
+  readonly networkFeeIncluded: string;
+  /** The rate the network fee works out to on this invoice. Shown as its own line. */
+  readonly networkFeeBps: number;
   /** The rate this commission is charged at, or zero. Shown alongside `feeIncluded`. */
   readonly feeBps: number;
   /** The rate used, so the figure can be checked rather than taken on trust. */
@@ -312,12 +323,23 @@ export class CheckoutService {
           readonly feeBps: number;
           readonly accruedFeeBps: number;
           readonly recoveryBps: number;
+          readonly networkFeeBps: number;
           readonly feePayer: FeePayer;
         }
       | undefined
     >();
+    /**
+     * The session's dollar figure goes in, and it has to.
+     *
+     * Two parts of the fee are a share of the invoice rather than a flat rate — the network fee
+     * and any balance recovery — so a lookup without the amount answers a different question
+     * from the one invoice creation asks a moment later. That is how the payer ends up shown
+     * $20.00 and asked for $20.10, which reads as a scam rather than a rounding.
+     */
     const feeForChain = async (chain: string) => {
-      if (!fees.has(chain)) fees.set(chain, await this.feePlans.feeFor(session.organizationId, chain));
+      if (!fees.has(chain)) {
+        fees.set(chain, await this.feePlans.feeFor(session.organizationId, chain, amountFiat));
+      }
       return fees.get(chain);
     };
 
@@ -401,8 +423,20 @@ export class CheckoutService {
         reason = 'This currency is temporarily unavailable. Please choose another.';
       }
       const surcharge = surchargeBps(fee);
-      const charged = applyFeePayer(price, surcharge, fee?.feePayer ?? 'merchant');
-      const passedOn = fee?.feePayer === 'payer';
+      const charged = applyFeePayer(
+        price,
+        surcharge,
+        fee?.feePayer ?? 'merchant',
+        fee?.networkFeeBps ?? 0,
+      );
+      /**
+       * What this option adds to the merchant's price, split the way the payer is shown it.
+       *
+       * No longer one question. A commission the merchant absorbs is none of the payer's
+       * business; the cost of the transfer is added on every chain we settle on and has to be
+       * shown whoever bears the commission.
+       */
+      const disclosed = disclosedFees(charged.amountDue, fee, fee?.feePayer ?? 'merchant');
 
       options.push({
         assetId: entry.assetId,
@@ -413,8 +447,11 @@ export class CheckoutService {
         amount: charged.amountDue.toString(),
         // The surcharge, not the whole commission: when the merchant absorbs it there is
         // nothing here for the payer to be told about.
-        feeIncluded: passedOn ? charged.surcharge.toString() : '0',
-        feeBps: passedOn ? surcharge : 0,
+        feeIncluded: disclosed.commission.toString(),
+        feeBps: disclosed.commissionBps,
+        // And the cost of moving it, which is on every invoice on a chain we settle.
+        networkFeeIncluded: disclosed.network.toString(),
+        networkFeeBps: disclosed.networkBps,
         rateUsd: rate === null ? null : rate.toString(),
         available: rate !== null,
         unavailableReason: reason,
@@ -625,6 +662,19 @@ export class CheckoutService {
       .limit(1);
     if (!row) return null;
 
+    /**
+     * Computed from the columns rather than from a live fee lookup.
+     *
+     * The invoice is what the payer is held to, and its rates were fixed when its deposit
+     * address was derived. Re-reading the merchant's plan here would eventually show a payer a
+     * breakdown that does not add up to the amount they were asked for.
+     */
+    const disclosedInvoice = disclosedFees(
+      BigInt(row.invoice.amountDue),
+      row.invoice,
+      row.invoice.feePayer,
+    );
+
     return {
       invoiceId: row.invoice.id,
       chain: row.invoice.chain,
@@ -645,11 +695,17 @@ export class CheckoutService {
        * when it has been added to what the payer must send, showing the total without the
        * breakdown would make our fee look like the merchant's price.
        */
-      feeBps: row.invoice.feePayer === 'payer' ? row.invoice.feeBps : 0,
-      feeIncluded:
-        row.invoice.feePayer === 'payer'
-          ? feeOnAmount(BigInt(row.invoice.amountDue), row.invoice.feeBps).toString()
-          : '0',
+      feeBps: disclosedInvoice.commissionBps,
+      feeIncluded: disclosedInvoice.commission.toString(),
+      /**
+       * And what the transfer costs, which is disclosed whoever bears the commission.
+       *
+       * Its own line rather than folded into the one above, because they answer different
+       * questions: "what does this gateway charge" and "what does this chain charge". A payer
+       * choosing between networks is choosing on the second.
+       */
+      networkFeeBps: disclosedInvoice.networkBps,
+      networkFeeIncluded: disclosedInvoice.network.toString(),
       expiresAt: row.invoice.expiresAt.toISOString(),
       // Deliberately absent: payoutAddress, feeDestination, organizationId. A payer has no
       // business knowing where the money goes afterwards.
@@ -722,6 +778,12 @@ export class CheckoutService {
       .where(and(eq(payments.invoiceId, invoice.invoice.id), isNull(payments.reversedAt)))
       .orderBy(payments.creditedAt);
 
+    const disclosedReceipt = disclosedFees(
+      BigInt(invoice.invoice.amountDue),
+      invoice.invoice,
+      invoice.invoice.feePayer,
+    );
+
     return {
       /**
        * Derived from the invoice id rather than counted.
@@ -757,11 +819,11 @@ export class CheckoutService {
 
       // The same disclosure rule as the payment page: shown when the payer paid it,
       // absent when the merchant absorbed it.
-      feeBps: invoice.invoice.feePayer === 'payer' ? invoice.invoice.feeBps : 0,
-      feeIncluded:
-        invoice.invoice.feePayer === 'payer'
-          ? feeOnAmount(BigInt(invoice.invoice.amountDue), invoice.invoice.feeBps).toString()
-          : '0',
+      feeBps: disclosedReceipt.commissionBps,
+      feeIncluded: disclosedReceipt.commission.toString(),
+      // The same two lines the payment page showed, so a receipt reconciles against it.
+      networkFeeBps: disclosedReceipt.networkBps,
+      networkFeeIncluded: disclosedReceipt.network.toString(),
 
       issuedAt: invoice.invoice.createdAt.toISOString(),
       paidAt: (invoice.invoice.paidAt ?? invoice.invoice.createdAt).toISOString(),

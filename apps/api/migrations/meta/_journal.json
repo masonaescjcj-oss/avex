@@ -169,6 +169,13 @@
       "when": 1787375584740,
       "tag": "0023_open_sunset_bain",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1787385631807,
+      "tag": "0024_payer_pays_network_fee",
+      "breakpoints": true
     }
   ]
 }

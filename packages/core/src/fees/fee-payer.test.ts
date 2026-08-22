@@ -166,3 +166,63 @@ describe('who bears the fee', () => {
     assert.equal(payer.amountDue, net);
   });
 });
+
+describe('the cost of the transfer, which is the payer\'s either way', () => {
+  /**
+   * The rule the network fee follows, and why it is not just another `feeBps`.
+   *
+   * A commission is a price, and a merchant may choose to absorb it as a courtesy to their
+   * customer. What the chain charges to move the payment is not a price and cannot be absorbed
+   * without the merchant paying to be paid. So it is grossed onto the payer on every invoice on
+   * a chain we settle on, and `feePayer` has nothing to say about it.
+   */
+  const twenty = 20_000_000n; // $20 of a six-decimal stablecoin.
+
+  test('a $20 invoice becomes $20.10 when settling costs ten cents', () => {
+    // 50 basis points of $20 is exactly ten cents, which is the case the whole feature is for.
+    const result = applyFeePayer(twenty, 0, 'merchant', 50);
+
+    assert.equal(result.amountDue, 20_100_502n);
+    assert.equal(result.surcharge, 100_502n, 'about ten cents, and the payer is told');
+    assert.ok(result.amountNet >= twenty, 'and the merchant still receives their price');
+  });
+
+  test('the merchant absorbing the commission does not absorb the transfer', () => {
+    const absorbed = applyFeePayer(twenty, 50, 'merchant', 50);
+    const passedOn = applyFeePayer(twenty, 50, 'payer', 50);
+
+    // Both are surcharged the network fee; only the second is surcharged the commission.
+    assert.ok(absorbed.surcharge > 0n, 'the transfer is charged whoever bears the commission');
+    assert.ok(passedOn.surcharge > absorbed.surcharge, 'and the commission is on top of it');
+
+    /**
+     * The merchant absorbing the commission receives their price less the commission, not less
+     * both. That is the whole claim: the gross-up covered the gas, and the split took it.
+     */
+    assert.ok(absorbed.amountNet < twenty);
+    assert.ok(twenty - absorbed.amountNet < 105_000n, 'short by the commission, not by both');
+    assert.ok(passedOn.amountNet >= twenty);
+  });
+
+  test('the split takes the network fee out of what arrives, whoever was asked for it', () => {
+    // Otherwise the extra the payer sent would settle to the merchant and the gas wallet would
+    // still be paying — the surcharge would be money moved from a payer to a merchant.
+    const result = applyFeePayer(twenty, 0, 'merchant', 50);
+    assert.equal(result.feeAmount, feeOnAmount(result.amountDue, 50));
+    assert.ok(result.feeAmount >= 100_000n, 'the ten cents reaches the collector');
+  });
+
+  test('zero is zero: a chain we send nothing on charges nothing', () => {
+    const pooled = applyFeePayer(twenty, 0, 'merchant', 0);
+    assert.equal(pooled.amountDue, twenty);
+    assert.equal(pooled.surcharge, 0n);
+  });
+
+  test('an omitted network fee leaves every existing caller exactly as it was', () => {
+    // The argument is optional, and it has to be inert when absent: every quote already issued
+    // was computed by the three-argument form.
+    for (const payer of ['merchant', 'payer'] as const) {
+      assert.deepEqual(applyFeePayer(twenty, 50, payer), applyFeePayer(twenty, 50, payer, 0));
+    }
+  });
+});

@@ -183,6 +183,8 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
             toleranceBps: 50,
             feeIncluded: behaviour.feeIncluded ?? '0',
             feeBps: behaviour.feeBps ?? 0,
+            networkFeeIncluded: behaviour.networkFeeIncluded ?? '0',
+            networkFeeBps: behaviour.networkFeeBps ?? 0,
             expiresAt: new Date(Date.now() + 900_000).toISOString(),
           },
         }),
@@ -372,6 +374,65 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
     await page.click('#networks .net-row:has-text("TON")');
 
     assert.equal(await shown(page, '#summary-fee-row'), false);
+    await context.close();
+  });
+
+  test('the cost of the transfer is its own line, not folded into ours', async () => {
+    /**
+     * Two charges with two causes: what this gateway costs, and what the chain charged to move
+     * the money. A payer choosing between networks is choosing on the second, so folding them
+     * into one "Service fee" would report a busy chain as us getting dearer — and would put a
+     * percentage on the row that matches neither our published rate nor anything they could
+     * check.
+     *
+     * The merchant absorbs their commission here, which is the case that matters: the transfer
+     * is charged to the payer either way, because a merchant absorbing it would be paying to be
+     * paid.
+     */
+    const { page, context } = await open({
+      options: [
+        {
+          ...OPTIONS[0],
+          amount: '20024028834468625150',
+          feeIncluded: '0',
+          feeBps: 0,
+          networkFeeIncluded: '24028834468625150',
+          networkFeeBps: 12,
+        },
+        OPTIONS[1],
+      ],
+    });
+    await page.click('#currencies .coin:has-text("USDT")');
+    await page.click('#networks .net-row:has-text("BNB Chain")');
+
+    assert.equal(await shown(page, '#summary-fee-row'), false, 'no commission was passed on');
+    assert.equal(await shown(page, '#summary-network-fee-row'), true);
+    assert.match(await text(page, '#summary-network-fee-label'), /Network fee \(0\.12%\)/);
+    assert.match(await text(page, '#summary-network-fee'), /^0\.02402883446862515 USDT$/);
+    await context.close();
+  });
+
+  test('a chain we send no transaction on shows no network fee', async () => {
+    /**
+     * TON's shared wallet and TRON's pooled ones receive the payer's transfer directly, so
+     * there is nothing to move and nothing to charge for moving. The cheap chain looking
+     * cheaper on this page is the whole point of showing the line at all.
+     */
+    const { page, context } = await open({
+      options: [
+        {
+          ...OPTIONS[0],
+          amount: '20024028834468625150',
+          networkFeeIncluded: '24028834468625150',
+          networkFeeBps: 12,
+        },
+        OPTIONS[1],
+      ],
+    });
+    await page.click('#currencies .coin:has-text("USDT")');
+    await page.click('#networks .net-row:has-text("TON")');
+
+    assert.equal(await shown(page, '#summary-network-fee-row'), false);
     await context.close();
   });
 

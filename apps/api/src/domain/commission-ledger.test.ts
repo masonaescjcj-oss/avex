@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { RECOVERY_MAX_BPS, recoveryBpsFor } from './commission-ledger.js';
+import {
+  disclosedFees,
+  payerFeeBps,
+  RECOVERY_MAX_BPS,
+  recoveryBpsFor,
+  surchargeBps,
+} from './commission-ledger.js';
 import { MAX_FEE_BPS } from './fee-plan-service.js';
 
 /**
@@ -133,5 +139,123 @@ describe('sizing a balance recovery', () => {
     });
     assert.equal(bps, RECOVERY_MAX_BPS);
     assert.equal((1_000_000n * BigInt(bps)) / 10_000n, 20_000n);
+  });
+});
+
+/**
+ * What the payer is told, and what it adds up to.
+ *
+ * Three rates now share one invoice — the commission, a balance recovery, and the cost of the
+ * transfer — and they are charged to different people. Getting the split wrong does not fail
+ * loudly: it produces a checkout whose lines do not sum to its total, which a payer reads as a
+ * scam rather than as arithmetic.
+ */
+describe('disclosing the fee to the payer', () => {
+  const AMOUNT = 20_100_502n; // A $20 order grossed up for fifty basis points.
+
+  test('the commission is what we charge for the service, and nothing else', () => {
+    /**
+     * `surchargeBps` is the figure the commission is grossed up by, so both the recovery and the
+     * network fee have to be out of it. The recovery is the merchant repaying their own balance;
+     * the network fee is charged to the payer by a separate rule that does not ask who bears the
+     * commission.
+     */
+    assert.equal(surchargeBps({ feeBps: 50 }), 50);
+    assert.equal(surchargeBps({ feeBps: 120, recoveryBps: 70 }), 50);
+    assert.equal(surchargeBps({ feeBps: 100, networkFeeBps: 50 }), 50);
+    assert.equal(surchargeBps({ feeBps: 170, recoveryBps: 70, networkFeeBps: 50 }), 50);
+    // A pooled chain takes nothing on chain and still bills the commission.
+    assert.equal(surchargeBps({ feeBps: 0, accruedFeeBps: 50 }), 50);
+  });
+
+  test('the network fee reaches the payer whether or not the commission does', () => {
+    const fee = { feeBps: 100, networkFeeBps: 50 };
+    assert.equal(payerFeeBps(fee, 'merchant'), 50, 'the transfer, and not the commission');
+    assert.equal(payerFeeBps(fee, 'payer'), 100, 'both');
+  });
+
+  test('the two disclosed lines sum to the surcharge, exactly', () => {
+    /**
+     * The property that matters. Flooring each line against the amount separately can lose a
+     * unit, and a breakdown that does not add up to the total is worse than no breakdown — so
+     * the commission is computed as the remainder rather than on its own.
+     */
+    for (const feePayer of ['merchant', 'payer']) {
+      for (const networkFeeBps of [0, 1, 7, 50, 199]) {
+        const shown = disclosedFees(AMOUNT, { feeBps: 50 + networkFeeBps, networkFeeBps }, feePayer);
+        assert.equal(
+          shown.commission + shown.network,
+          shown.total,
+          `${feePayer} at ${networkFeeBps}bps`,
+        );
+        assert.ok(shown.commission >= 0n, 'no line is ever negative');
+      }
+    }
+  });
+
+  test('a merchant absorbing the commission discloses only the transfer', () => {
+    const shown = disclosedFees(AMOUNT, { feeBps: 100, networkFeeBps: 50 }, 'merchant');
+    assert.equal(shown.commissionBps, 0);
+    assert.equal(shown.commission, 0n);
+    assert.equal(shown.networkBps, 50);
+    assert.ok(shown.network > 0n);
+  });
+
+  test('a pooled chain discloses the commission and no transfer cost', () => {
+    // The payer's transfer went to the merchant's own wallet: there is nothing to move, so
+    // there is nothing to charge for moving, and the cheap chain looks cheaper.
+    const shown = disclosedFees(AMOUNT, { feeBps: 0, accruedFeeBps: 50 }, 'payer');
+    assert.equal(shown.networkBps, 0);
+    assert.equal(shown.network, 0n);
+    assert.equal(shown.commissionBps, 50);
+    assert.ok(shown.commission > 0n);
+  });
+
+  test('an invoice with no fee at all discloses nothing', () => {
+    const shown = disclosedFees(AMOUNT, undefined, 'payer');
+    assert.deepEqual(
+      { total: shown.total, commission: shown.commission, network: shown.network },
+      { total: 0n, commission: 0n, network: 0n },
+    );
+  });
+});
+
+describe('the headroom three charges have to share', () => {
+  test('the network fee is taken before the recovery, not after it', () => {
+    /**
+     * The order is a decision, and this is where it is enforced. All three rates live under the
+     * forwarder's 5% ceiling, and the network fee is money leaving our gas wallet for *this*
+     * payment while the balance can be collected from the next invoice. So the recovery is the
+     * one that gives way.
+     */
+    const owed = -500_000_000n; // $500 — more than any one invoice can recover.
+    const withoutNetwork = recoveryBpsFor({
+      balanceUsdMicros: owed,
+      planFeeBps: 450,
+      invoiceValueUsdMicros: 20_000_000n,
+    });
+    const withNetwork = recoveryBpsFor({
+      balanceUsdMicros: owed,
+      planFeeBps: 450,
+      invoiceValueUsdMicros: 20_000_000n,
+      networkFeeBps: 30,
+    });
+
+    assert.equal(withoutNetwork, 50, 'the ceiling leaves fifty of the merchant’s 4.5%');
+    assert.equal(withNetwork, 20, 'and the transfer takes thirty of them first');
+    assert.ok(450 + 30 + withNetwork <= MAX_FEE_BPS, 'the total still fits the contract');
+  });
+
+  test('a network fee that fills the headroom leaves the recovery at nothing', () => {
+    // Nothing is collected rather than an address deriving a fee the forwarder would revert on.
+    assert.equal(
+      recoveryBpsFor({
+        balanceUsdMicros: -500_000_000n,
+        planFeeBps: 300,
+        invoiceValueUsdMicros: 20_000_000n,
+        networkFeeBps: 200,
+      }),
+      0,
+    );
   });
 });

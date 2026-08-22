@@ -1,4 +1,4 @@
-import { chainConfig } from '@avex/core';
+import { chainConfig, DEFAULT_FEE_POLICY, FeePolicy } from '@avex/core';
 import type { ChainId } from '@avex/core';
 import type { FeePayer } from '@avex/core';
 import { and, count, eq, gte, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
@@ -8,6 +8,7 @@ import { feePlans, invoices, payments } from '../db/schema.js';
 import type { AuditService } from './audit.js';
 import { recoveryBpsFor } from './commission-ledger.js';
 import type { CommissionLedger } from './commission-ledger.js';
+import type { GasOracle } from './gas-oracle.js';
 import type { StaffRole } from './staff-rbac.js';
 
 /**
@@ -113,6 +114,24 @@ export interface FeePlanOptions {
    * invoice records the rate it will be billed at, and the sink is what writes the entry.
    */
   readonly ledger?: CommissionLedger;
+  /**
+   * Live gas, for charging the cost of settlement to the payer.
+   *
+   * Optional, and its absence means no network fee on any invoice — we absorb the gas, which is
+   * what happened before this existed. A deployment without an RPC endpoint it trusts should
+   * lose a few cents per payment rather than quote a figure it cannot stand behind.
+   */
+  readonly gas?: GasOracle;
+  /**
+   * The cost model that turns a gas snapshot into a share of an invoice.
+   *
+   * Injectable so the ceiling and the per-chain thresholds can be varied in a test without
+   * standing up an oracle; the default is the same policy the settlement queue uses, which is
+   * the point — one table of thresholds, not two that drift.
+   */
+  readonly feePolicy?: FeePolicy;
+  /** Where a gas probe that failed is reported. Defaults to silence. */
+  readonly warn?: (message: string) => void;
 }
 
 export class FeePlanService {
@@ -126,6 +145,13 @@ export class FeePlanService {
    * never owed is money taken by mistake.
    */
   private readonly ledger: CommissionLedger | undefined;
+  /**
+   * Absent in most deployments so far, and its absence is the pre-existing behaviour: the
+   * payer is charged the commission and we pay for the transfer out of our own gas wallet.
+   */
+  private readonly gas: GasOracle | undefined;
+  private readonly feePolicy: FeePolicy;
+  private readonly warn: (message: string) => void;
 
   constructor(
     private readonly db: Database,
@@ -135,6 +161,9 @@ export class FeePlanService {
     this.periodMonths = options.periodMonths ?? DEFAULT_PERIOD_MONTHS;
     this.feeCollectors = options.feeCollectors ?? {};
     this.ledger = options.ledger;
+    this.gas = options.gas;
+    this.feePolicy = options.feePolicy ?? new FeePolicy(DEFAULT_FEE_POLICY);
+    this.warn = options.warn ?? (() => {});
   }
 
   /**
@@ -171,6 +200,13 @@ export class FeePlanService {
         readonly accruedFeeBps: number;
         /** The part of `feeBps` that is repayment rather than commission. */
         readonly recoveryBps: number;
+        /**
+         * The part of `feeBps` that pays for the transfer rather than for the service.
+         *
+         * Charged to the payer whatever `feePayer` says, and excluded from revenue: it
+         * reimburses the gas wallet for a transaction we are about to send.
+         */
+        readonly networkFeeBps: number;
         /** The merchant's default. An individual invoice may still override it. */
         readonly feePayer: FeePayer;
       }
@@ -181,7 +217,15 @@ export class FeePlanService {
       .from(feePlans)
       .where(eq(feePlans.organizationId, organizationId))
       .limit(1);
-    if (!plan || plan.feeBps === 0) return undefined;
+    /**
+     * No plan row is a gap in our own bookkeeping, and it must not become a charge.
+     *
+     * A zero *rate* is no longer an early exit, which it used to be. A negotiated 0% is a
+     * decision about our margin, not an undertaking to pay for the merchant's transfers — and
+     * a free tier that also absorbs unbounded gas is the version of this product that loses
+     * money faster the better it sells.
+     */
+    if (!plan) return undefined;
 
     /**
      * A pooled chain takes nothing on chain, and still charges the commission.
@@ -196,16 +240,39 @@ export class FeePlanService {
      * already configured, and nothing was reading it.
      */
     if (chainConfig(chain as ChainId).addressModel === 'pooled') {
+      if (plan.feeBps === 0) return undefined;
       return {
         feeBps: 0,
         accruedFeeBps: Math.min(plan.feeBps, MAX_FEE_BPS),
         recoveryBps: 0,
+        /**
+         * Nothing, and this is the chain where that is the whole point.
+         *
+         * A pooled deposit address is the merchant's own wallet, so the payer's transfer is the
+         * only transaction there is — we send none and pay for none. The cheap chain is visibly
+         * cheaper to the payer, which is the outcome we would have wanted to engineer anyway.
+         */
+        networkFeeBps: 0,
         feePayer: plan.feePayer,
       };
     }
 
     const feeDestination = this.feeCollectors[chain];
     if (!feeDestination) return undefined;
+
+    /**
+     * What it will cost us to move this payment, as a share of it.
+     *
+     * Read before the recovery because it takes priority in the headroom under the contract's
+     * 5%: this is money leaving our gas wallet for this payment, and the balance can wait for
+     * the next invoice. Zero when there is no oracle, no dollar figure to divide by, or no
+     * trustworthy snapshot — in every one of those cases we absorb the gas, which is what
+     * happened before any of this existed.
+     */
+    const networkFeeBps = Math.min(
+      await this.networkFeeBpsFor(chain, value),
+      Math.max(0, MAX_FEE_BPS - plan.feeBps),
+    );
 
     /**
      * On a chain that can take a cut, the fee also collects any balance owed.
@@ -221,18 +288,56 @@ export class FeePlanService {
             balanceUsdMicros: await this.ledger.balance(organizationId),
             planFeeBps: plan.feeBps,
             invoiceValueUsdMicros: value,
+            networkFeeBps,
           });
+
+    /**
+     * Nothing to charge and nowhere to charge it: no rate, no cost, no debt.
+     *
+     * Returned as `undefined` rather than a row of zeroes so the deposit address is derived
+     * with no fee at all, exactly as it was for a 0% merchant before the network fee existed.
+     * A forwarder committed to a zero fee and one committed to no fee are different addresses.
+     */
+    if (plan.feeBps === 0 && networkFeeBps === 0 && recoveryBps === 0) return undefined;
 
     // Clamped rather than trusted. The column has a check constraint, but this is the
     // value that reaches a constructor argument, and the forwarder reverts above the
     // ceiling — a revert here would mean a funded address we cannot deploy.
     return {
       feeDestination,
-      feeBps: Math.min(plan.feeBps + recoveryBps, MAX_FEE_BPS),
+      feeBps: Math.min(plan.feeBps + networkFeeBps + recoveryBps, MAX_FEE_BPS),
       accruedFeeBps: 0,
       recoveryBps,
+      networkFeeBps,
       feePayer: plan.feePayer,
     };
+  }
+
+  /**
+   * The settlement cost of one invoice on one chain, in basis points, or zero.
+   *
+   * Zero rather than a throw in every failure, and the reason is the same one the oracle's own
+   * contract gives: this runs inside the request that opens an invoice, and a third-party RPC
+   * endpoint having a bad minute must not be able to stop a merchant selling. What is at stake
+   * on our side is a few cents of gas; what is at stake on theirs is the sale.
+   *
+   * An invoice with no dollar value gets nothing either. That is a token-priced invoice — the
+   * merchant asked for 20 USDT, not for $20 — and a share of a figure we would have to invent
+   * here is not something we could later explain to either party.
+   */
+  private async networkFeeBpsFor(chain: string, value: bigint | undefined): Promise<number> {
+    if (this.gas === undefined || value === undefined || value <= 0n) return 0;
+    try {
+      const snapshot = await this.gas.snapshot(chain as ChainId);
+      if (snapshot === null) return 0;
+      return this.feePolicy.networkFeeBps(snapshot, value);
+    } catch (error) {
+      this.warn(
+        `network fee: charging nothing on ${chain} — ` +
+          `${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+      return 0;
+    }
   }
 
   /**
@@ -432,7 +537,14 @@ export class FeePlanService {
      * already earned on a pooled chain and already counted in the ledger. Summing the whole
      * `fee_bps` here would count it a second time and overstate what the business made.
      */
-    const cut = sql<string>`coalesce(sum(floor(${payments.valueUsdMicros} * (${invoices.feeBps} - ${invoices.recoveryBps}) / 10000)), 0)::text`;
+    /**
+     * And less the part that paid for the transfer.
+     *
+     * `network_fee_bps` is a reimbursement of the gas wallet, not a margin. Counting it as
+     * revenue would make the business look more profitable exactly in proportion to how
+     * expensive the chains got, which is backwards.
+     */
+    const cut = sql<string>`coalesce(sum(floor(${payments.valueUsdMicros} * (${invoices.feeBps} - ${invoices.recoveryBps} - ${invoices.networkFeeBps}) / 10000)), 0)::text`;
 
     const conditions = [
       eq(invoices.mode, 'live'),

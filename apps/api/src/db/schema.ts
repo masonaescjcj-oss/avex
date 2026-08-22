@@ -860,6 +860,31 @@ export const invoices = pgTable(
      */
     recoveryBps: integer('recovery_bps').notNull().default(0),
 
+    /**
+     * How much of `fee_bps` pays for the transfer rather than for the service.
+     *
+     * The cost of settling this invoice — a CREATE2 deploy and a token flush — expressed as a
+     * share of the invoice at the moment it was created. A $20 invoice on a chain where that
+     * costs ten cents is issued for $20.10, and this column is the fifty basis points that
+     * accounts for the difference.
+     *
+     * It has to be a rate rather than a cent figure, and that is forced rather than chosen: the
+     * deposit address is a hash over the forwarder's constructor arguments and the fee rate is
+     * one of them, so what we charge is fixed when the address is derived and can never be
+     * revisited. A fixed fee would need a second transfer, and there is nobody to send it.
+     *
+     * Recorded separately for the same reason `recovery_bps` is: it is not revenue. It
+     * reimburses the gas wallet for a transaction we are about to send, so `commissionEarned`
+     * subtracts it — otherwise the business would look more profitable the more expensive the
+     * chains became.
+     *
+     * Always borne by the payer, whatever `fee_payer` says. That column is about the
+     * commission, which a merchant may absorb as a courtesy; a merchant absorbing the cost of
+     * the transfer would be paying to be paid. Zero on the pooled and shared-address chains,
+     * where the payer's transfer reaches the merchant's own wallet and we send nothing.
+     */
+    networkFeeBps: integer('network_fee_bps').notNull().default(0),
+
     toleranceBps: integer('tolerance_bps').notNull().default(50),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -937,6 +962,18 @@ export const invoices = pgTable(
     check(
       'invoices_fee_has_destination',
       sql`${table.feeBps} = 0 or ${table.feeDestination} is not null`,
+    ),
+    /**
+     * The parts of the fee are parts of it, not additions to it.
+     *
+     * `recovery_bps` and `network_fee_bps` are both carved out of `fee_bps` — one is repayment
+     * of a balance, the other reimbursement of gas, and what is left is the commission. A row
+     * where they exceeded the total would make `commissionEarned` negative for that payment,
+     * which reads as the business having paid the merchant for the privilege.
+     */
+    check(
+      'invoices_fee_parts_within_total',
+      sql`${table.recoveryBps} + ${table.networkFeeBps} <= ${table.feeBps}`,
     ),
   ],
 );

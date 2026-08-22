@@ -1,0 +1,2 @@
+ALTER TABLE "invoices" ADD COLUMN "network_fee_bps" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "invoices" ADD CONSTRAINT "invoices_fee_parts_within_total" CHECK ("invoices"."recovery_bps" + "invoices"."network_fee_bps" <= "invoices"."fee_bps");

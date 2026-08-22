@@ -116,3 +116,94 @@ test('checkout ranking puts the cheapest chain first and drops the unaffordable'
     'Ethereum at 9 gwei must not be offered for a $20 invoice',
   );
 });
+
+/**
+ * Charging the payer for the transfer, which is the whole of "a $20 invoice becomes $20.10".
+ *
+ * The figure has to be a rate rather than a cent amount, and that is forced rather than
+ * preferred: the deposit address is a hash over the forwarder's constructor arguments and the
+ * fee rate is one of them, so what is charged is fixed the moment the address exists. These
+ * tests are about the conversion, and about the two places it must not go wrong — rounding
+ * against us, and a small invoice turning a fixed cost into an outrageous percentage.
+ */
+
+const bscAt = (gwei: number, bnbUsd = 600): GasSnapshot => ({
+  chain: 'bsc',
+  nativePriceUsd: bnbUsd,
+  feePerGasWei: BigInt(Math.round(gwei * 1e9)),
+  observedAt: 0,
+});
+
+const usd = (dollars: number): bigint => BigInt(Math.round(dollars * 1_000_000));
+
+test('the network fee is the settlement cost as a share of the invoice', () => {
+  /**
+   * BSC at 0.1 gwei: 400,000 gas is 0.00004 BNB, which at $600 is 2.4 cents. On a $20 invoice
+   * that is 12 basis points, so the payer is asked for $20.024 and the merchant keeps $20.
+   */
+  const snapshot = bscAt(0.1);
+  assert.ok(Math.abs(policy.settlementCostUsd(snapshot).usd - 0.024) < 0.0005);
+  assert.equal(policy.networkFeeBps(snapshot, usd(20)), 12);
+
+  // The same cost on a bigger order is a smaller share of it — the point of a rate.
+  assert.equal(policy.networkFeeBps(snapshot, usd(200)), 2);
+  assert.equal(policy.networkFeeBps(snapshot, usd(2000)), 1);
+});
+
+test('the rounding goes against us, never against the payer', () => {
+  /**
+   * 2.4 cents of $50 is 4.8 basis points. Rounded down it would be 4, and we would be short a
+   * fraction of a cent on every invoice on the chain — a real loss that scales with volume,
+   * against at most one micro-dollar of overcharge on one payment.
+   */
+  const bps = policy.networkFeeBps(bscAt(0.1), usd(50));
+  assert.equal(bps, 5);
+  assert.ok(bps * 50 * 100 >= 2.4 * 100, 'the charge must cover the cost, not approach it');
+});
+
+test('a fixed cost on a tiny invoice is capped rather than passed on', () => {
+  /**
+   * 2.4 cents of a dollar is 240 basis points, and of ten cents it is 2,400. Uncapped, the
+   * second would be a quarter of the payment — and the arithmetic would not stop there, because
+   * nothing about a fixed cost gets smaller. The cap is what keeps this from reaching a payer;
+   * the answer to an invoice that small is a different chain, which `minInvoiceUsd` already says.
+   */
+  assert.equal(policy.networkFeeBps(bscAt(0.1), usd(1)), DEFAULT_FEE_POLICY.networkFeeMaxBps);
+  assert.equal(policy.networkFeeBps(bscAt(0.1), usd(0.1)), DEFAULT_FEE_POLICY.networkFeeMaxBps);
+
+  // And the cap is well inside the forwarder's own 5%, so it can never be the thing that
+  // makes an address undeployable.
+  assert.ok(DEFAULT_FEE_POLICY.networkFeeMaxBps < 500);
+});
+
+test('nothing is charged on a chain we send no transaction on', () => {
+  /**
+   * TON's shared wallet and TRON's pool of the merchant's own addresses both receive the payer's
+   * transfer directly. There is no settlement, so there is nothing to pass on — and the payer
+   * seeing the cheap chain as cheaper is the outcome, not a side effect.
+   */
+  assert.equal(policy.networkFeeBps({ chain: 'ton', nativePriceUsd: 3, observedAt: 0 }, usd(20)), 0);
+  assert.equal(policy.networkFeeBps({ chain: 'tron', nativePriceUsd: 0.1, observedAt: 0 }, usd(20)), 0);
+});
+
+test('an invoice with no dollar value is charged nothing', () => {
+  // A token-priced invoice: the merchant asked for 20 USDT, not for $20. A share of a figure
+  // invented here is not one we could explain to either party afterwards.
+  assert.equal(policy.networkFeeBps(bscAt(0.1), 0n), 0);
+  assert.equal(policy.networkFeeBps(bscAt(0.1), -1n), 0);
+});
+
+test('the charge tracks a gas spike up to the cap, and back down', () => {
+  // The property that makes this worth doing at all: nobody has to notice.
+  const quiet = policy.networkFeeBps(bscAt(0.1), usd(100));
+  const busy = policy.networkFeeBps(bscAt(3), usd(100));
+
+  assert.ok(busy > quiet, `expected the busy figure to be higher, got ${busy} vs ${quiet}`);
+  assert.equal(busy, 72, '3 gwei is 72 cents a settlement, and 72bps of a $100 order');
+
+  // Far enough up and the cap takes over: $6 of a $100 order would be 600bps.
+  assert.equal(policy.networkFeeBps(bscAt(25), usd(100)), DEFAULT_FEE_POLICY.networkFeeMaxBps);
+
+  // And it is a snapshot, not a ratchet: the quiet figure comes back when the chain does.
+  assert.equal(policy.networkFeeBps(bscAt(0.1), usd(100)), quiet);
+});

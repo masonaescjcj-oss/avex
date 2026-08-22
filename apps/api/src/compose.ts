@@ -24,6 +24,7 @@ import { delayFor } from './domain/rbac.js';
 import { WalletPoolChanges, WalletPoolService } from './domain/wallet-pool-service.js';
 import { paymentValueSource, paymentValueUsd } from './domain/payment-valuation.js';
 import { FeePlanService } from './domain/fee-plan-service.js';
+import { RpcGasOracle } from './domain/gas-oracle.js';
 import { InviteService } from './domain/invite-service.js';
 import { InvoiceCreationService } from './domain/invoice-creation.js';
 import { MembershipService } from './domain/membership-service.js';
@@ -142,9 +143,20 @@ export function compose(options: ComposeOptions): Composed {
     ledger,
   );
 
+  /**
+   * Live gas, so the payer pays for the transfer rather than us.
+   *
+   * Built from the same endpoint pool the contract probe uses and the same price service the
+   * quotes come from — a second source for either would eventually disagree with the first, and
+   * this figure ends up inside a deposit address that can never be re-derived.
+   */
+  const gas = new RpcGasOracle(new JsonRpcCaller(env.EVM_RPC_URLS), prices, warn);
+
   const feePlans = new FeePlanService(db, audit, {
     feeCollectors: env.FEE_COLLECTORS,
     ledger,
+    gas,
+    warn,
   });
 
   /**
