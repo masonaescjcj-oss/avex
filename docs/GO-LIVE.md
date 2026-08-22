@@ -122,9 +122,12 @@ The same wallet pays gas. It needs a balance and an alarm on that balance.
 
 ### 9. Operations — *code and operator*
 
-- Alerting: the runner already raises low-gas-balance, stuck-transaction, spend-cap and
-  reverted-settlement alerts and `takeAlerts()` drains them — nothing forwards them anywhere yet.
-  They reach the log, which is where an operator has to be looking.
+- Alerting: set `OPERATOR_EMAIL`. Critical alerts — a gas wallet that cannot cover a
+  settlement, a nonce nothing can get past, a settlement that reverted — are emailed once per
+  kind per fifteen minutes. Warnings stay in the log. Without the address everything is logged
+  and settlement says so at startup.
+- Still to build: a watcher-cursor-falling-behind alert, and the price circuit breaker opening.
+  Both are visible in the admin panel and neither reaches out.
 - Alerting on: watcher cursor falling behind, a settlement queue that stops draining, the price
   circuit breaker opening, the gas wallet running low.
 - Database backups with point-in-time recovery.

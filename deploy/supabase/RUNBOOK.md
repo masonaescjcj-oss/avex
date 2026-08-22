@@ -57,6 +57,7 @@ Secrets — `supabase secrets set KEY=value`, or `--env-file`:
 | `FORWARDER_FACTORIES` | `bsc=0x…` once the factory is deployed |
 | `SMTP_URL` | `smtps://user:pass@host:465` — **required in production**: without it nothing is emailed and the console transport logs instead |
 | `MAIL_FROM` | the address mail comes from, on a domain with SPF and DKIM set up |
+| `OPERATOR_EMAIL` | where a critical settlement alert goes — an empty gas wallet, a stuck nonce, a reverted settlement |
 | `FORWARDER_IMPLEMENTATIONS` | `chain=address` of the deployed `ForwarderLogic` every deposit address delegates to |
 | `FEE_COLLECTORS` | `bsc=0x…` |
 | `EVM_RPC_URLS` | `bsc=https://…,https://…` — several, they geofence |

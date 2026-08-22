@@ -107,3 +107,29 @@ export function payoutChangeQueued(
     ].join('\n'),
   };
 }
+
+/**
+ * An operational alert, to whoever is on the hook for the gateway.
+ *
+ * Unlike everything else in this file, the recipient is us rather than a merchant — and the
+ * wording is written for somebody who will read it at three in the morning on a phone. The
+ * severity and the kind go in the subject because that is all a notification shows, and the
+ * detail carries the figures because a subject nobody can act on wakes somebody for nothing.
+ */
+export function operatorAlert(
+  appUrl: string,
+  alert: { readonly severity: string; readonly kind: string; readonly detail: string },
+): MailMessage {
+  return {
+    subject: `[${alert.severity}] AVEX Pay: ${alert.kind.replace(/_/g, ' ')}`,
+    body: [
+      alert.detail,
+      '',
+      // What a person will want next, in the order they will want it.
+      `Settlements: ${appUrl}/admin?tab=settlements`,
+      '',
+      'This is sent once per kind per cooldown window, so a condition that persists will not',
+      'send again immediately. It is not sent again when it clears, either — check the panel.',
+    ].join('\n'),
+  };
+}

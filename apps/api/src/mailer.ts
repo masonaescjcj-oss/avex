@@ -4,6 +4,7 @@ import {
   emailVerification,
   memberInvite,
   membershipRevoked,
+  operatorAlert,
   payoutChangeQueued,
   roleChanged,
   type MailMessage,
@@ -56,6 +57,17 @@ export interface Mailer {
     email: string,
     details: { chain: string; newAddress: string; effectiveAt: Date },
   ): Promise<void>;
+  /**
+   * An operational alert, to us rather than to a merchant.
+   *
+   * On this interface because it goes out through the same transport and must be as testable as
+   * the rest: a gateway whose alerting is a second, separate path is a gateway where the
+   * alerting is the part nobody notices has broken.
+   */
+  sendOperatorAlert(
+    email: string,
+    alert: { severity: string; kind: string; detail: string },
+  ): Promise<void>;
 }
 
 /**
@@ -102,6 +114,13 @@ export abstract class ComposedMailer implements Mailer {
     details: { chain: string; newAddress: string; effectiveAt: Date },
   ): Promise<void> {
     await this.deliver(email, payoutChangeQueued(this.appUrl, details));
+  }
+
+  async sendOperatorAlert(
+    email: string,
+    alert: { severity: string; kind: string; detail: string },
+  ): Promise<void> {
+    await this.deliver(email, operatorAlert(this.appUrl, alert));
   }
 }
 

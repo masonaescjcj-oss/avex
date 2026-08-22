@@ -1,5 +1,6 @@
 import { SettlementQueue } from '@avex/core';
 import type {
+  Alert,
   ChainAdapter,
   ChainId,
   ChainSigner,
@@ -78,6 +79,14 @@ export interface CycleDependencies {
   readonly log?: (message: string, data?: unknown) => void;
   /** How many invoices to consider in one pass. The queue's own batch cap applies after. */
   readonly batchLimit?: number;
+  /**
+   * Where the runner's alerts go. Absent means they stay in the log.
+   *
+   * Drained here rather than by the process loop because this is the only place that knows a
+   * pass has finished — and an alert raised mid-pass that nobody drains is a buffer that grows
+   * until the process restarts, which is the one moment nobody is reading it.
+   */
+  readonly alerts?: { forward(alerts: readonly Alert[], now?: number): Promise<void> };
 }
 
 export class SettlementCycle {
@@ -196,6 +205,15 @@ export class SettlementCycle {
     // 3. Let the queue decide whether now is the moment.
     const reports = await this.queue.drain(now);
     const report = reports.find((entry) => entry.chain === this.deps.chain);
+
+    /**
+     * 4. Whatever the runner wanted somebody to know, after the work rather than before.
+     *
+     * Last because the most important alerts are raised *by* the work: a gas wallet that cannot
+     * cover a settlement, a nonce that is stuck, a batch that reverted. Draining first would
+     * forward the previous pass's news and leave this pass's in the buffer for thirty seconds.
+     */
+    await this.deps.alerts?.forward(this.deps.runner.takeAlerts(), now);
 
     return {
       chain: this.deps.chain,

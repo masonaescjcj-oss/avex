@@ -17,7 +17,9 @@ import { SettlementSource } from '../domain/settlement-source.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import type { Env } from '../env.js';
 import { JsonRpcCaller } from '../rpc/json-rpc-caller.js';
+import type { Mailer } from '../mailer.js';
 import { runLoop, type LoopHandle } from '../watch/loop.js';
+import { AlertForwarder } from './alerts.js';
 import { SettlementCycle } from './cycle.js';
 
 /**
@@ -48,6 +50,8 @@ export interface StartSettlementInput {
   readonly prices: { nativePriceUsd(chain: ChainId): Promise<number> };
   /** The adapters the watcher already built, by chain. */
   readonly adapters: ReadonlyMap<ChainId, ChainAdapter>;
+  /** For operator alerts. The same transport every other message goes out through. */
+  readonly mailer: Mailer;
   readonly log: (message: string, data?: unknown) => void;
 }
 
@@ -78,6 +82,24 @@ export async function startSettlement(input: StartSettlementInput): Promise<read
   const store = new SettlementStore(db);
   const source = new SettlementSource(db);
   const feePolicy = new FeePolicy(DEFAULT_FEE_POLICY);
+
+  /**
+   * Where a critical alert goes, and a line when the answer is nowhere.
+   *
+   * The conditions worth an email are the ones where money has already stopped moving: a gas
+   * wallet that cannot cover a settlement, a nonce nothing can get past, a settlement that
+   * burned gas and moved nothing. Without an address they stay in the log, which is only
+   * alerting if somebody is watching the log.
+   */
+  if (env.OPERATOR_EMAIL === undefined) {
+    log('settlement alerts will not be emailed', {
+      detail: 'set OPERATOR_EMAIL. Critical alerts will still be logged.',
+    });
+  }
+  const alerts = new AlertForwarder(input.mailer, env.OPERATOR_EMAIL, (message, data) =>
+    log(message, data),
+  );
+
   const handles: LoopHandle[] = [];
 
   for (const [chain, adapter] of adapters) {
@@ -139,6 +161,7 @@ export async function startSettlement(input: StartSettlementInput): Promise<read
       source,
       store,
       gas: () => oracle.snapshot(chain),
+      alerts,
       log: (message, data) => log(message, { chain, ...(data as object | undefined) }),
     });
 

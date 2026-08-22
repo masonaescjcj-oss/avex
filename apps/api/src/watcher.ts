@@ -26,6 +26,8 @@ import { paymentValueSource, paymentValueUsd } from './domain/payment-valuation.
 import { DatabaseWatchStore } from './domain/watch-store.js';
 import { WebhookService } from './domain/webhook-service.js';
 import { loadEnv } from './env.js';
+import { parseSmtpUrl } from './mail/smtp.js';
+import { ConsoleMailer, SmtpMailer } from './mailer.js';
 import { JsonRpcCaller } from './rpc/json-rpc-caller.js';
 import { startSettlement } from './settle/start.js';
 import { DEFAULT_LOOP, runLoop } from './watch/loop.js';
@@ -73,6 +75,25 @@ async function main(): Promise<void> {
   };
 
   const audit = new AuditService(db);
+
+  /**
+   * The same transport the API uses, for the one thing this process needs to send.
+   *
+   * Operator alerts, not merchant mail: nothing here signs anybody up or changes a payout
+   * address. Without `SMTP_URL` this logs instead of sending, exactly as it does in the API —
+   * and settlement says so at startup rather than leaving a critical alert to be discovered in
+   * a log file.
+   */
+  const mailer =
+    env.SMTP_URL === undefined
+      ? new ConsoleMailer(env.APP_URL, (message) => log('mail (not sent)', { detail: message }))
+      : new SmtpMailer(
+          env.APP_URL,
+          parseSmtpUrl(env.SMTP_URL),
+          env.MAIL_FROM,
+          env.MAIL_FROM_NAME,
+          (message) => log('mail warning', { detail: message }),
+        );
   const webhooks = new WebhookService(
     db,
     new WebhookDispatcher(new FetchPoster(DEFAULT_DISPATCHER.timeoutMs)),
@@ -339,6 +360,7 @@ async function main(): Promise<void> {
     db,
     prices,
     adapters,
+    mailer,
     log,
   });
   handles.push(...settlementHandles);

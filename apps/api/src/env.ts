@@ -161,6 +161,16 @@ const schema = z.object({
   MAIL_FROM: z.string().email().default('no-reply@avexpay.net'),
   MAIL_FROM_NAME: z.string().default('AVEX Pay'),
 
+  /**
+   * Where a critical operational alert goes.
+   *
+   * The gas wallet running dry, a nonce nothing can get past, a settlement that reverted — the
+   * conditions where money has already stopped moving and no merchant will report it, because
+   * from their side a payment was received. Unset means they are logged only, which the
+   * settlement startup says out loud.
+   */
+  OPERATOR_EMAIL: z.string().email().optional(),
+
   /** One wallet per shared-address chain, as `chain=address`. TON today. */
   SHARED_DEPOSIT_WALLETS: z.string().default('').transform(parsePairs),
 
