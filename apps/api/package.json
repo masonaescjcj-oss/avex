@@ -10,6 +10,7 @@
     "start": "node dist/main.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "admin:bootstrap": "node dist/admin-bootstrap.js",
     "watch": "node dist/watcher.js",
     "preflight": "node dist/preflight.js"
   },

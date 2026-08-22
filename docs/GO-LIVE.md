@@ -4,6 +4,10 @@ What is left, in the order it has to happen, and who has to do it. Kept in the r
 rather than in a chat because the answer changes as things land, and a checklist nobody can
 find is a checklist nobody follows.
 
+**Setting it up rather than reading about it: [`GO-LIVE-fa.md`](GO-LIVE-fa.md)** (Persian) is the
+same list as a walkthrough — every command, every variable, and for each one what breaks when it
+is missing. This file is the summary; that one is the procedure.
+
 ## The shape of a deployment
 
 Two hosts, and the split is forced rather than chosen.
@@ -23,6 +27,11 @@ process that stays up, and none of them can run in a serverless function:
 
 The API itself would run happily in either place. It runs on the process host because the
 watcher is already there and both want the same database pool.
+
+Start the API before the watcher, once. The curated asset catalogue is written when the API
+starts and only read by the watcher, so on a fresh database a watcher started first has an
+approved, listed nothing to look for — it refuses to start and says why, rather than polling
+correctly and forever finding nothing. After the first start the order stops mattering.
 
 A deployment that only offers TRON needs no settlement runner: the payer's transfer lands in
 the merchant's own wallet and nothing of ours moves afterwards. That is the shortest path to
@@ -80,14 +89,31 @@ nobody.
 
 `api.avexpay.net`, and `DASHBOARD_ORIGINS` set to the static host so the panels can reach it.
 
-### 4. TRON deposit wallets — *needs the operator*
+### 4. The first admin account — *operator, one command*
+
+```
+npm run admin:bootstrap --workspace @avex/api
+```
+
+Asks for an email, a name and a password, and prints an `otpauth://` URI to enrol in an
+authenticator. It works only while the staff table is empty, and there is deliberately no HTTP
+route that does this — an endpoint that mints a superadmin has to be right about being closed
+forever, and not having the endpoint is how you don't have that problem.
+
+Until this command existed, nothing outside a test called `StaffAuthService.bootstrap`, so a
+fresh deployment had an admin panel nobody could ever sign in to and nothing anywhere saying so.
+
+The TOTP secret is printed once. Login without a working authenticator returns an enrolment
+challenge and no session, so enrolling it is not optional.
+
+### 5. TRON deposit wallets — *needs the operator*
 
 Three to five TRON addresses, registered in the dashboard. **The keys stay with the merchant**;
 we only ever hold the addresses. A TRON endpoint goes in `EVM_RPC_URLS` as
 `tron=https://api.trongrid.io/jsonrpc` — TRON exposes an Ethereum-compatible JSON-RPC, which is
 why it is that variable and not another.
 
-### 5. Testnet, end to end — *both*
+### 6. Testnet, end to end — *both*
 
 An invoice, a real transfer, the watcher crediting it, the webhook arriving, the receipt
 rendering. Then the same on a phone, scanning the QR from a real camera, which has never been
@@ -98,7 +124,7 @@ billed to the merchant's balance rather than taken on chain, so revenue accrues 
 until a chain that can take a cut is live. It is collected from a later EVM invoice, or by
 asking.
 
-### 6. The settlement runner — *done, needs a key*
+### 7. The settlement runner — *done, needs a key*
 
 The watcher process now also settles: `startSettlement` builds a signer, a runner and a cycle
 per EVM chain, and `SettlementCycle` reads receipts, marks invoices settled, and hands new work
@@ -106,9 +132,9 @@ to the queue. It runs only when `SETTLEMENT_KEY_HEX` is set, and says so on ever
 it is not — a gateway that detects payments and never moves them looks healthy from every angle
 except the merchant's balance.
 
-What that leaves for the operator is the key itself, which is item 8.
+What that leaves for the operator is the key itself, which is item 9.
 
-### 7. Deploy the contracts — *needs the operator*
+### 8. Deploy the contracts — *needs the operator*
 
 ```
 RPC_URL=https://… node contracts/deploy.mjs --chain bsc --dry-run   # cost, nothing sent
@@ -127,7 +153,7 @@ deposit address is a hash over the logic address, so a redeployment is a new set
 and cannot be done casually after launch — record both addresses alongside the commit that
 produced them.
 
-### 8. A settlement key and a gas wallet — *needs the operator*
+### 9. A settlement key and a gas wallet — *needs the operator*
 
 `LocalKeyProvider` refuses to hold a key in process memory when `NODE_ENV` is production, and
 that refusal is correct: the key can move every merchant's funds out of a forwarder to that
@@ -136,7 +162,7 @@ KMS-backed `KeyProvider` is a small class against whatever the operator's host o
 
 The same wallet pays gas. It needs a balance and an alarm on that balance.
 
-### 9. Operations — *code and operator*
+### 10. Operations — *code and operator*
 
 - Alerting: set `OPERATOR_EMAIL`. Critical alerts — a gas wallet that cannot cover a
   settlement, a nonce nothing can get past, a settlement that reverted — are emailed once per

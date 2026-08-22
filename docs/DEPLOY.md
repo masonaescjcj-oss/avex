@@ -11,7 +11,7 @@ document is the honest split — what can go to Supabase today, what cannot, and
 | HTTP API (every route) | ✅ Edge Function | ✅ Node process | one `compose()`, two entry points |
 | Background jobs (webhooks, commission, payouts) | ✅ `pg_cron` → `/internal/jobs` | ✅ in-process timers | same jobs, same advisory locks |
 | Chain watcher | ❌ | ✅ | `npm run -w @avex/api watch` |
-| Settlement / sweep signer | ❌ | ✅ | still not wired — see below |
+| Settlement / sweep signer | ❌ | ✅ | runs inside the watcher process; needs a key |
 
 The watcher is a second process, `apps/api/dist/watcher.js`, and it is the one thing here
 that cannot be serverless. It holds a cursor per chain that has to advance monotonically, it
@@ -46,10 +46,17 @@ job — hold for a cheaper block, batch, go anyway after a deadline — and a re
 runner is no longer counted as a failed attempt, because "the spend window is full" must not
 abandon a merchant's settlement.
 
-What is still missing is a key. Sweeping needs an account that pays gas, `LocalKeyProvider`
-refuses to hold one when `NODE_ENV` is production, and no decision has been made about where
-it should live instead. Until then the pipeline is assembled and idle: nothing on EVM sweeps,
-and funds wait at their deposit addresses, which can only ever pay their own merchant.
+What is still missing is a key. The pipeline itself is wired: the watcher process calls
+`startSettlement`, which builds a signer, a `SettlementRunner` and a `SettlementCycle` per EVM
+chain, reads receipts, marks an invoice settled only when a transaction carrying it confirms, and
+hands new work to the queue. It runs only when `SETTLEMENT_KEY_HEX` is set, and says so at every
+startup when it is not.
+
+So what is left is the key, and where it lives is a decision rather than a variable:
+`LocalKeyProvider` refuses to hold one when `NODE_ENV` is production, because a copy of it is a
+wallet somebody else can drain. Until that is answered, nothing on EVM sweeps and funds wait at
+their deposit addresses — which can only ever pay their own merchant, so the failure is a delay
+rather than a loss.
 
 TRON needs none of this — see below.
 

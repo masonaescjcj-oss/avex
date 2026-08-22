@@ -375,6 +375,25 @@ async function main(): Promise<void> {
     );
   }
 
+  if (adapters.size === 0) {
+    /**
+     * Every chain was skipped, so exit for the same reason as having no chain at all.
+     *
+     * The check above catches a missing endpoint or factory. This one catches a configured chain
+     * whose asset catalogue is empty, which happens on a fresh database for an ordinary reason:
+     * the curated assets are seeded by the API at startup, so a watcher started first has an
+     * approved, listed nothing to look for. It would then poll correctly, forever, and find
+     * no payment on a chain that is carrying them — reporting `chains: 0` in one startup line
+     * and nothing after it.
+     *
+     * Start the API once, then this.
+     */
+    throw new Error(
+      `no chain has a listed approved asset (tried ${chains.join(', ')}). The curated ` +
+        'catalogue is seeded when the API starts, so start it once before the watcher.',
+    );
+  }
+
   /**
    * And settlement, in the same process, for every chain that has something to send.
    *
