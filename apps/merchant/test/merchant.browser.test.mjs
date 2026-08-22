@@ -39,6 +39,21 @@ const playwright = await loadPlaywright();
 
 /** A merchant part-way through setup: assets on two chains, a payout address on one. */
 const FIXTURE = {
+  /**
+   * A balance with something on it.
+   *
+   * Zero hides the block entirely, which is correct for an account that has never taken a TRON
+   * payment and useless for testing what the block renders.
+   */
+  balance: {
+    balanceUsdMicros: '-320000',
+    creditLimitUsdMicros: '500000000',
+    canInvoiceOnAccruingChains: true,
+    entries: [
+      { id: 'l1', kind: 'accrual', amountUsdMicros: '-500000', invoiceId: null, note: null, createdAt: '2026-08-01T10:00:00.000Z' },
+      { id: 'l2', kind: 'recovery', amountUsdMicros: '180000', invoiceId: null, note: null, createdAt: '2026-08-10T10:00:00.000Z' },
+    ],
+  },
   commission: {
     plan: { feeBps: 50, negotiatedFee: false },
     commission: {
@@ -260,6 +275,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       if (path.endsWith('/members')) return route.fulfill(json(data.members));
       if (path.endsWith('/invites')) return route.fulfill(json(data.invites));
       if (path.endsWith('/commission')) return route.fulfill(json(data.commission));
+      if (path.endsWith('/balance')) return route.fulfill(json(data.balance));
       if (path.endsWith('/reports/volume')) return route.fulfill(json(data.report));
       if (path.endsWith('/assets')) return route.fulfill(json(data.assets));
       if (path.endsWith('/payout-addresses')) return route.fulfill(json(data.payouts));
@@ -1473,6 +1489,77 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.match(rows[0], /yours/);
     // Exactly one rung is theirs, or the table is telling them two different prices.
     assert.equal(rows.filter((row) => /yours/.test(row)).length, 1);
+    await context.close();
+  });
+
+  // ── the balance ───────────────────────────────────────────────────────────
+
+  test('the balance explains itself rather than showing a bare negative number', async () => {
+    /**
+     * The failure this guards against is not a crash. It is a merchant opening their panel,
+     * seeing a negative figure next to their money, and having no idea whether we have lost
+     * some of it. So the assertions are about the words: what it is, that it clears itself,
+     * and that their customers are not involved.
+     */
+    const { page, context } = await open();
+    await page.click('nav.tabs button:has-text("Commission")');
+    await page.waitForTimeout(150);
+
+    const body = await text(page, '#balance-panel');
+    assert.match(body, /-\$0\.32/, 'the figure, signed');
+    assert.match(body, /Owed on TRON/);
+    assert.match(body, /clears itself/);
+    assert.match(body, /customers never see it/);
+    // And the statement, with each line named rather than left as a signed number.
+    assert.match(body, /Commission on a TRON payment/);
+    assert.match(body, /Cleared by a later invoice/);
+    await context.close();
+  });
+
+  test('a merchant who owes nothing is shown no balance block at all', async () => {
+    /**
+     * An empty "Your balance: $0.00" card is a question a merchant has to answer before they
+     * can ignore it, and most accounts will never take a TRON payment.
+     */
+    const { page, context } = await open({
+      balance: {
+        balanceUsdMicros: '0',
+        creditLimitUsdMicros: '500000000',
+        canInvoiceOnAccruingChains: true,
+        entries: [],
+      },
+    });
+    await page.click('nav.tabs button:has-text("Commission")');
+    await page.waitForTimeout(150);
+    assert.equal(await page.$eval('#balance-panel', (node) => node.hidden), true);
+    await context.close();
+  });
+
+  test('past the limit it says what is blocked and what still works', async () => {
+    /**
+     * The one state that needs action. It names the action, and it names the alternative —
+     * because "keep trading on your other chains" is something they can do right now, and it
+     * is what clears the balance.
+     */
+    const { page, context } = await open({
+      balance: {
+        balanceUsdMicros: '-501000000',
+        creditLimitUsdMicros: '500000000',
+        canInvoiceOnAccruingChains: false,
+        entries: [
+          { id: 'l1', kind: 'accrual', amountUsdMicros: '-501000000', invoiceId: null, note: null, createdAt: '2026-08-01T10:00:00.000Z' },
+        ],
+      },
+    });
+    await page.click('nav.tabs button:has-text("Commission")');
+    await page.waitForTimeout(150);
+
+    const panel = await page.$eval('#balance-panel', (node) => node.dataset.tone);
+    assert.equal(panel, 'blocked');
+    const body = await text(page, '#balance-panel');
+    assert.match(body, /TRON invoices are paused/);
+    assert.match(body, /\$500\.00 limit/);
+    assert.match(body, /clear the balance as they are paid/);
     await context.close();
   });
 

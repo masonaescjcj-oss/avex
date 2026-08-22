@@ -1,3 +1,5 @@
+import { surchargeBps } from './commission-ledger.js';
+import type { CommissionLedger } from './commission-ledger.js';
 import {
   applyFeePayer,
   feeOnAmount,
@@ -103,6 +105,13 @@ export class CheckoutService {
     private readonly deriver: DepositAddressDeriver,
     private readonly rates: RateProvider,
     private readonly audit: AuditService,
+    /**
+     * The balance, so an option that would be refused is never offered.
+     *
+     * Optional, and absent means no limit — which matches every other service here and keeps a
+     * checkout working in a deployment that does not bill.
+     */
+    private readonly ledger?: CommissionLedger | undefined,
   ) {}
 
   // ── merchant side ───────────────────────────────────────────────────────────
@@ -290,11 +299,53 @@ export class CheckoutService {
      * rows in the same list can legitimately carry different fees — and a payer choosing
      * between them should see that in the amounts rather than discover it afterwards.
      */
-    const fees = new Map<string, { readonly feeBps: number; readonly feePayer: FeePayer } | undefined>();
+    /**
+     * The whole fee shape, not just `feeBps`.
+     *
+     * A pooled chain charges through `accruedFeeBps` with `feeBps` at zero, so a map holding
+     * only the on-chain rate would quote a TRON option without the surcharge and then create an
+     * invoice that has it — the payer shown one number and asked for another.
+     */
+    const fees = new Map<
+      string,
+      | {
+          readonly feeBps: number;
+          readonly accruedFeeBps: number;
+          readonly recoveryBps: number;
+          readonly feePayer: FeePayer;
+        }
+      | undefined
+    >();
     const feeForChain = async (chain: string) => {
       if (!fees.has(chain)) fees.set(chain, await this.feePlans.feeFor(session.organizationId, chain));
       return fees.get(chain);
     };
+
+    /**
+     * Whether the merchant may still take payments on chains that accrue a balance.
+     *
+     * Checked once, here, rather than left to fail at `select`. An account past its limit would
+     * otherwise show the payer a TRON option, take their tap, and answer 402 — a stranger's
+     * checkout failing because of somebody else's account balance, with no explanation that
+     * could be given to them without disclosing the merchant's billing state.
+     */
+    const canAccrue = this.ledger === undefined
+      ? true
+      : await this.ledger.withinCreditLimit(session.organizationId);
+    /**
+     * Not reachable yet, and deliberately written before it is.
+     *
+     * `payableAssets` filters to chains `DepositAddressDeriver.supportedChains()` knows, and a
+     * pooled chain is in neither of its two maps — its deposit address comes from the merchant's
+     * wallet pool in the database, not from configuration. So no pooled asset reaches this loop
+     * until the allocator is wired into invoice creation, and there is no end-to-end test of
+     * this branch because there is no path to it.
+     *
+     * Written now anyway, because the alternative is worse: the day pooled invoices start being
+     * created, the first merchant over their limit would have their *customers* see a 402 at
+     * checkout. That is a payer meeting somebody else's billing state, and it is much easier to
+     * put the guard here than to remember it later.
+     */
 
     for (const entry of payable) {
       const spread = BigInt(entry.spreadBps);
@@ -344,7 +395,20 @@ export class CheckoutService {
             );
 
       const fee = rate === null ? undefined : await feeForChain(entry.chain);
-      const charged = applyFeePayer(price, fee?.feeBps ?? 0, fee?.feePayer ?? 'merchant');
+
+      /**
+       * Offered as unavailable rather than hidden, like every other reason in this loop.
+       *
+       * The wording is deliberately about the currency and not about the merchant. Every other
+       * reason here discloses a configuration gap, which is harmless; "this merchant owes their
+       * gateway money" is not something a payer should be told, and it is not their problem.
+       */
+      if (rate !== null && (fee?.accruedFeeBps ?? 0) > 0 && !canAccrue) {
+        rate = null;
+        reason = 'This currency is temporarily unavailable. Please choose another.';
+      }
+      const surcharge = surchargeBps(fee);
+      const charged = applyFeePayer(price, surcharge, fee?.feePayer ?? 'merchant');
       const passedOn = fee?.feePayer === 'payer';
 
       options.push({
@@ -357,7 +421,7 @@ export class CheckoutService {
         // The surcharge, not the whole commission: when the merchant absorbs it there is
         // nothing here for the payer to be told about.
         feeIncluded: passedOn ? charged.surcharge.toString() : '0',
-        feeBps: passedOn ? (fee?.feeBps ?? 0) : 0,
+        feeBps: passedOn ? surcharge : 0,
         rateUsd: rate === null ? null : rate.toString(),
         available: rate !== null,
         unavailableReason: reason,

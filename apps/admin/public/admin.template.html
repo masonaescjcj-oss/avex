@@ -737,6 +737,126 @@
     });
   }
 
+  /**
+   * What this account owes us, and the two ways it moves by hand.
+   *
+   * A balance exists only because of chains where our cut cannot be taken on chain — the payer
+   * pays the merchant's own wallet and nothing of ours is in the path. It clears itself from the
+   * raised fee on their next invoice elsewhere, so most accounts sit near zero and this block is
+   * mostly a place to answer "why is my fee 2.5% this month".
+   *
+   * The two buttons are different claims, not one signed number. "They paid us" and "we wrote it
+   * off" are both a credit, only one of them is true, and the merchant reads this statement.
+   */
+  function balanceBlock(org, balance) {
+    if (!balance) {
+      return h('div', { class: 'notice warn' }, [
+        h('span', {}, [h('strong', { text: 'Balance unavailable. ' }), 'Could not be read.']),
+      ]);
+    }
+
+    const owed = BigInt(balance.balanceUsdMicros);
+    const blocked = balance.canInvoiceOnAccruingChains === false;
+    const actions = [];
+    if (can(me.permissions, 'staff:write')) {
+      actions.push(
+        h('button', { class: 'btn primary', type: 'button', text: 'They paid us', onclick: () => recordBalance(org, 'settlement') }),
+        h('button', { class: 'btn', type: 'button', text: 'Adjust', onclick: () => recordBalance(org, 'adjustment') }),
+      );
+    }
+
+    const entries = balance.entries || [];
+
+    return h('div', {}, [
+      h('div', { class: 'grid cols', style: 'margin-bottom:.75rem' }, [
+        metric('Balance', formatUsdMicros(balance.balanceUsdMicros), owed < 0n ? 'warn' : 'good'),
+        metric('Limit', formatUsdMicros(balance.creditLimitUsdMicros)),
+        metric('Accruing chains', blocked ? 'Paused' : 'Open', blocked ? 'bad' : 'good'),
+      ]),
+      blocked
+        ? h('div', { class: 'notice bad', style: 'margin-bottom:.75rem' }, [
+            h('span', {}, [
+              h('strong', { text: 'Past the limit. ' }),
+              'New TRON invoices are refused for this account, and TRON is not offered at their ' +
+                'checkouts. Invoices on chains that take the cut on chain still work, and those ' +
+                'are what clear the balance.',
+            ]),
+          ])
+        : null,
+      actions.length > 0 ? h('div', { class: 'row', style: 'margin-bottom:.75rem' }, actions) : null,
+      entries.length === 0
+        ? h('p', { class: 'sub', style: 'margin:0', text: 'No entries. Nothing has ever been owed on this account.' })
+        : table(['When', 'Kind', 'Amount', 'Reason'], entries.map((entry) => {
+            const amount = BigInt(entry.amountUsdMicros);
+            return h('tr', {}, [
+              td(formatAgo(entry.createdAt), 'm'),
+              h('td', {}, [tag(entry.kind, amount < 0n ? 'warn' : 'ok')]),
+              // The magnitude; the tone and the kind carry the direction. A column mixing
+              // `-$0.50` and `$0.50` is misread at a glance, and a statement is read at a glance.
+              td(formatUsdMicros((amount < 0n ? -amount : amount).toString()), 'num'),
+              h('td', { class: 'dim', text: entry.note ?? '—' }),
+            ]);
+          })),
+    ]);
+  }
+
+  /**
+   * Move a balance by hand.
+   *
+   * Taken in dollars, not micro-dollars. The API speaks micro-dollars because every money
+   * figure in it does, but an operator typing `40000000` to mean forty dollars will eventually
+   * type it with one zero too many — and the mistake is invisible afterwards, because a wrong
+   * balance looks exactly like one somebody meant. The server bounds it too; this removes the
+   * chance rather than catching it.
+   */
+  function recordBalance(org, kind) {
+    const settling = kind === 'settlement';
+    prompt({
+      title: (settling ? 'Record a payment from ' : 'Adjust the balance for ') + org.name,
+      note: settling
+        ? 'They have paid us directly. Enter what they paid, in dollars — this reduces what ' +
+          'they owe. The note is on the statement they can read, so write what a merchant ' +
+          'would recognise: how they paid, and when.'
+        : 'A correction. Positive reduces what they owe; negative increases it. In dollars. ' +
+          'The note is on the statement they can read, and it is the only record of why the ' +
+          'number changed.',
+      permission: 'staff:write',
+      fields: [
+        { name: 'amount', label: settling ? 'Amount paid (USD)' : 'Adjustment (USD, may be negative)', mono: true, placeholder: '40.00' },
+        { name: 'note', label: 'Why (recorded, and shown to them)', type: 'textarea', placeholder: 'At least ten characters.' },
+      ],
+      confirmLabel: settling ? 'Record payment' : 'Adjust',
+      onConfirm: async (values) => {
+        await api('/admin/balances/' + org.id, {
+          method: 'POST',
+          body: {
+            kind,
+            amountUsdMicros: dollarsToMicros(values.amount),
+            note: values.note,
+          },
+        });
+        await openMerchant(org.id);
+      },
+    });
+  }
+
+  /**
+   * A dollar string as micro-dollars, digit by digit.
+   *
+   * Never through a float: `40.01` has no exact binary representation, and a balance a cent out
+   * is a balance that never reconciles. The sign is carried separately so a leading minus does
+   * not end up inside the digits.
+   */
+  function dollarsToMicros(input) {
+    const raw = String(input ?? '').trim();
+    const negative = raw.startsWith('-');
+    const parts = raw.replace(/^[+-]/, '').split('.');
+    const whole = (parts[0] || '0').replace(/\D/g, '') || '0';
+    const fraction = (parts[1] || '').replace(/\D/g, '').padEnd(6, '0').slice(0, 6);
+    const digits = (whole + fraction).replace(/^0+(?=\d)/, '');
+    return (negative ? '-' : '') + (digits === '' ? '0' : digits);
+  }
+
   function changeRate(org, plan) {
     prompt({
       title: 'Change ' + org.name + "'s commission",
@@ -1469,7 +1589,16 @@
 
   async function openMerchant(orgId) {
     render(view(), h('div', { class: 'empty', text: 'Loading…' }));
-    const data = await api(`/admin/merchants/${orgId}`);
+    const [data, balance] = await Promise.all([
+      api(`/admin/merchants/${orgId}`),
+      /**
+       * Fetched beside the merchant rather than behind a click.
+       *
+       * A support call about a raised fee starts here, and the answer is in the statement. One
+       * more request is cheaper than an operator who does not know the screen exists.
+       */
+      api(`/admin/balances/${orgId}`).catch(() => null),
+    ]);
     const org = data.organization;
     const suspended = org.suspendedAt !== null;
 
@@ -1500,6 +1629,9 @@
 
       h('h2', { text: 'Commission', style: 'margin:1.25rem 0 .5rem' }),
       commissionBlock(org, data),
+
+      h('h2', { text: 'Balance', style: 'margin:1.25rem 0 .5rem' }),
+      balanceBlock(org, balance),
 
       h('h2', { text: 'Members', style: 'margin:1.25rem 0 .5rem' }),
       table(['Email', 'Role', 'Verified', 'Two-factor', 'Joined'], data.members.map((member) =>

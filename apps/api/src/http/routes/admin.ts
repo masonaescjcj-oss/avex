@@ -10,6 +10,7 @@ import { StaffAuthError } from '../../domain/staff-auth.js';
 import { STAFF_ROLES } from '../../domain/staff-rbac.js';
 import { staffPermissionsFor } from '../../domain/staff-rbac.js';
 import type { StaffRole } from '../../domain/staff-rbac.js';
+import { RECOVERY_CREDIT_LIMIT_USD_MICROS } from '../../domain/commission-ledger.js';
 import { requireStaffPermission } from '../staff-principal.js';
 import { StaffUnauthenticatedError } from '../staff-principal.js';
 import type { AppContext } from '../server.js';
@@ -662,6 +663,128 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
         'Applies to invoices created from now on. Invoices already issued keep the ' +
         'rate they were quoted with — their deposit addresses commit to it. This rate ' +
         'is now negotiated, so the volume ladder will leave it alone.',
+    });
+  });
+
+  // ── balances ──────────────────────────────────────────────────────────────
+
+  app.get('/admin/balances/:orgId', async (request, reply) => {
+    const params = orgParams.parse(request.params);
+    // Same class of data as the commission book: what an account is charged and what it owes.
+    await requireStaffPermission(context.audit, request.staff, 'merchant:read', {
+      targetType: 'organization',
+      targetId: params.orgId,
+    });
+
+    const [balanceUsdMicros, entries] = await Promise.all([
+      context.ledger.balance(params.orgId),
+      context.ledger.entries(params.orgId, 200),
+    ]);
+
+    return reply.send({
+      balanceUsdMicros: balanceUsdMicros.toString(),
+      creditLimitUsdMicros: RECOVERY_CREDIT_LIMIT_USD_MICROS.toString(),
+      canInvoiceOnAccruingChains: balanceUsdMicros > -RECOVERY_CREDIT_LIMIT_USD_MICROS,
+      entries: entries.map((entry) => ({
+        id: entry.id,
+        kind: entry.kind,
+        amountUsdMicros: entry.amountUsdMicros.toString(),
+        invoiceId: entry.invoiceId,
+        paymentId: entry.paymentId,
+        note: entry.note,
+        createdAt: entry.createdAt.toISOString(),
+      })),
+    });
+  });
+
+  app.post('/admin/balances/:orgId', async (request, reply) => {
+    const params = orgParams.parse(request.params);
+    const body = z
+      .object({
+        /**
+         * `settlement` when the merchant paid us; `adjustment` for a correction.
+         *
+         * Two kinds rather than one signed number, because they are different claims about the
+         * world and the statement is read by the merchant. "You paid us $40" and "we wrote off
+         * $40" are both a $40 credit and only one of them is true.
+         */
+        kind: z.enum(['settlement', 'adjustment']),
+        /**
+         * Signed micro-dollars, in the merchant's frame: positive reduces what they owe.
+         *
+         * A string, because a balance in micro-dollars passes what a JSON number holds exactly
+         * at about nine billion, and a figure that quietly loses its last digits is worse here
+         * than almost anywhere else. Bounded at a million dollars either way — not a policy,
+         * just the outer edge, so a fat-fingered extra zero is a 400 rather than a balance
+         * nobody can explain.
+         */
+        amountUsdMicros: z
+          .string()
+          .regex(/^-?[0-9]{1,15}$/, 'micro-dollars, as a signed integer string'),
+        /** Required, and long enough to be a sentence. This changes what somebody owes. */
+        note: z.string().trim().min(10).max(500),
+      })
+      .parse(request.body);
+
+    /**
+     * Elevation-gated, on `staff:write`, and for the same reason the commission rate is.
+     *
+     * This is a direct write to what a customer owes us — the one place in the panel where a
+     * staff member can make money appear or disappear. It is quiet, it is durable, and it is
+     * exactly what somebody holding a stolen session would reach for.
+     */
+    const staff = await requireStaffPermission(context.audit, request.staff, 'staff:write', {
+      targetType: 'organization',
+      targetId: params.orgId,
+      context: requestContext(request),
+    });
+
+    const amount = BigInt(body.amountUsdMicros);
+    if (amount === 0n) {
+      return reply.status(400).send({
+        error: 'zero_amount',
+        message: 'An entry of zero says nothing. Leave the balance alone instead.',
+      });
+    }
+    if (amount > 1_000_000_000_000n || amount < -1_000_000_000_000n) {
+      return reply.status(400).send({
+        error: 'amount_out_of_range',
+        message: 'That is over a million dollars. Check the figure — micro-dollars, not cents.',
+      });
+    }
+
+    await context.ledger.record({
+      organizationId: params.orgId,
+      kind: body.kind,
+      amountUsdMicros: amount,
+      staffId: staff.staffId,
+      note: body.note,
+    });
+
+    /**
+     * Audited separately from the ledger row, even though the row records the staff member.
+     *
+     * The ledger is the merchant's statement; the audit log is ours. Somebody reviewing what a
+     * staff member did last Tuesday should not have to know that balances exist to find it.
+     */
+    await context.audit.record({
+      organizationId: params.orgId,
+      staffId: staff.staffId,
+      action: `balance.${body.kind}`,
+      targetType: 'organization',
+      targetId: params.orgId,
+      metadata: { amountUsdMicros: body.amountUsdMicros, note: body.note },
+    });
+
+    const balanceUsdMicros = await context.ledger.balance(params.orgId);
+    return reply.send({
+      status: 'recorded',
+      balanceUsdMicros: balanceUsdMicros.toString(),
+      canInvoiceOnAccruingChains: balanceUsdMicros > -RECOVERY_CREDIT_LIMIT_USD_MICROS,
+      message:
+        balanceUsdMicros >= 0n
+          ? 'Recorded. Nothing outstanding.'
+          : `Recorded. ${(-balanceUsdMicros).toString()} micro-dollars still outstanding.`,
     });
   });
 

@@ -316,3 +316,26 @@ export function recoveryBpsFor(input: {
 
   return Number(exact > BigInt(cap) ? BigInt(cap) : exact);
 }
+
+/**
+ * The commission a payer is surcharged, when the merchant passes it on.
+ *
+ * One definition, used by both places that quote an amount, because they were briefly two and
+ * the two disagreed. Invoice creation grossed up by the accrued rate; the checkout grossed up
+ * by the on-chain fee alone — so a TRON option showed the payer $20.00 and then created an
+ * invoice asking for $20.10. A payer shown one number and asked for another is the worst
+ * version of this bug, because it looks like a scam rather than a mistake.
+ *
+ * `accruedFeeBps` is included: a merchant who passes the commission on should still be able to
+ * on the one chain where we bill it rather than take it.
+ *
+ * `recoveryBps` is excluded. That part of the fee is the merchant repaying their own balance,
+ * and grossing it onto the payer would charge a stranger for somebody else's account.
+ */
+export function surchargeBps(
+  fee: { readonly feeBps?: number; readonly accruedFeeBps?: number; readonly recoveryBps?: number } | undefined,
+): number {
+  if (!fee) return 0;
+  const total = (fee.feeBps ?? 0) - (fee.recoveryBps ?? 0) + (fee.accruedFeeBps ?? 0);
+  return Math.max(0, total);
+}

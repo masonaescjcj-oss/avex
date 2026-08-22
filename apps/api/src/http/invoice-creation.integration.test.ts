@@ -1,4 +1,3 @@
-import { CommissionLedger } from '../domain/commission-ledger.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
@@ -10,6 +9,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { issueApiKey } from '../auth/tokens.js';
 import { createDatabase, schema } from '../db/client.js';
+import { CommissionLedger } from '../domain/commission-ledger.js';
 import { AdminService } from '../domain/admin-service.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';

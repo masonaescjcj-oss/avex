@@ -1,4 +1,3 @@
-import { CommissionLedger } from '../domain/commission-ledger.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
@@ -19,6 +18,7 @@ import type { FastifyInstance } from 'fastify';
 import { hashToken } from '../auth/tokens.js';
 import { totpCode } from '../auth/totp.js';
 import { createDatabase, schema } from '../db/client.js';
+import { CommissionLedger } from '../domain/commission-ledger.js';
 import { AdminService } from '../domain/admin-service.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';
@@ -2454,6 +2454,172 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     assert.equal(response.statusCode, 403, response.body);
   });
 
+  // ── balances ───────────────────────────────────────────────────────────────
+  //
+  // What a merchant owes for payments no chain took a cut of, and the one place a staff
+  // member can change it. Every test here is about money moving on somebody's account
+  // without a payment behind it, which is why the route is elevation-gated.
+
+  test('a settlement is recorded and the balance moves', async () => {
+    const org = await freshMerchant('paidus');
+
+    // Owing something first, so the settlement has something to clear.
+    await db.insert(schema.commissionLedger).values({
+      organizationId: org,
+      kind: 'accrual',
+      amountUsdMicros: '-750000',
+      note: 'fixture',
+    });
+
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/balances/${org}`,
+      headers: asStaff(superadminToken),
+      payload: {
+        kind: 'settlement',
+        amountUsdMicros: '750000',
+        note: 'paid by USDT transfer, tx 0xabc, confirmed with the merchant',
+      },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const body = JSON.parse(response.body) as {
+      balanceUsdMicros: string;
+      canInvoiceOnAccruingChains: boolean;
+      message: string;
+    };
+    assert.equal(body.balanceUsdMicros, '0');
+    assert.equal(body.canInvoiceOnAccruingChains, true);
+    assert.match(body.message, /Nothing outstanding/);
+  });
+
+  test('recording a balance needs elevation, not just the permission', async () => {
+    /**
+     * The reason it is gated: this is the one lever in the panel that makes money owed to us
+     * appear or disappear, with no payment behind it. A stolen session holding `staff:write`
+     * would reach for exactly this.
+     */
+    const org = await freshMerchant('noelevation');
+
+    /**
+     * The window is pushed into the past rather than waited out.
+     *
+     * Two minutes of real time is not a test, and the previous case in this file elevated the
+     * same session — so without this the assertion passes or fails depending on how fast the
+     * suite runs, which is the worst kind of green.
+     */
+    await db
+      .update(schema.staffSessions)
+      .set({ mfaSatisfiedAt: new Date(Date.now() - 10 * 60 * 1000) })
+      .where(eq(schema.staffSessions.tokenHash, hashToken(superadminToken)));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/balances/${org}`,
+      headers: asStaff(superadminToken),
+      payload: { kind: 'settlement', amountUsdMicros: '100000', note: 'no elevation held' },
+    });
+    assert.equal(response.statusCode, 403, response.body);
+  });
+
+  test('support cannot write a balance at all', async () => {
+    const org = await freshMerchant('supportbalance');
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/balances/${org}`,
+      headers: asStaff(supportToken),
+      payload: { kind: 'adjustment', amountUsdMicros: '100000', note: 'should not be allowed' },
+    });
+    assert.equal(response.statusCode, 403, response.body);
+  });
+
+  test('a note is required, and a short one is not a note', async () => {
+    // An unexplained movement in what a merchant owes is the one thing the statement exists
+    // to make impossible.
+    const org = await freshMerchant('nonote');
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/admin/balances/${org}`,
+      headers: asStaff(superadminToken),
+      payload: { kind: 'adjustment', amountUsdMicros: '100000', note: 'ok' },
+    });
+    assert.equal(response.statusCode, 400, response.body);
+  });
+
+  test('a fat-fingered figure is refused rather than recorded', async () => {
+    /**
+     * Micro-dollars are easy to get wrong by three orders of magnitude, and the mistake is
+     * invisible afterwards — a balance of $1,000,000 looks exactly like a balance somebody
+     * meant to write. Bounded at the outer edge so an extra zero is a 400.
+     */
+    const org = await freshMerchant('fatfinger');
+    await reauth();
+    const tooBig = await app.inject({
+      method: 'POST',
+      url: `/admin/balances/${org}`,
+      headers: asStaff(superadminToken),
+      payload: {
+        kind: 'settlement',
+        amountUsdMicros: '9000000000000',
+        note: 'meant to type nine dollars, typed nine million',
+      },
+    });
+    assert.equal(tooBig.statusCode, 400, tooBig.body);
+
+    await reauth();
+    const zero = await app.inject({
+      method: 'POST',
+      url: `/admin/balances/${org}`,
+      headers: asStaff(superadminToken),
+      payload: { kind: 'adjustment', amountUsdMicros: '0', note: 'a nothing entry, refused' },
+    });
+    assert.equal(zero.statusCode, 400, zero.body);
+  });
+
+  test('the statement reads back with the reason attached', async () => {
+    const org = await freshMerchant('statement');
+    await reauth();
+    await app.inject({
+      method: 'POST',
+      url: `/admin/balances/${org}`,
+      headers: asStaff(superadminToken),
+      payload: {
+        kind: 'adjustment',
+        amountUsdMicros: '-250000',
+        note: 'goodwill reversal agreed on the call of 3 August',
+      },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/admin/balances/${org}`,
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const body = JSON.parse(response.body) as {
+      balanceUsdMicros: string;
+      entries: { kind: string; amountUsdMicros: string; note: string | null }[];
+    };
+    assert.equal(body.balanceUsdMicros, '-250000');
+    assert.equal(body.entries.length, 1);
+    assert.equal(body.entries[0]!.kind, 'adjustment');
+    assert.match(body.entries[0]!.note ?? '', /3 August/);
+  });
+
+  test('reading a balance is a support action, because answering the question is support', async () => {
+    // A merchant asking "why is my fee 2.5% this month" is a support conversation, and the
+    // answer is in the statement. Requiring elevation to read it would send every one of
+    // those to a superadmin.
+    const org = await freshMerchant('supportread');
+    const response = await app.inject({
+      method: 'GET',
+      url: `/admin/balances/${org}`,
+      headers: asStaff(supportToken),
+    });
+    assert.equal(response.statusCode, 200, response.body);
+  });
+
   // ── the asset catalogue ────────────────────────────────────────────────────
   //
   // The distinction these turn on: `verdict` is about the contract — is this the real
@@ -2595,6 +2761,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     const catalogue = response.json().assets as {
       chain: string;
       symbol: string;
+      curated: boolean;
       issuer: string | null;
       source: { url: string } | null;
     }[];
@@ -2605,8 +2772,18 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       .sort();
     assert.deepEqual(bridged, ['USDC on bsc', 'USDT on bsc', 'USDT on polygon']);
 
-    // Native entries cite the issuer's own page, so the claim can be re-checked.
-    const tronUsdt = catalogue.find((asset) => asset.chain === 'tron' && asset.symbol === 'USDT');
+    /**
+     * Native entries cite the issuer's own page, so the claim can be re-checked.
+     *
+     * Matched on `curated`, not on the symbol alone. A development database that has run other
+     * suites holds several rows on this chain calling themselves USDT — fixtures, and merchant
+     * submissions — and the first one found was a stranger's, which made this assertion about
+     * somebody else's row. The issuer is resolved from the contract address, so the curated
+     * flag is what identifies the entry we are making a claim about.
+     */
+    const tronUsdt = catalogue.find(
+      (asset) => asset.chain === 'tron' && asset.symbol === 'USDT' && asset.curated,
+    );
     assert.equal(tronUsdt?.issuer, 'native');
     assert.match(tronUsdt!.source!.url, /tether\.to/);
 

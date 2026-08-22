@@ -1,6 +1,6 @@
-import type { CommissionLedger } from '../domain/commission-ledger.js';
 import { PriceUnavailableError, type PriceService } from '@avex/core';
 
+import type { CommissionLedger } from '../domain/commission-ledger.js';
 import { AssetConfigError } from '../domain/asset-service.js';
 import type { AssetService } from '../domain/asset-service.js';
 import { PayoutAddressError } from '../domain/payout-service.js';

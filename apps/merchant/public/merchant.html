@@ -635,6 +635,15 @@
 
     <!-- commission -->
     <section class="view" id="view-commission" hidden>
+      <div class="panel" id="balance-panel" hidden>
+        <div class="panel-head"><h2 id="balance-headline">Your balance</h2></div>
+        <div class="panel-body">
+          <div class="grid" id="balance-stats"></div>
+          <p class="note" id="balance-note"></p>
+          <div class="scroll"><table id="balance-table"></table></div>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-head"><h2>💳 What you pay</h2></div>
         <div class="panel-body">
@@ -1531,6 +1540,88 @@ function usd(micros) {
 function trimZeros(value) {
     return value.replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
 }
+const LEDGER_LABELS = {
+    accrual: 'Commission on a TRON payment',
+    accrual_reversed: 'Commission returned — payment reversed',
+    recovery: 'Cleared by a later invoice',
+    settlement: 'You paid us directly',
+    adjustment: 'Adjustment',
+};
+/**
+ * The balance, as a sentence rather than a number.
+ *
+ * A negative figure on a payments dashboard is alarming in a way that needs explaining
+ * immediately: a merchant who sees `-$0.50` with no context has to decide whether we have
+ * lost their money. So the headline always says what it is, and the ordinary case — a few
+ * cents owed, clearing itself from the next invoice — says so in those words rather than
+ * looking like a debt notice.
+ *
+ * Three states, because they need three different things from the reader. Clear needs
+ * nothing. Owed needs to be understood but not acted on. Blocked needs action, and says
+ * exactly which action.
+ */
+function balanceView(input) {
+    const balance = BigInt(input.balanceUsdMicros);
+    const amount = input.formatUsd(input.balanceUsdMicros);
+    const hasHistory = input.entryCount > 0;
+    if (!input.canInvoiceOnAccruingChains) {
+        return {
+            amount,
+            headline: 'New TRON invoices are paused',
+            detail: `You owe ${input.formatUsd((-balance).toString())}, which is past the ` +
+                `${input.formatUsd(input.creditLimitUsdMicros)} limit. Settle it, or take payments ` +
+                'on a chain where our commission comes out of the payment itself — those invoices ' +
+                'clear the balance as they are paid.',
+            tone: 'blocked',
+            hasHistory,
+        };
+    }
+    if (balance >= 0n) {
+        return {
+            amount,
+            headline: 'Nothing owed',
+            detail: 'On most chains our commission comes out of the payment itself, so there is nothing ' +
+                'to settle. A balance only appears when you take payments on TRON.',
+            tone: 'clear',
+            hasHistory,
+        };
+    }
+    return {
+        amount,
+        headline: 'Owed on TRON payments',
+        detail: 'TRON payments go straight to your own wallet, so there is no transaction of ours to ' +
+            'take the commission out of. It is charged here instead, and clears itself: your next ' +
+            'invoice on another chain carries a slightly higher fee until the balance is back to ' +
+            'zero. Nothing is billed to you separately, and your customers never see it.',
+        tone: 'owed',
+        hasHistory,
+    };
+}
+/**
+ * The statement, oldest facts made legible.
+ *
+ * The sign is not left to the reader to work out from a minus. Every gateway statement that
+ * shows raw signed numbers produces the same support question — "is this a charge or a
+ * credit" — and the answer is already known here.
+ */
+function ledgerRows(entries, formatUsd) {
+    return entries.map((entry) => {
+        const amount = BigInt(entry.amountUsdMicros);
+        return {
+            kind: entry.kind,
+            label: LEDGER_LABELS[entry.kind] ?? entry.kind,
+            /**
+             * The magnitude, with the direction carried by `owed` instead of a sign.
+             *
+             * A column of `-$0.50` and `$0.50` is read wrong at a glance, and at a glance is how a
+             * statement is read.
+             */
+            amount: formatUsd((amount < 0n ? -amount : amount).toString()),
+            owed: amount < 0n,
+            when: entry.createdAt,
+        };
+    });
+}
 
 /**
  * Preview mode: the dashboard driven by canned answers instead of an API.
@@ -1685,6 +1776,22 @@ const COMMISSION = {
         wouldEarnBps: 50,
     },
 };
+/**
+ * A balance with something owed on it, deliberately.
+ *
+ * The preview's job is to show the panel as it looks when it has something to say. A zero
+ * balance hides the block entirely — which is the right behaviour for a real account that has
+ * never taken a TRON payment, and useless for showing what the block does.
+ */
+const BALANCE = {
+    balanceUsdMicros: '-320000',
+    creditLimitUsdMicros: '500000000',
+    canInvoiceOnAccruingChains: true,
+    entries: [
+        { id: 'led-1', kind: 'accrual', amountUsdMicros: '-500000', invoiceId: null, note: null, createdAt: ago(60 * 30) },
+        { id: 'led-2', kind: 'recovery', amountUsdMicros: '180000', invoiceId: null, note: null, createdAt: ago(60 * 12) },
+    ],
+};
 const INVOICES = [
     {
         id: '4d2a9c1b-1111-4111-8111-111111111111',
@@ -1799,6 +1906,7 @@ function previewRoutes() {
         ['GET /invites', ok({ data: INVITES })],
         ['POST /members', { status: 202, body: { status: 'invited', id: 'inv-new', superseded: 0 } }],
         ['GET /commission', ok(COMMISSION)],
+        ['GET /balance', ok(BALANCE)],
         [
             'GET /reports/volume',
             ok({
@@ -3268,6 +3376,84 @@ function matchPreview(method, url, routes = previewRoutes()) {
   }
 
   /**
+   * What is owed, and why — never a bare negative number.
+   *
+   * The panel is hidden entirely when there is nothing owed and nothing has ever been owed.
+   * A merchant who has never taken a TRON payment has no balance to reason about, and an
+   * empty "Your balance: $0.00" card is a question they have to answer before ignoring it.
+   */
+  function renderBalance() {
+    const data = cache.balance;
+    const panel = el('balance-panel');
+    if (!data) {
+      panel.hidden = true;
+      return;
+    }
+
+    const entries = data.entries || [];
+    const view = balanceView({
+      balanceUsdMicros: data.balanceUsdMicros,
+      creditLimitUsdMicros: data.creditLimitUsdMicros,
+      canInvoiceOnAccruingChains: data.canInvoiceOnAccruingChains !== false,
+      entryCount: entries.length,
+      formatUsd: formatUsdMicros,
+    });
+
+    if (view.tone === 'clear' && !view.hasHistory) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+
+    /**
+     * The tone on the panel, so the styling follows the state rather than being set by hand.
+     *
+     * `blocked` is the only one that gets a warning colour. Owing a few cents that will clear
+     * themselves is not a problem, and colouring it like one trains a merchant to ignore the
+     * colour for the case that is.
+     */
+    panel.setAttribute('data-tone', view.tone);
+    el('balance-headline').textContent =
+      (view.tone === 'blocked' ? '⛔ ' : view.tone === 'owed' ? '📉 ' : '✅ ') + view.headline;
+
+    fill(el('balance-stats'), [
+      stat('Balance', view.amount, view.tone === 'clear' ? 'nothing to settle' : 'owed to us'),
+      stat(
+        'TRON invoices',
+        view.tone === 'blocked' ? 'Paused' : 'Open',
+        view.tone === 'blocked' ? 'until the balance is settled' : 'nothing is blocked',
+      ),
+    ]);
+    el('balance-note').textContent = view.detail;
+
+    const rows = ledgerRows(entries, formatUsdMicros);
+    fill(el('balance-table'), rows.length === 0 ? [] : [
+      h('thead', {}, [h('tr', {}, ['When', 'What', 'Amount'].map((label) => h('th', { text: label })))]),
+      h('tbody', {}, rows.map((row) =>
+        h('tr', {}, [
+          h('td', { text: new Date(row.when).toLocaleDateString() }),
+          h('td', { text: row.label }),
+          h('td', { class: 'mono' }, [
+            /**
+             * The amount, with no sign on it.
+             *
+             * The direction is already in the row's own label — "Commission on a TRON payment"
+             * against "Cleared by a later invoice" — and adding a `+` to a charge that made a
+             * negative balance more negative is the sort of thing that gets read backwards. The
+             * tone carries it visually and the words carry it exactly.
+             */
+            h('span', {
+              class: 'pill',
+              'data-tone': row.owed ? 'warn' : 'good',
+              text: row.amount,
+            }),
+          ]),
+        ]),
+      )),
+    ]);
+  }
+
+  /**
    * The two answers, as buttons that say what they do.
    *
    * Rendered as a pair rather than as a checkbox, because "pass the fee on" as a single
@@ -3402,17 +3588,38 @@ function matchPreview(method, url, routes = previewRoutes()) {
         cache.invites = invites.data || invites.invites || [];
         renderTeam();
       } else if (view === 'commission') {
-        cache.commission = await api(base + '/commission');
+        /**
+         * Both, together, because they are one question.
+         *
+         * "What do I pay" and "what do I owe" are the same conversation, and a merchant who
+         * finds a raised fee on a BSC invoice needs the TRON payments that caused it on the
+         * same screen.
+         */
+        const [commission, balance] = await Promise.all([
+          api(base + '/commission'),
+          api(base + '/balance'),
+        ]);
+        cache.commission = commission;
+        cache.balance = balance;
         renderCommission();
+        renderBalance();
       }
     } catch (problem) {
       /**
-       * No special case for a 402 any more, because the API no longer has one.
+       * A 402 is back, and it means something narrow.
        *
-       * It used to say "your subscription is overdue", which explained every other thing
-       * on the page that had stopped working. Nothing about billing can stop the gateway
-       * now, so a refusal here is an ordinary failure and reads as one.
+       * It used to mean "your subscription is overdue", which explained every other thing on
+       * the page that had stopped working, and it was removed with the subscription. The one
+       * that exists now refuses a single request: an invoice on a chain whose commission we
+       * cannot take on chain, from an account whose balance is past the limit. Everything else
+       * keeps working, including invoices on the chains that clear the balance — so it is
+       * pointed at the balance rather than reported as a failure to load.
        */
+      if (problem && problem.code === 'balance_owed') {
+        flash(problem.message, 'error');
+        show('commission');
+        return;
+      }
       flash('Could not load: ' + problem.message, 'error');
     }
   }

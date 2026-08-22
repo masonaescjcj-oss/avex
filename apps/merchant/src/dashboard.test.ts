@@ -4,16 +4,18 @@ import { describe, test } from 'node:test';
 import {
   assetStance,
   assetUrgency,
-  type AssetState,
+  balanceView,
   commissionLabel,
   commissionParts,
   feePayerChoices,
   groupAssetsByChain,
-  ladderRows,
   keyMode,
+  ladderRows,
+  ledgerRows,
   setupSteps,
   statusView,
   tierProgressView,
+  type AssetState,
 } from './dashboard.js';
 
 /**
@@ -563,5 +565,139 @@ describe('key mode', () => {
     // would mark a dangerous key as safe. Neither is right, so neither is guessed.
     assert.equal(keyMode('sk_1234'), 'unknown');
     assert.equal(keyMode(''), 'unknown');
+  });
+});
+
+
+/**
+ * `formatUsdMicros`, as the page passes it.
+ *
+ * The real one lives in `@avex/ui-format` and is inlined into the page; duplicated here as a
+ * two-decimal stand-in so these tests are about the wording and the sign, not about grouping.
+ */
+const usd = (micros: string): string => {
+  const value = BigInt(micros);
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
+  const whole = abs / 1_000_000n;
+  const cents = (abs % 1_000_000n) / 10_000n;
+  return `${negative ? '-' : ''}$${whole}.${cents.toString().padStart(2, '0')}`;
+};
+
+describe('the balance, as the panel shows it', () => {
+  const base = {
+    creditLimitUsdMicros: '500000000',
+    canInvoiceOnAccruingChains: true,
+    entryCount: 3,
+    formatUsd: usd,
+  };
+
+  test('nothing owed says so, and says why there is usually nothing', () => {
+    const view = balanceView({ ...base, balanceUsdMicros: '0' });
+    assert.equal(view.tone, 'clear');
+    assert.equal(view.headline, 'Nothing owed');
+    // The reason matters more than the zero: a merchant should know a balance is not normal.
+    assert.match(view.detail, /comes out of the payment itself/);
+  });
+
+  test('an ordinary balance explains itself rather than reading as a debt notice', () => {
+    /**
+     * The number a merchant sees here is negative, on a payments dashboard, next to their
+     * money. Left unexplained that is a support ticket at best — so the headline names it and
+     * the detail says the thing that actually matters: it clears itself, nothing is billed,
+     * and no customer sees it.
+     */
+    const view = balanceView({ ...base, balanceUsdMicros: '-500000' });
+    assert.equal(view.tone, 'owed');
+    assert.equal(view.amount, '-$0.50');
+    assert.match(view.headline, /Owed on TRON/);
+    assert.match(view.detail, /clears itself/);
+    assert.match(view.detail, /customers never see it/);
+  });
+
+  test('past the limit it says what is blocked and what to do', () => {
+    /**
+     * The one state that needs action, so it is the one state that names the action — and
+     * names the alternative, because "take payments on another chain" is a thing they can do
+     * today without paying us anything first.
+     */
+    const view = balanceView({
+      ...base,
+      balanceUsdMicros: '-501000000',
+      canInvoiceOnAccruingChains: false,
+    });
+    assert.equal(view.tone, 'blocked');
+    assert.match(view.headline, /paused/);
+    assert.match(view.detail, /\$501\.00/, 'the amount owed, positive, in the sentence');
+    assert.match(view.detail, /\$500\.00 limit/);
+    assert.match(view.detail, /clear the balance as they are paid/);
+  });
+
+  test('the limit is reported from the API rather than assumed', () => {
+    // Hard-coding $500 in the page would leave it disagreeing with the server the day the
+    // limit changes, and the page is where a merchant would read it.
+    const view = balanceView({
+      ...base,
+      balanceUsdMicros: '-9000000',
+      canInvoiceOnAccruingChains: false,
+      creditLimitUsdMicros: '8000000',
+    });
+    assert.match(view.detail, /\$8\.00 limit/);
+  });
+
+  test('an empty statement is flagged, so the panel can leave the table out', () => {
+    assert.equal(balanceView({ ...base, balanceUsdMicros: '0', entryCount: 0 }).hasHistory, false);
+    assert.equal(balanceView({ ...base, balanceUsdMicros: '0', entryCount: 1 }).hasHistory, true);
+  });
+});
+
+describe('the balance statement', () => {
+  test('each line says what it was, and the direction is not left to a minus sign', () => {
+    /**
+     * A column mixing `-$0.50` and `$0.50` is misread at a glance, and a statement is only
+     * ever read at a glance. So the amount is the magnitude and `owed` carries the direction.
+     */
+    const rows = ledgerRows(
+      [
+        { kind: 'accrual', amountUsdMicros: '-500000', createdAt: '2026-08-01T00:00:00.000Z' },
+        { kind: 'recovery', amountUsdMicros: '200000', createdAt: '2026-08-02T00:00:00.000Z' },
+        { kind: 'settlement', amountUsdMicros: '300000', createdAt: '2026-08-03T00:00:00.000Z' },
+      ],
+      usd,
+    );
+
+    assert.deepEqual(
+      rows.map((row) => [row.label, row.amount, row.owed]),
+      [
+        ['Commission on a TRON payment', '$0.50', true],
+        ['Cleared by a later invoice', '$0.20', false],
+        ['You paid us directly', '$0.30', false],
+      ],
+    );
+  });
+
+  test('a reversal is labelled as one, not as a mysterious credit', () => {
+    const [row] = ledgerRows(
+      [
+        {
+          kind: 'accrual_reversed',
+          amountUsdMicros: '500000',
+          createdAt: '2026-08-01T00:00:00.000Z',
+        },
+      ],
+      usd,
+    );
+    assert.match(row!.label, /payment reversed/);
+    assert.equal(row!.owed, false);
+  });
+
+  test('an unknown kind falls back to its name rather than to nothing', () => {
+    // A kind added on the server before the page knows about it must still render a row: a
+    // blank line in a statement is worse than an unfamiliar word.
+    const [row] = ledgerRows(
+      [{ kind: 'future_thing', amountUsdMicros: '-1', createdAt: '2026-08-01T00:00:00.000Z' }],
+      usd,
+    );
+    assert.equal(row!.label, 'future_thing');
   });
 });

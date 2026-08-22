@@ -18,6 +18,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { assets, invoices, merchantAssets, payoutAddresses, quotes } from '../db/schema.js';
 import type { AuditService } from './audit.js';
+import { surchargeBps } from './commission-ledger.js';
 import type { CommissionLedger } from './commission-ledger.js';
 import { DepositAddressError, type DepositAddressDeriver } from './deposit-address.js';
 import type { FeePlanService } from './fee-plan-service.js';
@@ -271,8 +272,7 @@ export class InvoiceCreationService {
      * balance, and grossing it onto the payer would charge a stranger for somebody else's
      * account.
      */
-    const surchargeBps = (fee?.feeBps ?? 0) - (fee?.recoveryBps ?? 0) + (fee?.accruedFeeBps ?? 0);
-    const charged = applyFeePayer(quote.amountDue, Math.max(0, surchargeBps), feePayer);
+    const charged = applyFeePayer(quote.amountDue, surchargeBps(fee), feePayer);
 
     // 5. Write the quote, then derive the address from the id it was given, then the
     //    invoice. The id has to exist before the address can be derived from it.

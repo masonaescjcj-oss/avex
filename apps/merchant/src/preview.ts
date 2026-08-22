@@ -165,6 +165,23 @@ const COMMISSION = {
   },
 };
 
+/**
+ * A balance with something owed on it, deliberately.
+ *
+ * The preview's job is to show the panel as it looks when it has something to say. A zero
+ * balance hides the block entirely — which is the right behaviour for a real account that has
+ * never taken a TRON payment, and useless for showing what the block does.
+ */
+const BALANCE = {
+  balanceUsdMicros: '-320000',
+  creditLimitUsdMicros: '500000000',
+  canInvoiceOnAccruingChains: true,
+  entries: [
+    { id: 'led-1', kind: 'accrual', amountUsdMicros: '-500000', invoiceId: null, note: null, createdAt: ago(60 * 30) },
+    { id: 'led-2', kind: 'recovery', amountUsdMicros: '180000', invoiceId: null, note: null, createdAt: ago(60 * 12) },
+  ],
+};
+
 const INVOICES = [
   {
     id: '4d2a9c1b-1111-4111-8111-111111111111',
@@ -283,6 +300,7 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
     ['GET /invites', ok({ data: INVITES })],
     ['POST /members', { status: 202, body: { status: 'invited', id: 'inv-new', superseded: 0 } }],
     ['GET /commission', ok(COMMISSION)],
+    ['GET /balance', ok(BALANCE)],
     [
       'GET /reports/volume',
       ok({

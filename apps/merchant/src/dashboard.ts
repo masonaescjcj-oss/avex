@@ -595,3 +595,132 @@ function usd(micros: bigint): string {
 function trimZeros(value: string): string {
   return value.replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
 }
+
+/** One line of the balance statement, as the panel shows it. */
+export interface LedgerRow {
+  readonly kind: string;
+  /** What it means, in the merchant's words rather than ours. */
+  readonly label: string;
+  readonly amount: string;
+  /** True when the entry increased what they owe. */
+  readonly owed: boolean;
+  readonly when: string;
+}
+
+export interface BalanceView {
+  /** The figure, signed and formatted: `-$0.50` when something is owed. */
+  readonly amount: string;
+  /** One line saying what the number means. Never a bare figure. */
+  readonly headline: string;
+  readonly detail: string;
+  /** `owed` when they are behind, `clear` when they are not, `blocked` past the limit. */
+  readonly tone: 'clear' | 'owed' | 'blocked';
+  /** Whether to show the statement at all. */
+  readonly hasHistory: boolean;
+}
+
+const LEDGER_LABELS: Readonly<Record<string, string>> = {
+  accrual: 'Commission on a TRON payment',
+  accrual_reversed: 'Commission returned — payment reversed',
+  recovery: 'Cleared by a later invoice',
+  settlement: 'You paid us directly',
+  adjustment: 'Adjustment',
+};
+
+/**
+ * The balance, as a sentence rather than a number.
+ *
+ * A negative figure on a payments dashboard is alarming in a way that needs explaining
+ * immediately: a merchant who sees `-$0.50` with no context has to decide whether we have
+ * lost their money. So the headline always says what it is, and the ordinary case — a few
+ * cents owed, clearing itself from the next invoice — says so in those words rather than
+ * looking like a debt notice.
+ *
+ * Three states, because they need three different things from the reader. Clear needs
+ * nothing. Owed needs to be understood but not acted on. Blocked needs action, and says
+ * exactly which action.
+ */
+export function balanceView(input: {
+  /** Signed micro-dollars, as a string. Negative means owed. */
+  readonly balanceUsdMicros: string;
+  readonly creditLimitUsdMicros: string;
+  readonly canInvoiceOnAccruingChains: boolean;
+  readonly entryCount: number;
+  /** Injected so the module stays pure; the page passes `formatUsdMicros`. */
+  readonly formatUsd: (micros: string) => string;
+}): BalanceView {
+  const balance = BigInt(input.balanceUsdMicros);
+  const amount = input.formatUsd(input.balanceUsdMicros);
+  const hasHistory = input.entryCount > 0;
+
+  if (!input.canInvoiceOnAccruingChains) {
+    return {
+      amount,
+      headline: 'New TRON invoices are paused',
+      detail:
+        `You owe ${input.formatUsd((-balance).toString())}, which is past the ` +
+        `${input.formatUsd(input.creditLimitUsdMicros)} limit. Settle it, or take payments ` +
+        'on a chain where our commission comes out of the payment itself — those invoices ' +
+        'clear the balance as they are paid.',
+      tone: 'blocked',
+      hasHistory,
+    };
+  }
+
+  if (balance >= 0n) {
+    return {
+      amount,
+      headline: 'Nothing owed',
+      detail:
+        'On most chains our commission comes out of the payment itself, so there is nothing ' +
+        'to settle. A balance only appears when you take payments on TRON.',
+      tone: 'clear',
+      hasHistory,
+    };
+  }
+
+  return {
+    amount,
+    headline: 'Owed on TRON payments',
+    detail:
+      'TRON payments go straight to your own wallet, so there is no transaction of ours to ' +
+      'take the commission out of. It is charged here instead, and clears itself: your next ' +
+      'invoice on another chain carries a slightly higher fee until the balance is back to ' +
+      'zero. Nothing is billed to you separately, and your customers never see it.',
+    tone: 'owed',
+    hasHistory,
+  };
+}
+
+/**
+ * The statement, oldest facts made legible.
+ *
+ * The sign is not left to the reader to work out from a minus. Every gateway statement that
+ * shows raw signed numbers produces the same support question — "is this a charge or a
+ * credit" — and the answer is already known here.
+ */
+export function ledgerRows(
+  entries: readonly {
+    readonly kind: string;
+    readonly amountUsdMicros: string;
+    readonly createdAt: string;
+  }[],
+  formatUsd: (micros: string) => string,
+): readonly LedgerRow[] {
+  return entries.map((entry) => {
+    const amount = BigInt(entry.amountUsdMicros);
+    return {
+      kind: entry.kind,
+      label: LEDGER_LABELS[entry.kind] ?? entry.kind,
+      /**
+       * The magnitude, with the direction carried by `owed` instead of a sign.
+       *
+       * A column of `-$0.50` and `$0.50` is read wrong at a glance, and at a glance is how a
+       * statement is read.
+       */
+      amount: formatUsd((amount < 0n ? -amount : amount).toString()),
+      owed: amount < 0n,
+      when: entry.createdAt,
+    };
+  });
+}

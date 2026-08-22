@@ -27,10 +27,12 @@ import { DatabaseAddressBook } from './address-book.js';
 const databaseUrl = process.env.DATABASE_URL;
 
 /**
- * Tether's own TRC-20 contract, as the asset's contract address and the payout address.
+ * A fixture asset, deliberately not marked curated.
  *
- * A real address, whose Base58Check form is checked against an independent implementation in
- * `packages/core/src/chains/tron/address.test.ts` rather than being invented here.
+ * The curated flag is not decoration: `/admin/assets` presents curated rows as the ones whose
+ * issuer we have checked, and a fixture that claims it appears in that list with a null issuer —
+ * which broke the catalogue test, from three files away, in a suite that had nothing to do with
+ * it. Found by its own contract address so it is never confused with the real entry.
  */
 const TRON_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 
@@ -68,22 +70,20 @@ describe('the address book, across address encodings', { skip: !databaseUrl }, (
     orgId = org!.id;
 
     /**
-     * One asset per chain, found or created.
+     * One asset per chain, found or created, keyed on its own contract address.
      *
-     * Matched on `curated` as well as symbol and chain: a development database that has run
-     * the admin suites holds many uncurated rows claiming to be USDT, and picking one of
-     * those would tie this test to a stranger's fixture.
+     * Not matched on symbol: a development database that has run the admin suites holds many
+     * rows claiming to be USDT, and picking one of those would tie this test to a stranger's
+     * fixture. Not marked curated either — see the note above.
      */
     for (const [chain, contract] of [
-      ['bsc', '0x55d398326f99059ff775485246999027b3197955'],
-      ['tron', TRON_CONTRACT],
+      ['bsc', '0x00000000000000000000000000000000000fixt1'.replace('fixt1', 'a0b0c1')],
+      ['tron', 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb'],
     ] as const) {
       const [existing] = await db()
         .select({ id: assets.id })
         .from(assets)
-        .where(
-          and(eq(assets.chain, chain), eq(assets.symbol, 'USDT'), eq(assets.curated, true)),
-        )
+        .where(and(eq(assets.chain, chain), eq(assets.contract, contract)))
         .limit(1);
       if (existing) {
         assetFor.set(chain, existing.id);
@@ -97,7 +97,7 @@ describe('the address book, across address encodings', { skip: !databaseUrl }, (
           contract,
           decimals: 6,
           kind: chain === 'tron' ? 'trc20' : 'erc20',
-          curated: true,
+          curated: false,
           verdict: 'approved',
         })
         .returning({ id: assets.id });

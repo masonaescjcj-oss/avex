@@ -422,6 +422,41 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
       }),
     ],
     [
+      /**
+       * The balance for the one merchant the preview can open.
+       *
+       * Something owed, deliberately: a zero balance renders an empty statement, which shows
+       * nothing about what the block does. This one has an accrual and a partial recovery, which
+       * is the shape a real TRON-taking account sits in.
+       */
+      `GET /admin/balances/${ORG_A}`,
+      ok({
+        balanceUsdMicros: '-320000',
+        creditLimitUsdMicros: '500000000',
+        canInvoiceOnAccruingChains: true,
+        entries: [
+          {
+            id: 'led-1',
+            kind: 'accrual',
+            amountUsdMicros: '-500000',
+            invoiceId: null,
+            paymentId: null,
+            note: null,
+            createdAt: ago(60 * 30),
+          },
+          {
+            id: 'led-2',
+            kind: 'recovery',
+            amountUsdMicros: '180000',
+            invoiceId: null,
+            paymentId: null,
+            note: null,
+            createdAt: ago(60 * 12),
+          },
+        ],
+      }),
+    ],
+    [
       `GET /admin/merchants/${ORG_A}`,
       ok({
         organization: {

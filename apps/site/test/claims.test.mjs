@@ -170,15 +170,27 @@ describe('the site does not outlive the product', () => {
     }
   });
 
-  test('the page does not promise a 402, because there is not one', () => {
+  test('the page describes the 402 that exists, and no more than that', () => {
     /**
-     * The commission is deducted from the payment, so a merchant cannot be behind on it. The
-     * old subscription model had a 402; the page states its absence, and this fails if the
-     * gate ever comes back without the copy being revisited.
+     * This test used to assert the opposite, and it is the reason the copy is not now a lie.
+     *
+     * The commission is deducted from the payment on most chains, so a merchant cannot be
+     * behind on it and there was no 402 at all — the page said so, and this failed if the gate
+     * ever came back. It came back: a pooled chain pays the merchant's own wallet directly,
+     * nothing of ours is in the path, and the commission becomes a balance with a limit behind
+     * it.
+     *
+     * So the assertion inverts rather than being deleted. What it protects now is the shape of
+     * the claim: that the page says the refusal is narrow and says which invoices still work,
+     * because "your gateway can refuse you" is exactly the sentence a merchant reads twice.
      */
     const routes = read('apps/api/src/http/routes/merchant.ts');
-    assert.ok(!routes.includes('402'), 'a 402 exists again; the site says there is none');
-    assert.match(page, /There is no <code>402<\/code>/);
+    assert.ok(routes.includes('402'), 'the 402 is gone; the page still describes one');
+
+    assert.match(page, /There is one <code>402<\/code>/);
+    // The two halves that keep it honest: it is limited to one network, and the others work.
+    assert.match(page, /one network where the payment goes straight into your own wallet/);
+    assert.match(page, /Every other network keeps working/);
   });
 
   test('the derivation is the real one, not a stand-in', () => {

@@ -635,6 +635,15 @@
 
     <!-- commission -->
     <section class="view" id="view-commission" hidden>
+      <div class="panel" id="balance-panel" hidden>
+        <div class="panel-head"><h2 id="balance-headline">Your balance</h2></div>
+        <div class="panel-body">
+          <div class="grid" id="balance-stats"></div>
+          <p class="note" id="balance-note"></p>
+          <div class="scroll"><table id="balance-table"></table></div>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-head"><h2>💳 What you pay</h2></div>
         <div class="panel-body">
@@ -2012,6 +2021,84 @@
   }
 
   /**
+   * What is owed, and why — never a bare negative number.
+   *
+   * The panel is hidden entirely when there is nothing owed and nothing has ever been owed.
+   * A merchant who has never taken a TRON payment has no balance to reason about, and an
+   * empty "Your balance: $0.00" card is a question they have to answer before ignoring it.
+   */
+  function renderBalance() {
+    const data = cache.balance;
+    const panel = el('balance-panel');
+    if (!data) {
+      panel.hidden = true;
+      return;
+    }
+
+    const entries = data.entries || [];
+    const view = balanceView({
+      balanceUsdMicros: data.balanceUsdMicros,
+      creditLimitUsdMicros: data.creditLimitUsdMicros,
+      canInvoiceOnAccruingChains: data.canInvoiceOnAccruingChains !== false,
+      entryCount: entries.length,
+      formatUsd: formatUsdMicros,
+    });
+
+    if (view.tone === 'clear' && !view.hasHistory) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+
+    /**
+     * The tone on the panel, so the styling follows the state rather than being set by hand.
+     *
+     * `blocked` is the only one that gets a warning colour. Owing a few cents that will clear
+     * themselves is not a problem, and colouring it like one trains a merchant to ignore the
+     * colour for the case that is.
+     */
+    panel.setAttribute('data-tone', view.tone);
+    el('balance-headline').textContent =
+      (view.tone === 'blocked' ? '⛔ ' : view.tone === 'owed' ? '📉 ' : '✅ ') + view.headline;
+
+    fill(el('balance-stats'), [
+      stat('Balance', view.amount, view.tone === 'clear' ? 'nothing to settle' : 'owed to us'),
+      stat(
+        'TRON invoices',
+        view.tone === 'blocked' ? 'Paused' : 'Open',
+        view.tone === 'blocked' ? 'until the balance is settled' : 'nothing is blocked',
+      ),
+    ]);
+    el('balance-note').textContent = view.detail;
+
+    const rows = ledgerRows(entries, formatUsdMicros);
+    fill(el('balance-table'), rows.length === 0 ? [] : [
+      h('thead', {}, [h('tr', {}, ['When', 'What', 'Amount'].map((label) => h('th', { text: label })))]),
+      h('tbody', {}, rows.map((row) =>
+        h('tr', {}, [
+          h('td', { text: new Date(row.when).toLocaleDateString() }),
+          h('td', { text: row.label }),
+          h('td', { class: 'mono' }, [
+            /**
+             * The amount, with no sign on it.
+             *
+             * The direction is already in the row's own label — "Commission on a TRON payment"
+             * against "Cleared by a later invoice" — and adding a `+` to a charge that made a
+             * negative balance more negative is the sort of thing that gets read backwards. The
+             * tone carries it visually and the words carry it exactly.
+             */
+            h('span', {
+              class: 'pill',
+              'data-tone': row.owed ? 'warn' : 'good',
+              text: row.amount,
+            }),
+          ]),
+        ]),
+      )),
+    ]);
+  }
+
+  /**
    * The two answers, as buttons that say what they do.
    *
    * Rendered as a pair rather than as a checkbox, because "pass the fee on" as a single
@@ -2146,17 +2233,38 @@
         cache.invites = invites.data || invites.invites || [];
         renderTeam();
       } else if (view === 'commission') {
-        cache.commission = await api(base + '/commission');
+        /**
+         * Both, together, because they are one question.
+         *
+         * "What do I pay" and "what do I owe" are the same conversation, and a merchant who
+         * finds a raised fee on a BSC invoice needs the TRON payments that caused it on the
+         * same screen.
+         */
+        const [commission, balance] = await Promise.all([
+          api(base + '/commission'),
+          api(base + '/balance'),
+        ]);
+        cache.commission = commission;
+        cache.balance = balance;
         renderCommission();
+        renderBalance();
       }
     } catch (problem) {
       /**
-       * No special case for a 402 any more, because the API no longer has one.
+       * A 402 is back, and it means something narrow.
        *
-       * It used to say "your subscription is overdue", which explained every other thing
-       * on the page that had stopped working. Nothing about billing can stop the gateway
-       * now, so a refusal here is an ordinary failure and reads as one.
+       * It used to mean "your subscription is overdue", which explained every other thing on
+       * the page that had stopped working, and it was removed with the subscription. The one
+       * that exists now refuses a single request: an invoice on a chain whose commission we
+       * cannot take on chain, from an account whose balance is past the limit. Everything else
+       * keeps working, including invoices on the chains that clear the balance — so it is
+       * pointed at the balance rather than reported as a failure to load.
        */
+      if (problem && problem.code === 'balance_owed') {
+        flash(problem.message, 'error');
+        show('commission');
+        return;
+      }
       flash('Could not load: ' + problem.message, 'error');
     }
   }

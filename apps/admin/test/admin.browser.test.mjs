@@ -326,6 +326,53 @@ describe('staff panel', { skip: playwright ? false : 'playwright is not installe
     await context.close();
   });
 
+  test("a merchant's balance is on the page, with both ways to move it", async () => {
+    /**
+     * Why it is here and not behind a click: a support call about a raised fee starts on this
+     * screen, and the answer is the statement. An operator who does not know the screen exists
+     * cannot answer the question.
+     *
+     * Two buttons rather than one signed amount field, because "they paid us" and "we wrote it
+     * off" are different claims about the world and the merchant reads this statement.
+     */
+    const { page, context, errors } = await open();
+    await section(page, 'Merchants');
+    await page.click('#view tr.clickable');
+    await page.waitForTimeout(300);
+
+    const body = await text(page, '#view');
+    assert.match(body, /Balance/);
+    assert.match(body, /-\$0\.32/, 'the balance, signed');
+    assert.match(body, /accrual/);
+    assert.match(body, /recovery/);
+    assert.ok(await page.$('#view button:has-text("They paid us")'));
+    assert.ok(await page.$('#view button:has-text("Adjust")'));
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('recording a payment asks for dollars and refuses to pretend it worked', async () => {
+    /**
+     * Two things at once, both learned the hard way.
+     *
+     * The field is in dollars: an operator typing micro-dollars will eventually type one zero
+     * too many, and a wrong balance looks exactly like one somebody meant. And the preview
+     * refuses the write rather than showing a success it cannot deliver — the whole point of
+     * building the preview as a network stub.
+     */
+    const { page, context } = await open();
+    await section(page, 'Merchants');
+    await page.click('#view tr.clickable');
+    await page.waitForTimeout(300);
+
+    await page.click('#view button:has-text("They paid us")');
+    await page.waitForTimeout(150);
+    const modal = await text(page, '#modal-root');
+    assert.match(modal, /Amount paid \(USD\)/);
+    assert.match(modal, /shown to them/, 'the note reaches the merchant, and says so');
+    await context.close();
+  });
+
   test('who bears the commission is stated, not offered as a control', async () => {
     /**
      * Read-only on purpose, and the panel says why rather than leaving an operator hunting

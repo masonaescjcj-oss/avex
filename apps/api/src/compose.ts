@@ -187,7 +187,7 @@ export function compose(options: ComposeOptions): Composed {
     reconciliation,
     merchant: new MerchantService(db),
     invoiceCreation,
-    checkouts: new CheckoutService(db, invoiceCreation, feePlans, deriver, rates, audit),
+    checkouts: new CheckoutService(db, invoiceCreation, feePlans, deriver, rates, audit, ledger),
     webhooks,
     feePlans,
     ledger,

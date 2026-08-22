@@ -1119,9 +1119,14 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
           </table>
         </div>
         <p>
-          There is no <code>402</code>: nothing about your account with us can refuse you an
-          invoice. Your terms are on the dashboard, current, rather than in a page somebody
-          would have to remember to update.
+          There is one <code>402</code>, and it is narrow. On the networks where our commission
+          is taken out of the payment itself, nothing about your account with us can refuse you
+          an invoice. On the one network where the payment goes straight into your own wallet,
+          there is nothing of ours in the path to take a commission from — so it is charged to a
+          balance instead, and past a limit new invoices on that network wait until the balance
+          is settled. Every other network keeps working, and those invoices are what clear it.
+          The balance and the limit are on your dashboard, current, rather than in a page
+          somebody would have to remember to update.
         </p>
       </div>
 

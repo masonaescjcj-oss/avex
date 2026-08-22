@@ -1,4 +1,3 @@
-import { CommissionLedger } from '../domain/commission-ledger.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
@@ -19,6 +18,7 @@ import type { PriceSource, PriceSymbol } from '@avex/core';
 import { eq } from 'drizzle-orm';
 
 import { createDatabase, schema } from '../db/client.js';
+import { CommissionLedger } from '../domain/commission-ledger.js';
 import { PriceTickWriter } from '../domain/price-repository.js';
 import { AssetService } from '../domain/asset-service.js';
 import { AuditService } from '../domain/audit.js';

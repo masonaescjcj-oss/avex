@@ -41,10 +41,18 @@ describe('the wallet pool', { skip: !databaseUrl }, () => {
       .returning({ id: organizations.id });
     orgId = org!.id;
 
+    /**
+     * The fixture asset, found by its own contract and never marked curated.
+     *
+     * `curated` decides whether a row appears in the admin catalogue as one whose issuer we have
+     * checked, so a fixture claiming it shows up there with a null issuer — which broke the
+     * catalogue test from another file entirely.
+     */
+    const FIXTURE_CONTRACT = 'TWKxbjHnf3EY3mZvYUcaLLxLBnMhqUXsQ4';
     const [existing] = await db()
       .select({ id: assets.id })
       .from(assets)
-      .where(and(eq(assets.chain, 'tron'), eq(assets.symbol, 'USDT'), eq(assets.curated, true)))
+      .where(and(eq(assets.chain, 'tron'), eq(assets.contract, FIXTURE_CONTRACT)))
       .limit(1);
     if (existing) {
       assetId = existing.id;
@@ -54,10 +62,10 @@ describe('the wallet pool', { skip: !databaseUrl }, () => {
         .values({
           chain: 'tron',
           symbol: 'USDT',
-          contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+          contract: FIXTURE_CONTRACT,
           decimals: 6,
           kind: 'trc20',
-          curated: true,
+          curated: false,
           verdict: 'approved',
         })
         .returning({ id: assets.id });

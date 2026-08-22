@@ -28,7 +28,7 @@ const USDT_TRON: Asset = {
   chain: 'tron',
   decimals: 6,
   kind: 'trc20',
-  contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+  contract: 'TWKxbjHnf3EY3mZvYUcaLLxLBnMhqUXsQ4',
 };
 
 const USDT_BSC: Asset = {
@@ -36,7 +36,7 @@ const USDT_BSC: Asset = {
   chain: 'bsc',
   decimals: 18,
   kind: 'erc20',
-  contract: '0x55d398326f99059ff775485246999027b3197955',
+  contract: '0x00000000000000000000000000000000000a0b0c2',
 };
 
 describe('the commission ledger, end to end', { skip: !databaseUrl }, () => {
@@ -77,17 +77,18 @@ describe('the commission ledger, end to end', { skip: !databaseUrl }, () => {
       .returning({ id: organizations.id });
     orgId = org!.id;
 
+    /**
+     * Found by contract, and never marked curated.
+     *
+     * `curated` decides whether a row appears in the admin catalogue as one whose issuer we have
+     * checked. A fixture claiming it shows up there with a null issuer, which broke the
+     * catalogue test in a suite that had nothing to do with this one.
+     */
     for (const asset of [USDT_TRON, USDT_BSC]) {
       const [existing] = await db()
         .select({ id: assets.id })
         .from(assets)
-        .where(
-          and(
-            eq(assets.chain, asset.chain),
-            eq(assets.symbol, asset.symbol),
-            eq(assets.curated, true),
-          ),
-        )
+        .where(and(eq(assets.chain, asset.chain), eq(assets.contract, asset.contract!)))
         .limit(1);
       if (existing) {
         assetFor.set(asset.chain, existing.id);
@@ -101,7 +102,7 @@ describe('the commission ledger, end to end', { skip: !databaseUrl }, () => {
           contract: asset.contract!,
           decimals: asset.decimals,
           kind: asset.kind,
-          curated: true,
+          curated: false,
           verdict: 'approved',
         })
         .returning({ id: assets.id });
