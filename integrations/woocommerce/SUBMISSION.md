@@ -17,6 +17,26 @@ and a rejection costs another round of it.
    to SVN.
 5. Icons, banners and screenshots go in the SVN `/assets` folder — **not** in the plugin ZIP.
 
+## Building what gets uploaded
+
+```
+npm run plugin:zip      # integrations/woocommerce/dist/avex-pay-for-woocommerce-1.0.0.zip
+npm run plugin:assets   # integrations/woocommerce/assets/*.png
+```
+
+`plugin:zip` checks before it builds, and refuses rather than producing a ZIP that would be
+rejected: the header `Version` against the readme's `Stable tag`, the text domain against the
+slug, the headers the directory requires, the `== External services ==` section, an `ABSPATH`
+guard on every PHP file that ships, and no leftover debug output. Each of those is a rejection
+that costs another wait in the review queue, so it costs a second here instead.
+
+`tests/` is not in the ZIP. `run-tests.php` is a CLI runner with no `ABSPATH` guard — correct for
+what it is, and a file anybody could execute by URL once it is inside a plugin directory. The fix
+is not to guard a test runner, it is not to ship it.
+
+`plugin:assets` draws the icon and banner from the mark in the receipt template. They belong in
+SVN `/assets` after approval, **not** in the ZIP.
+
 ## What the directory requires, and where this plugin stands
 
 | Requirement | State |
@@ -50,9 +70,11 @@ and a rejection costs another round of it.
    documents about a real company's obligations, so they are not something to generate — but
    without them the disclosure is incomplete and the submission fails on it.
 
-4. **Assets.** An icon (`icon-256x256.png`), a banner (`banner-1544x500.png`) and two or three
-   screenshots of the settings page and a checkout. Optional in the rules and effectively
-   required in practice: a plugin with no banner reads as abandoned.
+4. **Screenshots.** The icon and banner are generated — `npm run plugin:assets` writes
+   `icon-128x128.png`, `icon-256x256.png`, `banner-772x250.png` and `banner-1544x500.png` into
+   `assets/`, and they are committed. Screenshots are the part that cannot be: two or three of
+   the settings page and a real checkout, taken from a WooCommerce install. Optional in the rules
+   and effectively required in practice — a plugin page with no screenshots reads as untested.
 
 5. **The API base default.** It ships as `https://api.avexpay.net`, which does not resolve yet.
    A reviewer testing the plugin will get a connection error and may read that as a broken

@@ -16,6 +16,8 @@
     "typecheck": "tsc -b apps/api --dry",
     "test": "npm run test --workspaces --if-present && npm run test:plugin",
     "test:plugin": "php integrations/woocommerce/tests/run-tests.php",
+    "plugin:zip": "node integrations/woocommerce/build-zip.mjs",
+    "plugin:assets": "node integrations/woocommerce/assets/render-assets.mjs",
     "build:static": "npm run build --workspaces --if-present && node deploy/build-static.mjs"
   },
   "devDependencies": {
