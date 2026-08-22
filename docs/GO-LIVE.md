@@ -87,12 +87,24 @@ production entry point constructs either. So on an EVM chain payments are detect
 and the funds stay in the forwarder. This is the blocker for BNB Chain and Ethereum, and it is
 the largest remaining piece of work.
 
-### 7. Deploy the contracts — *both*
+### 7. Deploy the contracts — *needs the operator*
 
-`ForwarderLogic` then `ForwarderFactory`, once per chain, from a wallet with enough native
-token for two deployments. The addresses go into `FORWARDER_FACTORIES` and
-`FORWARDER_IMPLEMENTATIONS`. Every deposit address is a hash over the second one, so a
-redeployment is a new set of addresses and cannot be done casually after launch.
+```
+RPC_URL=https://… node contracts/deploy.mjs --chain bsc --dry-run   # cost, nothing sent
+DEPLOY_KEY_HEX=0x… RPC_URL=https://… node contracts/deploy.mjs --chain bsc
+```
+
+`contracts/deploy.mjs` deploys `ForwarderLogic`, then `ForwarderFactory` with that address, and
+prints the two environment lines. It refuses to sign if the endpoint's chain id disagrees with
+`--chain`, and — the part that matters — it asks the deployed factory to predict a deposit
+address and compares it with what this build derives. A disagreement means every published
+address would be one the factory can never settle, with no error anywhere to notice it by, so a
+mismatch refuses to print the configuration at all.
+
+Needs a wallet with enough native token for two deployments; the dry run says how much. Every
+deposit address is a hash over the logic address, so a redeployment is a new set of addresses
+and cannot be done casually after launch — record both addresses alongside the commit that
+produced them.
 
 ### 8. A settlement key and a gas wallet — *needs the operator*
 

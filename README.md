@@ -446,7 +446,9 @@ The reviewer-facing side of vetting is Phase 9: the probe, verdicts and audit
 trail exist, but a reviewer currently changes a verdict in the database rather
 than through an admin UI.
 
-A testnet deployment of `ForwarderFactory` is still worth doing before real money
+`contracts/deploy.mjs` deploys the pair to a chain and refuses to print the configuration
+unless the deployed factory and this build agree about deposit addresses. A testnet
+deployment of `ForwarderFactory` is still worth doing before real money
 moves, though the address-derivation guarantee no longer rests on it — see the
 EVM verification above.
 
