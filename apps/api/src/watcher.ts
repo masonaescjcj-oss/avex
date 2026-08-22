@@ -58,27 +58,6 @@ const probeStub = {
   },
 } as unknown as ConstructorParameters<typeof AssetService>[2];
 
-/**
- * A signer that exists only to satisfy the adapter's shape, and never signs.
- *
- * `EvmAdapter` requires an `EvmSigner` because it can also settle. Nothing in a poll settles,
- * so this refuses loudly rather than returning a plausible hash — a silent no-op would be a
- * sweep that reported success and moved nothing.
- *
- * There is a second reason it is a stub rather than the real thing: the repository's one
- * signer, `EvmChainSigner`, implements `ChainSigner` — `pendingNonce`/`broadcast`/`receipt`,
- * which is what `SettlementRunner` consumes — and not `EvmSigner`'s `sendTransaction`. They
- * are two settlement designs, and `EvmAdapter.settle()` currently has no implementation of
- * its side at all. Wiring a cast here would have hidden that behind a runtime failure the
- * first time somebody swept.
- */
-const noSigner = {
-  address: '0x0000000000000000000000000000000000000000',
-  async sendTransaction(): Promise<never> {
-    throw new Error('this process has no settlement key and does not sweep');
-  },
-};
-
 async function main(): Promise<void> {
   const env = loadEnv();
   const { db, close, prepare } = createDatabase(env.DATABASE_URL, {
@@ -243,7 +222,6 @@ async function main(): Promise<void> {
           },
           // Native price, for the gas model. Not consulted during a poll.
           { nativePriceUsd: async () => 0 },
-          noSigner,
           new DatabaseAddressBook(db, chain),
         );
 

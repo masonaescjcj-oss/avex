@@ -275,8 +275,9 @@ describe('watching TRON', () => {
   test('nothing here settles, and it says so rather than pretending', async () => {
     const { adapter } = adapterWith({ head: 1, logs: [] });
 
-    // Empty, not an error: the funds are already where they were going.
-    assert.deepEqual(await adapter.settle([]), []);
+    // Null, not an error: the funds are already where they were going, so there is nothing to
+    // broadcast — and null is what the settlement queue reads as "skip this chain".
+    assert.equal(await adapter.prepareSettlement([]), null);
 
     // And an address cannot be derived on this chain at all.
     await assert.rejects(

@@ -120,7 +120,7 @@ export class TonAdapter implements ChainAdapter {
   }
 
   /** Nothing to do: the payer's transfer already reached the merchant. */
-  settle(): Promise<readonly SettlementResult[]> {
+  prepareSettlement(): Promise<null> {
     return noSettlementNeeded();
   }
 }

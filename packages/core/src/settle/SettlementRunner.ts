@@ -1,4 +1,4 @@
-import type { SettlementRequest } from '../chains/ChainAdapter.js';
+import type { SettlementCall, SettlementRequest } from '../chains/ChainAdapter.js';
 import type { FeePolicy } from '../fees/FeePolicy.js';
 import type { ChainId, GasSnapshot } from '../types.js';
 
@@ -110,12 +110,14 @@ interface SpendEntry {
   readonly usd: number;
 }
 
-/** Transaction bytes to broadcast, produced by the chain adapter. */
-export interface SettlementCall {
-  readonly to: string;
-  readonly data: string;
-  readonly gasLimit: bigint;
-}
+/**
+ * Transaction bytes to broadcast, produced by the chain adapter.
+ *
+ * Re-exported rather than declared, so there is one definition of what a settlement transaction
+ * is. Two identical interfaces in two files is how the adapter and the runner come to disagree
+ * about a field.
+ */
+export type { SettlementCall } from '../chains/ChainAdapter.js';
 
 export class SettlementRunner {
   private readonly inFlight = new Map<number, InFlightTransaction>();

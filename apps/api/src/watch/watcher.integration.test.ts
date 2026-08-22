@@ -278,12 +278,6 @@ describe('the watcher, composed', { skip: databaseUrl ? false : 'DATABASE_URL no
         pollRange: 500,
       },
       { nativePriceUsd: async () => 0 },
-      {
-        address: '0x0000000000000000000000000000000000000000',
-        async sendTransaction(): Promise<never> {
-          throw new Error('this test never settles');
-        },
-      },
       new DatabaseAddressBook(db(), 'bsc'),
     );
 

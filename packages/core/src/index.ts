@@ -14,7 +14,7 @@ export {
   tronAddressesEqual,
 } from './chains/tron/address.js';
 export { EvmAdapter, encodeSettleBatch } from './chains/evm/EvmAdapter.js';
-export type { AddressBook, EvmAdapterConfig, EvmSigner, PriceOracle } from './chains/evm/EvmAdapter.js';
+export type { AddressBook, EvmAdapterConfig, PriceOracle } from './chains/evm/EvmAdapter.js';
 export * from './chains/evm/create2.js';
 export { TonAdapter, tonMemo } from './chains/ton/TonAdapter.js';
 export type { TonAdapterConfig } from './chains/ton/TonAdapter.js';

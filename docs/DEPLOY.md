@@ -32,13 +32,26 @@ DATABASE_URL=… EVM_RPC_URLS=bsc=https://… FORWARDER_FACTORIES=bsc=0x… \
   npm run -w @avex/api watch
 ```
 
-**Sweeping is still not wired — on the EVM chains.** There the watcher detects and credits
-payments and nothing moves funds out of the forwarders yet. `SettlementRunner` exists in
-`@avex/core` with its own tests and consumes a `ChainSigner` — `pendingNonce`/`broadcast`/
-`receipt`, which `EvmChainSigner` implements. `EvmAdapter.settle()` wants a different
-interface, `EvmSigner`'s `sendTransaction`, and nothing implements that one. Two settlement
-designs, one signer, and the watcher passes a stub that throws rather than a cast that would
-fail the first time somebody swept.
+**Sweeping on the EVM chains: one path now, and one thing missing.** There used to be two
+settlement designs. `SettlementRunner` takes a `ChainSigner` — `pendingNonce`/`broadcast`/
+`receipt`, which `EvmChainSigner` implements — and owns the nonce, a spend cap, a
+per-transaction ceiling and the replacement of stuck transactions. `EvmAdapter.settle()` took a
+different interface and broadcast through it, with no nonce and no memory of what was
+outstanding; nothing implemented that interface, and the watcher passed a stub that threw.
+
+That is resolved by removing the wrong one rather than writing it. The adapter seam is now
+`prepareSettlement(batch)`, which returns the bytes to broadcast or null for a chain that
+settles on receipt, and `SettlementQueue` hands them to the runner. The queue keeps its own
+job — hold for a cheaper block, batch, go anyway after a deadline — and a refusal from the
+runner is no longer counted as a failed attempt, because "the spend window is full" must not
+abandon a merchant's settlement.
+
+What is still missing is a key. Sweeping needs an account that pays gas, `LocalKeyProvider`
+refuses to hold one when `NODE_ENV` is production, and no decision has been made about where
+it should live instead. Until then the pipeline is assembled and idle: nothing on EVM sweeps,
+and funds wait at their deposit addresses, which can only ever pay their own merchant.
+
+TRON needs none of this — see below.
 
 **TRON needs none of it, and that is the point.** Its deposit addresses are the merchant's
 own — `addressModel: 'pooled'` — so the payer's transfer lands in their wallet and there is

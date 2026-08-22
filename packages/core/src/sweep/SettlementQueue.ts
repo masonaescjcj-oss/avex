@@ -1,7 +1,11 @@
-import type { ChainAdapter, SettlementRequest, SettlementResult } from '../chains/ChainAdapter.js';
+import type {
+  ChainAdapter,
+  SettlementCall,
+  SettlementRequest,
+} from '../chains/ChainAdapter.js';
 import { chainConfig } from '../chains/registry.js';
 import type { FeePolicy } from '../fees/FeePolicy.js';
-import type { ChainId } from '../types.js';
+import type { ChainId, GasSnapshot } from '../types.js';
 
 export interface SettlementQueueConfig {
   /**
@@ -27,9 +31,30 @@ interface QueueItem {
   attempts: number;
 }
 
+/**
+ * Who actually broadcasts. `SettlementRunner` implements this.
+ *
+ * The queue decides *when* — hold for a cheaper block, batch, give up after a deadline. The
+ * runner decides *whether and how*: against a spend cap and a per-transaction ceiling, with a
+ * nonce it owns and a record of what is outstanding. Splitting them is what left one settlement
+ * path instead of two, and it is why this is a parameter rather than something the adapter does.
+ */
+export interface Broadcaster {
+  settle(
+    batch: readonly SettlementRequest[],
+    call: SettlementCall,
+    snapshot: GasSnapshot,
+    now?: number,
+  ): Promise<
+    | { readonly ok: true; readonly transaction: { readonly hash: string } }
+    | { readonly ok: false; readonly reason: string; readonly detail: string }
+  >;
+}
+
 export interface DrainReport {
   readonly chain: ChainId;
-  readonly settled: readonly SettlementResult[];
+  /** Hashes broadcast for this chain. Empty when the batch was held or refused. */
+  readonly broadcast: readonly string[];
   readonly deferred: number;
   readonly failed: number;
   readonly note: string;
@@ -51,6 +76,8 @@ export class SettlementQueue {
   constructor(
     private readonly adapters: ReadonlyMap<ChainId, ChainAdapter>,
     private readonly feePolicy: FeePolicy,
+    /** Where a prepared batch goes. See `Broadcaster`. */
+    private readonly broadcaster: Broadcaster,
     private readonly config: SettlementQueueConfig = DEFAULT_QUEUE_CONFIG,
     private readonly log: QueueLogger = () => {},
   ) {}
@@ -101,7 +128,7 @@ export class SettlementQueue {
         const { usd, detail } = this.feePolicy.settlementCostUsd(snapshot);
         reports.push({
           chain,
-          settled: [],
+          broadcast: [],
           deferred: queue.length,
           failed: 0,
           note: `holding ${queue.length}: $${usd.toFixed(4)} — ${detail}`,
@@ -113,15 +140,54 @@ export class SettlementQueue {
       const requests = batch.map((item) => item.request);
 
       try {
-        const settled = await adapter.settle(requests);
+        const call = await adapter.prepareSettlement(requests);
+        if (call === null) {
+          /**
+           * Nothing to broadcast, and the batch is done rather than retried.
+           *
+           * Reached only if a chain that settles on receipt got past `enqueue`, which refuses
+           * them — so this is a belt-and-braces branch. Requeuing would spin forever on a chain
+           * that will never produce a transaction.
+           */
+          reports.push({
+            chain,
+            broadcast: [],
+            deferred: queue.length,
+            failed: 0,
+            note: `${batch.length} needed no transaction`,
+          });
+          continue;
+        }
+
+        const outcome = await this.broadcaster.settle(requests, call, snapshot, now);
+        if (!outcome.ok) {
+          /**
+           * A refusal is not a failure, and the difference matters.
+           *
+           * The runner refuses for reasons that pass — the gas price is above the ceiling, the
+           * spend window is full, a nonce is stuck. So the batch goes back to the *front* of the
+           * queue with its attempt count untouched: counting a refusal as an attempt would
+           * abandon a merchant's settlement because the chain was busy.
+           */
+          queue.unshift(...batch);
+          reports.push({
+            chain,
+            broadcast: [],
+            deferred: queue.length,
+            failed: 0,
+            note: `refused ${batch.length}: ${outcome.reason} — ${outcome.detail}`,
+          });
+          continue;
+        }
+
         reports.push({
           chain,
-          settled,
+          broadcast: [outcome.transaction.hash],
           deferred: queue.length,
           failed: 0,
           note: overdue && !cheapEnough
-            ? `settled ${batch.length} on deferral deadline`
-            : `settled ${batch.length} at target cost`,
+            ? `broadcast ${batch.length} on deferral deadline`
+            : `broadcast ${batch.length} at target cost`,
         });
       } catch (error) {
         // Requeue at the front so ordering survives, dropping exhausted items to
@@ -143,7 +209,7 @@ export class SettlementQueue {
         queue.unshift(...retry);
         reports.push({
           chain,
-          settled: [],
+          broadcast: [],
           deferred: queue.length,
           failed,
           note: `settlement failed: ${error instanceof Error ? error.message : String(error)}`,

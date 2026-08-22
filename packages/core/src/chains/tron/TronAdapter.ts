@@ -206,7 +206,7 @@ export class TronAdapter implements ChainAdapter {
    * for the same reason, and it returns an empty array rather than throwing — a settlement queue
    * that asked would be told "already done", which is true.
    */
-  async settle(_batch: readonly SettlementRequest[]): Promise<readonly SettlementResult[]> {
+  async prepareSettlement(_batch: readonly SettlementRequest[]): Promise<null> {
     return noSettlementNeeded();
   }
 

@@ -93,17 +93,36 @@ export interface ChainAdapter {
   probeGas(): Promise<GasSnapshot>;
 
   /**
-   * Move funds to the merchants' payout addresses, batching where the chain
-   * allows it — one EVM transaction deploying and flushing many forwarders, one
-   * TRON batch under delegated energy, and so on.
+   * The transaction that would move this batch to the merchants' payout addresses, or null
+   * when the chain has nothing to move.
    *
-   * `shared-memo` chains have nothing to do here — the payer's own transfer
-   * already delivered the funds — and return an empty array.
+   * Prepares rather than sends, and that distinction is the whole point. This used to be
+   * `settle()`, which broadcast through a signer of its own — a second settlement design
+   * beside `SettlementRunner`, with two consequences. It hid the nonce, so a transaction stuck
+   * in the mempool could never be replaced and every settlement queued behind it stopped. And
+   * it kept nothing, so after a restart nothing knew a transaction was outstanding at a given
+   * nonce. The runner exists because both of those matter; splitting "what to send" from
+   * "whether and how to send it" is what leaves one path instead of two.
+   *
+   * Null from every chain that settles on receipt — `shared-memo` and `pooled` both — because
+   * the payer's own transfer already delivered the funds.
    */
-  settle(batch: readonly SettlementRequest[]): Promise<readonly SettlementResult[]>;
+  prepareSettlement(batch: readonly SettlementRequest[]): Promise<SettlementCall | null>;
 }
 
-/** Settlement implementation for `shared-memo` chains: there is no work to do. */
-export async function noSettlementNeeded(): Promise<readonly SettlementResult[]> {
-  return [];
+/**
+ * What to broadcast, for a chain that has something to broadcast.
+ *
+ * Re-declared here rather than imported from the runner so the adapter seam does not depend on
+ * the settlement pipeline: an adapter's job ends at the bytes.
+ */
+export interface SettlementCall {
+  readonly to: string;
+  readonly data: string;
+  readonly gasLimit: bigint;
+}
+
+/** For chains where the payer's transfer already arrived: there is nothing to send. */
+export async function noSettlementNeeded(): Promise<null> {
+  return null;
 }

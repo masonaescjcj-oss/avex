@@ -7,13 +7,14 @@ import type {
 } from '../../types.js';
 import type {
   ChainAdapter,
-  DeriveInput,
   DepositTarget,
+  DeriveInput,
+  FeeSplit,
   PollCursor,
   PollResult,
+  SettlementCall,
   SettlementRequest,
   SettlementResult,
-  FeeSplit,
 } from '../ChainAdapter.js';
 import { chainConfig } from '../registry.js';
 import {
@@ -38,15 +39,6 @@ export interface PriceOracle {
  * still needs a funded account to pay gas for settlement batches, and that key
  * is the one genuinely sensitive secret in the system.
  */
-export interface EvmSigner {
-  readonly address: string;
-  sendTransaction(tx: {
-    to: string;
-    data: string;
-    value?: bigint;
-  }): Promise<{ hash: string; feePaid: bigint }>;
-}
-
 /** Maps a deposit address back to the invoice that owns it. */
 export interface AddressBook {
   lookup(address: string): Promise<string | null>;
@@ -97,7 +89,6 @@ export class EvmAdapter implements ChainAdapter {
   constructor(
     private readonly config: EvmAdapterConfig,
     private readonly oracle: PriceOracle,
-    private readonly signer: EvmSigner,
     private readonly addressBook: AddressBook,
   ) {
     this.chain = config.chain;
@@ -202,11 +193,16 @@ export class EvmAdapter implements ChainAdapter {
   }
 
   /**
-   * Settle a batch through `ForwarderFactory.settleBatch`, deploying each
-   * forwarder and flushing it in a single transaction.
+   * The `ForwarderFactory.settleBatch` call for this batch: one transaction that deploys each
+   * forwarder and flushes it.
+   *
+   * Prepared, not sent. `SettlementRunner` decides whether to send it — against the gas price,
+   * a spend cap and a per-transaction ceiling — assigns the nonce, records it, and replaces it
+   * if it sticks. This method used to broadcast through a signer of its own, which was a second
+   * settlement design with no nonce and no memory of what was outstanding.
    */
-  async settle(batch: readonly SettlementRequest[]): Promise<readonly SettlementResult[]> {
-    if (batch.length === 0) return [];
+  async prepareSettlement(batch: readonly SettlementRequest[]): Promise<SettlementCall | null> {
+    if (batch.length === 0) return null;
 
     const data = encodeSettleBatch(
       batch.map((request) => {
@@ -221,26 +217,22 @@ export class EvmAdapter implements ChainAdapter {
       }),
     );
 
-    const { hash, feePaid } = await this.signer.sendTransaction({
+    /**
+     * Gas from the chain's own measured figure, per invoice, plus a fixed overhead.
+     *
+     * Not an `eth_estimateGas` call: an estimate against a factory that has not deployed these
+     * forwarders yet is a simulation of state that does not exist, and it fails rather than
+     * over-estimating. The registry's `gasDeployAndFlushToken` is the measured cost of one
+     * deploy-and-flush, which is exactly what each entry in this batch is; the overhead covers
+     * the call itself and the loop around it.
+     */
+    const profile = chainConfig(this.chain).settlement;
+    const perInvoice = profile.kind === 'evm' ? BigInt(profile.gasDeployAndFlushToken) : 400_000n;
+    return {
       to: this.config.create2.factory,
       data,
-    });
-
-    return [
-      {
-        txHash: hash,
-        feePaid,
-        invoiceIds: batch.map((request) => request.invoiceId),
-      },
-    ];
-  }
-
-  /** Confirmations required for a payment of this USD value on this chain. */
-  confirmationsFor(valueUsd: number): number {
-    const { confirmations } = chainConfig(this.chain);
-    return valueUsd >= confirmations.highValueThresholdUsd
-      ? confirmations.highValue
-      : confirmations.standard;
+      gasLimit: perInvoice * BigInt(batch.length) + 50_000n,
+    };
   }
 
   private async rpc<T>(method: string, params: unknown[]): Promise<T> {

@@ -158,8 +158,8 @@ class ScriptedAdapter implements ChainAdapter {
     };
   }
 
-  async settle() {
-    return [];
+  async prepareSettlement() {
+    return null;
   }
 }
 

@@ -43,7 +43,7 @@ export class SolanaAdapter implements ChainAdapter {
     throw new Error(NOT_IMPLEMENTED);
   }
 
-  settle(_batch: readonly SettlementRequest[]): Promise<readonly SettlementResult[]> {
+  prepareSettlement(_batch: readonly SettlementRequest[]): Promise<null> {
     throw new Error(NOT_IMPLEMENTED);
   }
 }

@@ -122,9 +122,10 @@ class FakeEvmAdapter implements ChainAdapter {
     return { payments: [], cursor: null as PollCursor };
   }
 
-  async settle(batch: readonly SettlementRequest[]): Promise<readonly SettlementResult[]> {
+  async prepareSettlement(batch: readonly SettlementRequest[]): Promise<null> {
     this.settled.push(...batch);
-    return [{ txHash: '0xtx', feePaid: 0n, invoiceIds: batch.map((r) => r.invoiceId) }];
+    // The bytes are not the point here; what is recorded is that the batch reached the adapter.
+    return null;
   }
 
   confirmationsFor(): number {
@@ -156,10 +157,10 @@ class FakeMemoAdapter implements ChainAdapter {
     return { payments: [], cursor: null as PollCursor };
   }
 
-  async settle(): Promise<readonly SettlementResult[]> {
+  async prepareSettlement(): Promise<null> {
     // Shared-memo chains deliver straight to the merchant, so there is nothing to
     // sweep — the payer's transfer already landed in the destination wallet.
-    return [];
+    return null;
   }
 
   confirmationsFor(): number {
