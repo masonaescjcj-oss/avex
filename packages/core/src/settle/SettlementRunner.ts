@@ -130,7 +130,8 @@ export interface Alert {
     | 'spend_cap'
     | 'reverted_settlement'
     | 'watcher_stalled'
-    | 'watcher_failing';
+    | 'watcher_failing'
+    | 'price_feed_suspended';
   readonly detail: string;
 }
 

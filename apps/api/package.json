@@ -10,7 +10,8 @@
     "start": "node dist/main.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "watch": "node dist/watcher.js"
+    "watch": "node dist/watcher.js",
+    "preflight": "node dist/preflight.js"
   },
   "dependencies": {
     "@avex/core": "*",

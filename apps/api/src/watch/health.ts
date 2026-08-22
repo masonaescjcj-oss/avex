@@ -40,6 +40,18 @@ export const STALL_AFTER_MS = 10 * 60_000;
 /** Consecutive failures before the chain is treated as down rather than flaky. */
 export const FAILURES_BEFORE_ALERT = 5;
 
+/**
+ * The price feeds that have been suspended, and why this belongs here.
+ *
+ * A circuit breaker opens when a symbol's sources stop agreeing or stop answering, and the
+ * consequence in this process is specific: a payment credited while its symbol is suspended is
+ * valued `unknown`, which decides how many confirmations it waits for and what counts towards
+ * the merchant's volume. Neither is visible to anybody afterwards.
+ *
+ * A warning rather than a critical, and that is the honest severity. Unlike a stalled cursor,
+ * this one is not silent on the merchant's side either: invoice creation answers 503 with a
+ * reason, so their checkout tells them something is wrong. This is the half they cannot see.
+ */
 interface ChainState {
   scannedTo: number;
   advancedAt: number;
@@ -50,6 +62,8 @@ interface ChainState {
 
 export class WatchHealth {
   private readonly state = new Map<ChainId, ChainState>();
+  /** The suspended set as last seen, joined, so a change is one comparison. */
+  private suspendedSymbols = '';
 
   constructor(
     private readonly stallAfterMs: number = STALL_AFTER_MS,
@@ -116,6 +130,39 @@ export class WatchHealth {
     }
 
     return null;
+  }
+
+  /**
+   * Which price symbols are suspended. Returns an alert when that set changes.
+   *
+   * On the change rather than on the state, so a feed that stays down does not send a message
+   * every pass — and so recovery is reported by the same call rather than needing its own.
+   */
+  pricesSuspended(symbols: readonly string[]): Alert | null {
+    // Sorted, so the comparison is about membership rather than about the order a service
+    // happened to list them in.
+    const now = [...symbols].sort().join(',');
+    if (now === this.suspendedSymbols) return null;
+
+    const previous = this.suspendedSymbols;
+    this.suspendedSymbols = now;
+
+    if (now === '') {
+      return {
+        severity: 'warning',
+        kind: 'price_feed_suspended',
+        detail: `price feeds are healthy again (was: ${previous})`,
+      };
+    }
+
+    return {
+      severity: 'warning',
+      kind: 'price_feed_suspended',
+      detail:
+        `price feeds suspended for ${now}. Invoices in those currencies are being refused, and ` +
+        'payments credited meanwhile are valued as unknown — which decides how many ' +
+        'confirmations they wait for and what counts towards a volume tier.',
+    };
   }
 
   /** A poll that threw. Returns an alert on the nth consecutive failure, once. */

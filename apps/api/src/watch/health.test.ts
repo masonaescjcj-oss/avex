@@ -119,6 +119,42 @@ describe('watching the watcher', () => {
     assert.match(recovered.detail, /polling successfully again/);
   });
 
+  test('a suspended price feed is reported once, and so is its recovery', async () => {
+    /**
+     * The consequence in this process is not the obvious one. A merchant does see a suspended
+     * feed — their checkout starts refusing that currency with a reason — so this is a warning,
+     * not a critical. What they cannot see is the half that happens here: a payment credited
+     * while its symbol is suspended is valued `unknown`, which decides its confirmation depth
+     * and whether it counts towards a volume tier.
+     */
+    const health = new WatchHealth();
+
+    assert.equal(health.pricesSuspended([]), null, 'healthy is not news');
+
+    const opened = health.pricesSuspended(['USDT']);
+    assert.ok(opened);
+    assert.equal(opened.severity, 'warning');
+    assert.equal(opened.kind, 'price_feed_suspended');
+    assert.match(opened.detail, /valued as unknown/);
+
+    // The same outage is not reported again, however many passes it lasts.
+    assert.equal(health.pricesSuspended(['USDT']), null);
+    assert.equal(health.pricesSuspended(['USDT']), null);
+
+    // A second symbol going down is a change, and worth saying.
+    const widened = health.pricesSuspended(['USDT', 'BNB']);
+    assert.ok(widened);
+    assert.match(widened.detail, /BNB,USDT/, 'sorted, so the order a service listed them in does not matter');
+
+    // And the same set in a different order is not a change.
+    assert.equal(health.pricesSuspended(['BNB', 'USDT']), null);
+
+    const recovered = health.pricesSuspended([]);
+    assert.ok(recovered);
+    assert.match(recovered.detail, /healthy again/);
+    assert.equal(health.pricesSuspended([]), null);
+  });
+
   test('a chain that fails before it ever succeeds is still reported', async () => {
     /**
      * The startup case: a misconfigured endpoint means the first poll fails and there is no

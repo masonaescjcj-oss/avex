@@ -353,6 +353,15 @@ async function main(): Promise<void> {
            */
           const alert = health.observed(chain, outcome.scannedTo);
           if (alert) void alerts.forward([alert]);
+
+          /**
+           * And whether the price feeds are answering, which this process needs for a different
+           * reason than the API does: a payment credited while its symbol is suspended is valued
+           * `unknown`, and that decides its confirmation depth and whether it counts towards a
+           * volume tier. Only a change is reported, so a feed that stays down says it once.
+           */
+          const suspended = health.pricesSuspended(prices.suspendedSymbols());
+          if (suspended) void alerts.forward([suspended]);
         },
         onError: (error, consecutive) => {
           const detail = error instanceof Error ? error.message : String(error);

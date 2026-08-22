@@ -39,6 +39,22 @@ taking real money, and it is the reason the order below is what it is.
 - The payer pays the network fee; invoices below what a chain can carry are refused.
 - Transactional email over SMTP.
 
+## Checking where you are
+
+```
+npm run build --workspace @avex/api
+npm run preflight --workspace @avex/api
+```
+
+Reads the configuration and nothing else — no database, no network, no keys — and reports what
+this deployment cannot do. `BLOCKED` is something that stops the product working; `degraded` is a
+choice somebody may have made deliberately. It exits 1 on the first, so a pipeline can gate on
+it, and 0 on the second.
+
+Every finding it names is a gap that otherwise announces itself as silence, which is why it
+exists: no mail server and every message is composed, logged, and never sent, so the signup flow
+completes and no merchant can confirm an address.
+
 ## Left, in order
 
 ### 1. A database — *needs the operator*
@@ -126,15 +142,11 @@ The same wallet pays gas. It needs a balance and an alarm on that balance.
   settlement, a nonce nothing can get past, a settlement that reverted — are emailed once per
   kind per fifteen minutes. Warnings stay in the log. Without the address everything is logged
   and settlement says so at startup.
-- A cursor that stops advancing for ten minutes, or five failed polls in a row, is a critical
-  alert on the same address. That is the failure nobody reports: a payer's transfer confirms, the
-  merchant sees nothing, and each blames the other while every other signal looks healthy.
-- Still to build: an alert when the price circuit breaker opens. It is visible in the admin panel
-  and does not reach out — and unlike the others, a merchant does notice, because their checkout
-  starts refusing currencies.
-- Alerting on: watcher cursor falling behind, a settlement queue that stops draining, the price
-  circuit breaker opening, the gas wallet running low.
-- Database backups with point-in-time recovery.
+- A cursor that stops advancing for ten minutes, five failed polls in a row, or a price feed
+  suspending is an alert on the same address. The first is the failure nobody reports: a payer's
+  transfer confirms, the merchant sees nothing, and each blames the other while every other
+  signal looks healthy.
+- Database backups with point-in-time recovery. *Operator.*
 
 ## Not blockers
 

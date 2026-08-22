@@ -133,3 +133,13 @@ forwarders until that is built.
 5. Forwarder factory + settlement — money actually moves to merchants.
 
 Steps 1–3 are Supabase. Steps 4–5 are not, and step 5 is not built.
+
+## Before taking real money
+
+```
+npm run build --workspace @avex/api
+npm run preflight --workspace @avex/api
+```
+
+Reports what this deployment cannot do, from the configuration alone — no database, no network,
+no keys. Exits 1 on anything blocking. See `docs/GO-LIVE.md`.
