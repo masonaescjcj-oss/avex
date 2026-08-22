@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { keccak256 } from '../../crypto/keccak256.js';
+import { keccak256, toHex } from '../../crypto/keccak256.js';
 import {
+  CLONE_ARGS_OFFSET,
+  cloneInitCode,
   create2Address,
   invoiceSalt,
   predictForwarder,
@@ -46,10 +48,9 @@ test('create2Address matches EIP-1014 vectors', () => {
 });
 
 test('deposit addresses are deterministic and bound to the payout address', () => {
-  // Placeholder creation code — the real value comes from compiling Forwarder.sol.
   const config: Create2Config = {
     factory: '0x00000000000000000000000000000000000000f0',
-    forwarderCreationCode: '0x60806040523480156100115760006000fd5b',
+    implementation: '0x00000000000000000000000000000000000000e1',
   };
   const merchantA = '0x1111111111111111111111111111111111111111';
   const merchantB = '0x2222222222222222222222222222222222222222';
@@ -66,6 +67,60 @@ test('deposit addresses are deterministic and bound to the payout address', () =
   // changes the deposit address. This is the non-custodial guarantee: an address
   // cannot be re-pointed at a different destination after the fact.
   assert.notEqual(predictForwarder(config, 'inv_abc', merchantB), first);
+});
+
+test('the clone is 97 bytes of init code, and every parameter is in them', () => {
+  /**
+   * The bytes themselves, because everything else in this file depends on them being right and
+   * because a payer's funds are unreachable if they are not. 10 of init prefix, 45 of EIP-1167
+   * runtime naming the implementation, then the three parameters packed — 20, 20 and 2.
+   *
+   * Packed rather than ABI-encoded, which is the change that took a settlement from 385,291 gas
+   * to a fraction of it: the parameters used to be constructor arguments padded to 32 bytes each
+   * and the code they configured was a full copy of the contract.
+   */
+  const config: Create2Config = {
+    factory: '0x00000000000000000000000000000000000000f0',
+    implementation: '0xEEeeEEeeEEeeEEeeEEeeEEeeEEeeEEeeEEeeEEee',
+  };
+  const code = toHex(
+    cloneInitCode(config, '0x1111111111111111111111111111111111111111', {
+      feeDestination: '0x2222222222222222222222222222222222222222',
+      feeBps: 62,
+    }),
+  );
+
+  assert.equal(
+    code,
+    '0x3d605780600a3d3981f3363d3d373d3d3d363d73' +
+      'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' +
+      '5af43d82803e903d91602b57fd5bf3' +
+      '1111111111111111111111111111111111111111' +
+      '2222222222222222222222222222222222222222' +
+      '003e',
+  );
+
+  // 87 is the length the init prefix promises to return, and 45 is where the logic reads the
+  // parameters from. Both are in the bytes above, as `6057` and by construction.
+  assert.equal((code.length - 2) / 2, 97);
+  assert.equal(CLONE_ARGS_OFFSET, 45);
+});
+
+test('a fee above the contract ceiling is refused before an address exists', () => {
+  // The contract reverts above 5%, so an address derived for more could take a payment and
+  // never be settleable. Refused here, where it is still an invoice we have not issued.
+  const config: Create2Config = {
+    factory: '0x00000000000000000000000000000000000000f0',
+    implementation: '0x00000000000000000000000000000000000000e1',
+  };
+  assert.throws(
+    () =>
+      cloneInitCode(config, '0x1111111111111111111111111111111111111111', {
+        feeDestination: '0x2222222222222222222222222222222222222222',
+        feeBps: 501,
+      }),
+    /exceeds the contract's 500bps ceiling/,
+  );
 });
 
 test('invoiceSalt produces a 32-byte salt for any id shape', () => {

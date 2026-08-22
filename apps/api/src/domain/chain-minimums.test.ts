@@ -24,7 +24,7 @@ const oracleOf = (snapshot: GasSnapshot | null): GasOracle => ({
 
 const usd = (dollars: number): bigint => BigInt(Math.round(dollars * 1_000_000));
 
-/** BSC at 0.1 gwei with BNB at $600: 400,000 gas is 2.4 cents. */
+/** BSC at 0.1 gwei with BNB at $600: 95,000 gas is 0.57 cents. */
 const BSC: GasSnapshot = {
   chain: 'bsc',
   nativePriceUsd: 600,
@@ -35,14 +35,14 @@ const BSC: GasSnapshot = {
 describe('the smallest order a chain can carry', () => {
   test('the floor is the settlement cost over the target ratio', async () => {
     /**
-     * 2.4 cents at a ratio of 0.004 is $6, and the multiple is the point: it is not a margin on
-     * the gas — the payer covers that — but on the *forecast*, because the fee is fixed when the
-     * invoice is created and the gas is paid when it settles. Two hundred and fifty times is
+     * 0.57 cents at a ratio of 0.004 is $1.43, and the multiple is the point: it is not a margin
+     * on the gas — the payer covers that — but on the *forecast*, because the fee is fixed when
+     * the invoice is created and the gas is paid when it settles. Two hundred and fifty times is
      * what a 0.4% commission needs to absorb a doubling; past that the settlement queue defers
      * rather than pays.
      */
     const minimums = new ChainMinimums(oracleOf(BSC));
-    assert.equal(await minimums.minInvoiceUsdMicros('bsc'), usd(6));
+    assert.equal(await minimums.minInvoiceUsdMicros('bsc'), usd(1.43));
     assert.equal(DEFAULT_FEE_POLICY.targetFeeRatio, 0.004, 'and this is where that comes from');
   });
 
@@ -97,14 +97,14 @@ describe('the smallest order a chain can carry', () => {
   test('an order below the floor is refused, and told what the floor is', async () => {
     const minimums = new ChainMinimums(oracleOf(BSC));
 
-    const refused = await minimums.verdict('bsc', usd(2));
+    const refused = await minimums.verdict('bsc', usd(1));
     assert.equal(refused.ok, false);
-    assert.equal(refused.ok === false && refused.minUsdMicros, usd(6));
+    assert.equal(refused.ok === false && refused.minUsdMicros, usd(1.43));
 
     // And the boundary itself passes, rather than being off by a cent.
-    assert.deepEqual(await minimums.verdict('bsc', usd(6)), { ok: true });
-    assert.deepEqual(await minimums.verdict('bsc', usd(6.01)), { ok: true });
-    assert.equal((await minimums.verdict('bsc', usd(5.99))).ok, false);
+    assert.deepEqual(await minimums.verdict('bsc', usd(1.43)), { ok: true });
+    assert.deepEqual(await minimums.verdict('bsc', usd(1.44)), { ok: true });
+    assert.equal((await minimums.verdict('bsc', usd(1.42))).ok, false);
   });
 
   test('an invoice with no dollar value is not judged against a dollar figure', async () => {
@@ -131,7 +131,7 @@ describe('the smallest order a chain can carry', () => {
 
   test('the floor rises with gas, without anybody deciding it should', async () => {
     // The property the whole derivation exists for: no operator has to notice a spike.
-    const busy: GasSnapshot = { ...BSC, feePerGasWei: 3_000_000_000n }; // 3 gwei
+    const busy: GasSnapshot = { ...BSC, feePerGasWei: 5_000_000_000n }; // 5 gwei
     const quiet = (await new ChainMinimums(oracleOf(BSC)).minInvoiceUsdMicros('bsc'))!;
     const spike = (await new ChainMinimums(oracleOf(busy)).minInvoiceUsdMicros('bsc'))!;
 

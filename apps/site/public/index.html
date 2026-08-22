@@ -1349,29 +1349,37 @@ function concatBytes(...parts) {
     return out;
 }
 
-/** ABI encoding of a single `address` argument: 12 zero bytes then 20 address bytes. */
-function encodeAddress(address) {
-    const raw = fromHex(address);
-    if (raw.length !== 20)
-        throw new Error(`not a 20-byte address: ${address}`);
-    return concatBytes(new Uint8Array(12), raw);
-}
 /**
- * ABI encoding of a `uint16`: right-aligned in a 32-byte word.
+ * The EIP-1167 minimal proxy, either side of the implementation address.
  *
- * The width matters. Solidity pads a `uint16` to 32 bytes in the constructor
- * arguments exactly as it pads an address, so encoding this as two bytes would
- * produce a different init code hash and therefore a different address — one the
- * factory would never derive, leaving any funds sent to it unreachable.
+ * Canonical bytes, with one change: the length in the init prefix is `0x57` (87) rather than
+ * `0x2d` (45), so the parameters appended after the runtime are deposited as part of the code.
+ * That is what puts them in the hash CREATE2 takes, and therefore in the address.
+ *
+ *   3d       RETURNDATASIZE            0
+ *   6057     PUSH1 87                  length
+ *   80       DUP1
+ *   600a     PUSH1 10                  offset of the runtime within this init code
+ *   3d       RETURNDATASIZE            0
+ *   39       CODECOPY                  memory[0..87] = code[10..97]
+ *   81       DUP2
+ *   f3       RETURN                    the 87 bytes become the deployed code
+ *
+ * Mirrors `ForwarderFactory.cloneInitCode`. The two are checked against each other by the
+ * contract tests, which derive addresses with this code and settle them with that one.
  */
-function encodeUint16(value) {
-    if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
-        throw new Error(`not a uint16: ${value}`);
-    }
-    const word = new Uint8Array(32);
-    word[30] = (value >> 8) & 0xff;
-    word[31] = value & 0xff;
-    return word;
+const PROXY_PREFIX = '0x3d605780600a3d3981f3363d3d373d3d3d363d73';
+const PROXY_SUFFIX = '5af43d82803e903d91602b57fd5bf3';
+/** Where the parameters start in a clone's code. `ForwarderLogic.ARGS_OFFSET`. */
+const CLONE_ARGS_OFFSET = 45;
+function bare(hex) {
+    return (hex.startsWith('0x') ? hex.slice(2) : hex).toLowerCase();
+}
+function addressBytes(address, label) {
+    const raw = bare(address);
+    if (!/^[0-9a-f]{40}$/.test(raw))
+        throw new Error(`not a 20-byte ${label}: ${address}`);
+    return raw;
 }
 /**
  * Highest fee the on-chain `Forwarder` will accept, mirroring `MAX_FEE_BPS`.
@@ -1401,12 +1409,40 @@ function invoiceSalt(invoiceId) {
     return keccak256(new TextEncoder().encode(invoiceId));
 }
 /**
- * keccak256(creationCode ++ abi.encode(destination, feeDestination, feeBps)) —
- * matches `ForwarderFactory.initCode`.
+ * The exact bytes CREATE2 hashes: a minimal proxy with the parameters appended.
+ *
+ * Packed, not ABI-encoded, and the difference is the whole address. The previous version put
+ * the parameters through `abi.encode`, which pads each one to 32 bytes; these are the raw 20,
+ * 20 and 2. Padding them here would produce an address the factory never derives, and the
+ * funds sent to it would be unreachable — so this function exists rather than being inlined,
+ * and the contract tests settle addresses it produced.
  */
-function initCodeHash(config, destination, fee = NO_FEE) {
+function cloneInitCode(config, destination, fee = NO_FEE) {
     assertFee(fee);
-    return keccak256(concatBytes(fromHex(config.forwarderCreationCode), encodeAddress(destination), encodeAddress(fee.feeDestination), encodeUint16(fee.feeBps)));
+    if (fee.feeBps > 0xffff)
+        throw new Error(`not a uint16: ${fee.feeBps}`);
+    const hex = bare(PROXY_PREFIX) +
+        addressBytes(config.implementation, 'implementation') +
+        PROXY_SUFFIX +
+        addressBytes(destination, 'destination') +
+        addressBytes(fee.feeDestination, 'fee destination') +
+        fee.feeBps.toString(16).padStart(4, '0');
+    const code = fromHex(`0x${hex}`);
+    /**
+     * 97 bytes, checked rather than assumed: 10 of init, 45 of runtime, 42 of parameters.
+     *
+     * A length that drifted would move where `ForwarderLogic.config` reads from, and it reads by
+     * a constant offset. The failure would not be a revert — it would be a valid-looking address
+     * assembled from the wrong bytes.
+     */
+    if (code.length !== 10 + CLONE_ARGS_OFFSET + 42) {
+        throw new Error(`clone init code must be 97 bytes, got ${code.length}`);
+    }
+    return code;
+}
+/** keccak256 of the clone init code — matches `keccak256(ForwarderFactory.cloneInitCode(…))`. */
+function initCodeHash(config, destination, fee = NO_FEE) {
+    return keccak256(cloneInitCode(config, destination, fee));
 }
 function assertFee(fee) {
     if (fee.feeBps > MAX_FEE_BPS) {
@@ -1432,11 +1468,11 @@ function create2Address(deployer, salt, initCodeHashBytes) {
 /**
  * The deposit address for (invoice, merchant payout address, fee split).
  *
- * Mirrors `ForwarderFactory.predict`. Because every constructor argument feeds the
- * init code hash, the resulting address is bound to all of them — which is what
- * lets us hand out an address before any contract exists at it and still promise
- * both that the funds can only reach the merchant and that our cut cannot grow
- * after the fact. A larger fee is a different address.
+ * Mirrors `ForwarderFactory.predict`. Because all three parameters are appended to the code the
+ * clone deposits, they feed the init code hash, and the resulting address is bound to every one
+ * of them — which is what lets us hand out an address before any contract exists at it and still
+ * promise both that the funds can only reach the merchant and that our cut cannot grow after the
+ * fact. A larger fee is a different address.
  *
  * The corollary is that settlement must be given the same fee it was quoted with.
  * Reading a current fee from configuration at sweep time would derive an address
@@ -1473,22 +1509,30 @@ function toChecksumAddress(address) {
  * so charging it per invoice would make every batch look uneconomic.
  */
 /**
- * CREATE2 deploy of a forwarder plus a token flush: 385,000 measured, rounded up.
+ * CREATE2 deploy of a deposit address plus a token flush: 86,546 measured, rounded up.
  *
- * Dominated by the code deposit — 200 gas for each of the runtime's ~1,570 bytes —
- * which is why deferring settlement until gas is cheap matters so much more here
- * than the arithmetic inside the contract does.
+ * It was 400,000, and the difference is the whole reason the floor under an invoice moved.
+ * A deposit address used to deploy a full copy of the forwarder — 1,567 bytes at 200 gas each,
+ * 313,400 of the total — and now deploys an 87-byte minimal proxy that delegates to one shared
+ * implementation. Four fifths of the cost of moving a merchant's money was writing bytecode
+ * identical to the bytecode next door.
+ *
+ * What is left is mostly irreducible: 32,000 for CREATE2, a token transfer or two, and the
+ * account the merchant may not have. Which changes the character of the deferral logic — at a
+ * tenth of a gwei on BNB Chain a settlement is half a cent rather than two and a half, so the
+ * queue holds far less and `deferAboveUsd` bites far later.
  */
-const EVM_GAS_DEPLOY_AND_FLUSH = 400_000;
+const EVM_GAS_DEPLOY_AND_FLUSH = 95_000;
 /**
- * Flushing a forwarder that already exists: 17,300 measured, plus 25,000 for
- * creating the payout account when it has never held this asset.
+ * Flushing a deposit address that already exists: 16,206 measured, plus 25,000 for creating the
+ * payout account when it has never held this asset.
  *
- * An order of magnitude below a deploy, because there is no code to write. Kept as
- * its own figure so a re-sweep of an existing forwarder is not deferred as though
- * it cost a deployment.
+ * Still well below a deploy, though the gap narrowed from an order of magnitude to about five
+ * times when the deploy stopped carrying a copy of the contract. Kept as its own figure so a
+ * re-sweep — a payer who sent twice, a late transfer to a settled invoice — is not deferred as
+ * though it cost a deployment.
  */
-const EVM_GAS_FLUSH_ONLY = 45_000;
+const EVM_GAS_FLUSH_ONLY = 42_000;
 const CHAINS = {
     ethereum: {
         chain: 'ethereum',
@@ -1672,20 +1716,20 @@ function signUpWithEmail(base, email) {
   const el = (id) => document.getElementById(id);
 
   /**
-   * A real factory and a real forwarder bytecode would come from the deployment.
+   * A real factory and a real logic address would come from the deployment.
    *
    * These are stand-ins, and the page says so where it matters — what is genuine here is
    * the derivation itself: the same `predictForwarder` the gateway calls, over the same
    * keccak256, so changing the payout wallet really does change the address. Faking that
    * with a hash of the inputs would have made the page's central claim a decoration.
+   *
+   * `implementation` replaced a slab of stand-in bytecode when a deposit address became an
+   * 87-byte proxy pointing at one shared contract instead of a full copy of it. The derivation
+   * is the same shape: hash the code the address will hold, and the parameters are in it.
    */
   const CONFIG = {
     factory: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
-    forwarderCreationCode:
-      '0x60a0604052348015600f57600080fd5b5060405161012c38038061012c8339' +
-      '810160408190526100299161003e565b608052610059565b60006020828403' +
-      '12156100505760008081fd5b5051919050565b60805160c952602081016040' +
-      '5261007b565b60008060408385031215610094578081fd5b8251602084015190',
+    implementation: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
   };
 
   // ── the derivation ────────────────────────────────────────────────────────

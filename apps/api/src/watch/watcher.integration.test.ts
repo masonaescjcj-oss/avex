@@ -35,7 +35,7 @@ const TRANSFER_TOPIC = toHex(
 );
 const TOKEN = '0x55d398326f99059ff775485246999027b3197955';
 const FACTORY = '0x00000000000000000000000000000000000f4c70';
-const CREATION_CODE = '0x60806040523480156100115760006000fd5b50';
+const IMPLEMENTATION = '0x00000000000000000000000000000000000000e1';
 
 const USDT: Asset = {
   symbol: 'USDT',
@@ -273,7 +273,7 @@ describe('the watcher, composed', { skip: databaseUrl ? false : 'DATABASE_URL no
       {
         chain: 'bsc',
         rpcUrl: 'http://fake',
-        create2: { factory: FACTORY, forwarderCreationCode: CREATION_CODE },
+        create2: { factory: FACTORY, implementation: IMPLEMENTATION },
         acceptedAssets: [USDT],
         pollRange: 500,
       },

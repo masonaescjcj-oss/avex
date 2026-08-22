@@ -1226,20 +1226,20 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
   const el = (id) => document.getElementById(id);
 
   /**
-   * A real factory and a real forwarder bytecode would come from the deployment.
+   * A real factory and a real logic address would come from the deployment.
    *
    * These are stand-ins, and the page says so where it matters — what is genuine here is
    * the derivation itself: the same `predictForwarder` the gateway calls, over the same
    * keccak256, so changing the payout wallet really does change the address. Faking that
    * with a hash of the inputs would have made the page's central claim a decoration.
+   *
+   * `implementation` replaced a slab of stand-in bytecode when a deposit address became an
+   * 87-byte proxy pointing at one shared contract instead of a full copy of it. The derivation
+   * is the same shape: hash the code the address will hold, and the parameters are in it.
    */
   const CONFIG = {
     factory: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
-    forwarderCreationCode:
-      '0x60a0604052348015600f57600080fd5b5060405161012c38038061012c8339' +
-      '810160408190526100299161003e565b608052610059565b60006020828403' +
-      '12156100505760008081fd5b5051919050565b60805160c952602081016040' +
-      '5261007b565b60008060408385031215610094578081fd5b8251602084015190',
+    implementation: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
   };
 
   // ── the derivation ────────────────────────────────────────────────────────

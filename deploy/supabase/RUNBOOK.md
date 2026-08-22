@@ -55,7 +55,7 @@ Secrets — `supabase secrets set KEY=value`, or `--env-file`:
 | `CRON_SECRET` | 32+ random bytes, for the scheduler hook |
 | `RUN_JOBS_IN_PROCESS` | `false` |
 | `FORWARDER_FACTORIES` | `bsc=0x…` once the factory is deployed |
-| `FORWARDER_CREATION_CODE` | the compiled forwarder init code |
+| `FORWARDER_IMPLEMENTATIONS` | `chain=address` of the deployed `ForwarderLogic` every deposit address delegates to |
 | `FEE_COLLECTORS` | `bsc=0x…` |
 | `EVM_RPC_URLS` | `bsc=https://…,https://…` — several, they geofence |
 
@@ -108,7 +108,7 @@ would race each other's cursor writes.
 ```bash
 DATABASE_URL="$POOLED" DIRECT_DATABASE_URL="$DIRECT" \
 EVM_RPC_URLS='bsc=https://…' FORWARDER_FACTORIES='bsc=0x…' \
-FORWARDER_CREATION_CODE='0x…' MEMO_SECRET='…' \
+FORWARDER_IMPLEMENTATIONS='bsc=0x…' MEMO_SECRET='…' \
 npm run -w @avex/api watch
 ```
 

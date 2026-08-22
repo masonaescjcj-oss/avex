@@ -39,23 +39,31 @@ export type SettlementProfile =
  */
 
 /**
- * CREATE2 deploy of a forwarder plus a token flush: 385,000 measured, rounded up.
+ * CREATE2 deploy of a deposit address plus a token flush: 86,546 measured, rounded up.
  *
- * Dominated by the code deposit — 200 gas for each of the runtime's ~1,570 bytes —
- * which is why deferring settlement until gas is cheap matters so much more here
- * than the arithmetic inside the contract does.
+ * It was 400,000, and the difference is the whole reason the floor under an invoice moved.
+ * A deposit address used to deploy a full copy of the forwarder — 1,567 bytes at 200 gas each,
+ * 313,400 of the total — and now deploys an 87-byte minimal proxy that delegates to one shared
+ * implementation. Four fifths of the cost of moving a merchant's money was writing bytecode
+ * identical to the bytecode next door.
+ *
+ * What is left is mostly irreducible: 32,000 for CREATE2, a token transfer or two, and the
+ * account the merchant may not have. Which changes the character of the deferral logic — at a
+ * tenth of a gwei on BNB Chain a settlement is half a cent rather than two and a half, so the
+ * queue holds far less and `deferAboveUsd` bites far later.
  */
-const EVM_GAS_DEPLOY_AND_FLUSH = 400_000;
+const EVM_GAS_DEPLOY_AND_FLUSH = 95_000;
 
 /**
- * Flushing a forwarder that already exists: 17,300 measured, plus 25,000 for
- * creating the payout account when it has never held this asset.
+ * Flushing a deposit address that already exists: 16,206 measured, plus 25,000 for creating the
+ * payout account when it has never held this asset.
  *
- * An order of magnitude below a deploy, because there is no code to write. Kept as
- * its own figure so a re-sweep of an existing forwarder is not deferred as though
- * it cost a deployment.
+ * Still well below a deploy, though the gap narrowed from an order of magnitude to about five
+ * times when the deploy stopped carrying a copy of the contract. Kept as its own figure so a
+ * re-sweep — a payer who sent twice, a late transfer to a settled invoice — is not deferred as
+ * though it cost a deployment.
  */
-const EVM_GAS_FLUSH_ONLY = 45_000;
+const EVM_GAS_FLUSH_ONLY = 42_000;
 
 export interface ChainConfig {
   readonly chain: ChainId;

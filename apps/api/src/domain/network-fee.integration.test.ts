@@ -41,10 +41,10 @@ import { WalletPoolService } from './wallet-pool-service.js';
 const databaseUrl = process.env.DATABASE_URL;
 
 const FACTORY = '0x00000000000000000000000000000000000f4c70';
-const CREATION_CODE = '0x60806040523480156100115760006000fd5b50';
+const IMPLEMENTATION = '0x00000000000000000000000000000000000000e1';
 const FEE_COLLECTOR = '0x3333333333333333333333333333333333333333';
 
-/** 0.1 gwei with BNB at $600: 400,000 gas is 2.4 cents, which is 12bps of a $20 invoice. */
+/** 0.1 gwei with BNB at $600: 95,000 gas is 0.57 cents, which is 3bps of a $20 invoice. */
 const BSC_SNAPSHOT: GasSnapshot = {
   chain: 'bsc',
   nativePriceUsd: 600,
@@ -97,7 +97,7 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
 
     deriver = new DepositAddressDeriver(
       {
-        evm: { bsc: { factory: FACTORY, forwarderCreationCode: CREATION_CODE } },
+        evm: { bsc: { factory: FACTORY, implementation: IMPLEMENTATION } },
         shared: {},
         pooled: ['tron'],
       },
@@ -234,24 +234,24 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
     const invoice = await createInvoice(bscAssetId, `net-${randomBytes(4).toString('hex')}`);
 
     /**
-     * 12 basis points of network fee on top of the 50 the merchant's plan charges.
+     * 3 basis points of network fee on top of the 50 the merchant's plan charges.
      *
      * The plan's own 50bps is absorbed by the merchant here — nobody set `feePayer` — so the
      * whole of the difference between $20 and what is asked for is the transfer.
      */
-    assert.equal(invoice.networkFeeBps, 12);
-    assert.equal(invoice.feeBps, 62, 'the plan rate plus the transfer, in one on-chain split');
+    assert.equal(invoice.networkFeeBps, 3);
+    assert.equal(invoice.feeBps, 53, 'the plan rate plus the transfer, in one on-chain split');
     assert.equal(invoice.feePayer, 'merchant', 'the *commission* is still the merchant’s');
 
     /**
-     * 12 basis points of $20 is 2.4 cents, and the commission is not in this figure.
+     * 3 basis points of $20 is 0.6 cents, and the commission is not in this figure.
      *
      * Which is the point of the whole exercise: the merchant absorbs their 50bps out of the
-     * settlement, and the payer covers the 2.4 cents it costs to send that settlement.
+     * settlement, and the payer covers the half-cent it costs to send that settlement.
      */
     const surcharge = BigInt(invoice.amountDue) - 20n * 10n ** 18n;
-    assert.ok(surcharge > 20_000_000_000_000_000n, `expected over 2 cents, got ${surcharge}`);
-    assert.ok(surcharge < 30_000_000_000_000_000n, `expected under 3 cents, got ${surcharge}`);
+    assert.ok(surcharge > 5_000_000_000_000_000n, `expected over half a cent, got ${surcharge}`);
+    assert.ok(surcharge < 7_000_000_000_000_000n, `expected under 0.7 cents, got ${surcharge}`);
   });
 
   test('the deposit address commits to the fee that includes it', async () => {
@@ -301,7 +301,7 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
     assert.equal(offered.amount, invoice.amountDue, 'quoted, then charged, the same');
 
     // And the two disclosed lines add up to what was added to the price.
-    assert.equal(offered.networkFeeBps, 12);
+    assert.equal(offered.networkFeeBps, 3);
     assert.equal(offered.feeBps, 0, 'the merchant absorbs their commission here');
     assert.equal(
       BigInt(invoice.networkFeeIncluded) + BigInt(invoice.feeIncluded),
@@ -342,25 +342,25 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
 
   test('an order too small to carry its own settlement is refused', async () => {
     /**
-     * The floor, enforced for the first time. A $2 order on BNB Chain recovers its 2.4 cents
-     * from the payer and earns a penny of commission — which is fine until the chain is twice as
-     * dear when we come to settle, and then the penny is all there is against another 2.4 cents
-     * of gas. A doubling on BNB Chain is a tenth of a gwei becoming a fifth, which is a Tuesday.
+     * The floor, enforced for the first time. A $1 order on BNB Chain recovers its half cent
+     * from the payer and earns half a cent of commission — which is fine until the chain is
+     * twice as dear when we come to settle, and then that half cent is all there is against
+     * another. A doubling on BNB Chain is a tenth of a gwei becoming a fifth, which is a Tuesday.
      *
-     * Refused rather than quietly repriced: the merchant asked for a $2 invoice, and turning it
-     * into a $12 one without saying so would be worse than saying no.
+     * Refused rather than quietly repriced: the merchant asked for a $1 invoice, and turning it
+     * into a $1.43 one without saying so would be worse than saying no.
      */
     await assert.rejects(
       invoices.create(
         orgId,
-        { assetId: bscAssetId, reference: `min-${randomBytes(4).toString('hex')}`, amountFiatMicros: 2_000_000n },
+        { assetId: bscAssetId, reference: `min-${randomBytes(4).toString('hex')}`, amountFiatMicros: 1_000_000n },
         actor(),
       ),
       (error: unknown) =>
         error instanceof InvoiceCreationError &&
         error.code === 'amount_below_minimum' &&
         // The figure has to be in the message: "too small" without a number is unactionable.
-        /\$6\.00/.test(error.message) &&
+        /\$1\.43/.test(error.message) &&
         /TRON/.test(error.message),
     );
   });
@@ -374,7 +374,7 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
      */
     const invoice = await invoices.create(
       orgId,
-      { assetId: tronAssetId, reference: `small-${randomBytes(4).toString('hex')}`, amountFiatMicros: 2_000_000n },
+      { assetId: tronAssetId, reference: `small-${randomBytes(4).toString('hex')}`, amountFiatMicros: 1_000_000n },
       actor(),
     );
     assert.equal(invoice.created, true);
@@ -387,7 +387,7 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
      * if they drifted: a payer taps BNB Chain, and the invoice creation behind the tap answers
      * 422. They would have no idea what they did wrong, because they did nothing wrong.
      */
-    const { session } = await checkouts.create(orgId, { amountFiatMicros: 2_000_000n }, actor());
+    const { session } = await checkouts.create(orgId, { amountFiatMicros: 1_000_000n }, actor());
     const options = await checkouts.options(session.id);
 
     const bsc = options.find((option) => option.chain === 'bsc');
@@ -411,7 +411,7 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
     try {
       const invoice = await invoices.create(
         orgId,
-        { assetId: bscAssetId, reference: `blind-${randomBytes(4).toString('hex')}`, amountFiatMicros: 2_000_000n },
+        { assetId: bscAssetId, reference: `blind-${randomBytes(4).toString('hex')}`, amountFiatMicros: 1_000_000n },
         actor(),
       );
       assert.equal(invoice.created, true);
@@ -434,8 +434,8 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
       txHash: `0x${randomBytes(32).toString('hex')}`,
       transferIndex: 0,
       amount: invoice.amountDue,
-      // $20.024 of value, which is what the payer sent.
-      valueUsdMicros: '20024000',
+      // $20.006 of value, which is what the payer sent.
+      valueUsdMicros: '20006000',
       valueSource: 'quote',
       blockNumber: 1,
     });
@@ -443,10 +443,10 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
     const earned = await feePlans.commissionEarned({ organizationId: orgId });
 
     /**
-     * 50 basis points of $20.024 is about ten cents. The whole 62 would be about 12.4, so the
-     * assertion is that the figure is the commission and not the total.
+     * 50 basis points of $20.006 is about ten cents. The whole 53 would be 10.6, so the band is
+     * narrow on purpose: it is the difference between counting the network fee and not.
      */
     assert.ok(earned.creditedUsdMicros >= 100_000n, `expected ~10c, got ${earned.creditedUsdMicros}`);
-    assert.ok(earned.creditedUsdMicros < 110_000n, `expected ~10c, got ${earned.creditedUsdMicros}`);
+    assert.ok(earned.creditedUsdMicros < 100_500n, `expected ~10c, got ${earned.creditedUsdMicros}`);
   });
 });

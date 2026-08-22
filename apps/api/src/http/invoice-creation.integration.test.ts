@@ -51,7 +51,7 @@ const databaseUrl = process.env.DATABASE_URL;
 
 /** A stable factory and creation code — see server.integration.test.ts for why fake. */
 const FACTORY = '0x00000000000000000000000000000000000f4c70';
-const CREATION_CODE = '0x60806040523480156100115760006000fd5b50';
+const IMPLEMENTATION = '0x00000000000000000000000000000000000000e1';
 const FEE_COLLECTOR = '0x3333333333333333333333333333333333333333';
 const TON_WALLET = 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs';
 
@@ -133,8 +133,8 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     const deriver = new DepositAddressDeriver(
       {
         evm: {
-          bsc: { factory: FACTORY, forwarderCreationCode: CREATION_CODE },
-          ethereum: { factory: FACTORY, forwarderCreationCode: CREATION_CODE },
+          bsc: { factory: FACTORY, implementation: IMPLEMENTATION },
+          ethereum: { factory: FACTORY, implementation: IMPLEMENTATION },
         },
         shared: { ton: TON_WALLET },
         // TRON, so a pooled invoice can be created here at all — `payableAssets` and the

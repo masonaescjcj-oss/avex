@@ -54,7 +54,7 @@ import { buildServer } from './server.js';
 const databaseUrl = process.env.DATABASE_URL;
 
 const FACTORY = '0x00000000000000000000000000000000000f4c70';
-const CREATION_CODE = '0x60806040523480156100115760006000fd5b50';
+const IMPLEMENTATION = '0x00000000000000000000000000000000000000e1';
 const TON_WALLET = 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs';
 
 const offlineCaller = {
@@ -173,7 +173,7 @@ describe('member invitations', { skip: databaseUrl ? false : 'DATABASE_URL not s
     const feePlans = new FeePlanService(db, audit, { feeCollectors: {} });
     const deriver = new DepositAddressDeriver(
       {
-        evm: { bsc: { factory: FACTORY, forwarderCreationCode: CREATION_CODE } },
+        evm: { bsc: { factory: FACTORY, implementation: IMPLEMENTATION } },
         shared: { ton: TON_WALLET },
       },
       'invite-suite-memo-secret',

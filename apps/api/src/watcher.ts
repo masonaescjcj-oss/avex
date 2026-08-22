@@ -215,7 +215,7 @@ async function main(): Promise<void> {
             rpcUrl: urls[0]!,
             create2: {
               factory: env.FORWARDER_FACTORIES[chain]!,
-              forwarderCreationCode: env.FORWARDER_CREATION_CODE,
+              implementation: env.FORWARDER_IMPLEMENTATIONS[chain]!,
             },
             acceptedAssets: accepted,
             pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,

@@ -16,15 +16,15 @@ function ethereumAt(gwei: number, ethUsd = 2000): GasSnapshot {
 }
 
 test('Ethereum settlement cost tracks live gas', () => {
-  // 400k gas at 0.047 gwei with ETH at $2000 — the quiet-market case. The gas
-  // figure is measured against the compiled forwarder, not chosen; see
-  // contracts/test/settlement-gas.test.mjs.
+  // 95k gas at 0.047 gwei with ETH at $2000 — the quiet-market case. The gas figure is measured
+  // against the compiled contracts, not chosen; see contracts/test/settlement-gas.test.mjs. It
+  // was 400k until a deposit address stopped deploying a full copy of the forwarder.
   const cheap = policy.settlementCostUsd(ethereumAt(0.047));
-  assert.ok(Math.abs(cheap.usd - 0.0376) < 0.0005, `expected ~$0.0376, got $${cheap.usd}`);
+  assert.ok(Math.abs(cheap.usd - 0.00893) < 0.0002, `expected ~$0.0089, got $${cheap.usd}`);
 
   // The same settlement during a spike.
   const spike = policy.settlementCostUsd(ethereumAt(9));
-  assert.ok(Math.abs(spike.usd - 7.2) < 0.01, `expected ~$7.20, got $${spike.usd}`);
+  assert.ok(Math.abs(spike.usd - 1.71) < 0.01, `expected ~$1.71, got $${spike.usd}`);
 });
 
 test('minimum invoice size rises automatically with gas', () => {
@@ -34,7 +34,7 @@ test('minimum invoice size rises automatically with gas', () => {
   const spikeMin = policy.minInvoiceUsd(ethereumAt(9));
 
   /**
-   * About $9.40 at the quiet end, which is two hundred and fifty times the 3.76 cents it costs.
+   * About $2.23 at the quiet end, which is two hundred and fifty times the 0.89 cents it costs.
    *
    * That multiple is the whole content of `targetFeeRatio`, and it is not a margin on the gas:
    * the payer already covers the gas. It is the margin on the *forecast* — the fee is fixed when
@@ -44,28 +44,24 @@ test('minimum invoice size rises automatically with gas', () => {
    *
    * Stated as a range because both directions are product facts. Much lower and a chain starts
    * accepting orders whose commission cannot absorb an ordinary doubling; much higher and the
-   * floor is doing something other than what its derivation says — it was twice this for a
-   * while, on a threefold spike the settlement queue would have deferred rather than paid.
+   * floor is doing something other than what its derivation says.
    */
   assert.ok(
-    cheapMin > 7 && cheapMin < 12,
-    `expected $7-$12 at 0.047 gwei, got $${cheapMin}`,
+    cheapMin > 1.5 && cheapMin < 3.5,
+    `expected $1.50-$3.50 at 0.047 gwei, got $${cheapMin}`,
   );
 
   /**
-   * And in the hundreds during a spike, which reads as Ethereum being unusable for retail and
-   * is exactly right: at 9 gwei a settlement is $7.20, so an order that can absorb one going
-   * wrong is a large order. The answer for a small one is TRON, which the payer is shown.
+   * And in the hundreds during a spike: at 9 gwei a settlement is $1.71, so an order that can
+   * absorb one going wrong is a large order. The answer for a small one is TRON, which the
+   * payer is shown.
    */
-  assert.ok(spikeMin > 1000, `expected over $1000 at 9 gwei, got $${spikeMin}`);
+  assert.ok(spikeMin > 400, `expected over $400 at 9 gwei, got $${spikeMin}`);
 });
 
 test('a small invoice is withdrawn from checkout during a spike', () => {
-  /**
-   * $50 rather than the $20 this used to use. The floor at 0.047 gwei is about $19, so a $20
-   * order sat a few cents inside it — a test that would have started failing on a rounding
-   * rather than on a behaviour, which is not what it is for.
-   */
+  // Comfortably above the quiet-market floor of about $2.23 and far below the $427 a 9-gwei
+  // Ethereum needs, so this tests the behaviour rather than a boundary.
   const invoiceUsd = 50;
 
   const cheap = policy.availability(ethereumAt(0.047), invoiceUsd);
@@ -154,38 +150,41 @@ const usd = (dollars: number): bigint => BigInt(Math.round(dollars * 1_000_000))
 
 test('the network fee is the settlement cost as a share of the invoice', () => {
   /**
-   * BSC at 0.1 gwei: 400,000 gas is 0.00004 BNB, which at $600 is 2.4 cents. On a $20 invoice
-   * that is 12 basis points, so the payer is asked for $20.024 and the merchant keeps $20.
+   * BSC at 0.1 gwei: 95,000 gas is 0.0000095 BNB, which at $600 is 0.57 cents. On a $20 invoice
+   * that is 3 basis points, so the payer is asked for $20.006 and the merchant keeps $20.
    */
   const snapshot = bscAt(0.1);
-  assert.ok(Math.abs(policy.settlementCostUsd(snapshot).usd - 0.024) < 0.0005);
-  assert.equal(policy.networkFeeBps(snapshot, usd(20)), 12);
+  assert.ok(Math.abs(policy.settlementCostUsd(snapshot).usd - 0.0057) < 0.0002);
+  assert.equal(policy.networkFeeBps(snapshot, usd(20)), 3);
 
-  // The same cost on a bigger order is a smaller share of it — the point of a rate.
-  assert.equal(policy.networkFeeBps(snapshot, usd(200)), 2);
+  // The same cost on a bigger order is a smaller share of it — the point of a rate. It bottoms
+  // out at one basis point rather than nothing, because the rounding is upward and the cost is
+  // never actually zero.
+  assert.equal(policy.networkFeeBps(snapshot, usd(200)), 1);
   assert.equal(policy.networkFeeBps(snapshot, usd(2000)), 1);
 });
 
 test('the rounding goes against us, never against the payer', () => {
   /**
-   * 2.4 cents of $50 is 4.8 basis points. Rounded down it would be 4, and we would be short a
+   * 0.57 cents of $50 is 1.14 basis points. Rounded down it would be 1, and we would be short a
    * fraction of a cent on every invoice on the chain — a real loss that scales with volume,
    * against at most one micro-dollar of overcharge on one payment.
    */
   const bps = policy.networkFeeBps(bscAt(0.1), usd(50));
-  assert.equal(bps, 5);
-  assert.ok(bps * 50 * 100 >= 2.4 * 100, 'the charge must cover the cost, not approach it');
+  assert.equal(bps, 2);
+  assert.ok((bps * 50) / 10_000 >= 0.0057, 'the charge must cover the cost, not approach it');
 });
 
 test('a fixed cost on a tiny invoice is capped rather than passed on', () => {
   /**
-   * 2.4 cents of a dollar is 240 basis points, and of ten cents it is 2,400. Uncapped, the
-   * second would be a quarter of the payment — and the arithmetic would not stop there, because
-   * nothing about a fixed cost gets smaller. The cap is what keeps this from reaching a payer;
-   * the answer to an invoice that small is a different chain, which `minInvoiceUsd` already says.
+   * 0.57 cents of ten cents is 570 basis points. Uncapped that would be 5.7% of the payment —
+   * and the arithmetic would not stop there, because nothing about a fixed cost gets smaller.
+   * The cap is what keeps this from reaching a payer; the answer to an invoice that small is a
+   * different chain, which `minInvoiceUsd` already says.
    */
-  assert.equal(policy.networkFeeBps(bscAt(0.1), usd(1)), DEFAULT_FEE_POLICY.networkFeeMaxBps);
   assert.equal(policy.networkFeeBps(bscAt(0.1), usd(0.1)), DEFAULT_FEE_POLICY.networkFeeMaxBps);
+  // A dollar is 57bps — high, and under the cap, which is why the floor exists separately.
+  assert.equal(policy.networkFeeBps(bscAt(0.1), usd(1)), 57);
 
   // And the cap is well inside the forwarder's own 5%, so it can never be the thing that
   // makes an address undeployable.
@@ -215,10 +214,10 @@ test('the charge tracks a gas spike up to the cap, and back down', () => {
   const busy = policy.networkFeeBps(bscAt(3), usd(100));
 
   assert.ok(busy > quiet, `expected the busy figure to be higher, got ${busy} vs ${quiet}`);
-  assert.equal(busy, 72, '3 gwei is 72 cents a settlement, and 72bps of a $100 order');
+  assert.equal(busy, 18, '3 gwei is 17 cents a settlement, and 18bps of a $100 order');
 
-  // Far enough up and the cap takes over: $6 of a $100 order would be 600bps.
-  assert.equal(policy.networkFeeBps(bscAt(25), usd(100)), DEFAULT_FEE_POLICY.networkFeeMaxBps);
+  // Far enough up and the cap takes over: $2.85 of a $100 order would be 285bps.
+  assert.equal(policy.networkFeeBps(bscAt(50), usd(100)), DEFAULT_FEE_POLICY.networkFeeMaxBps);
 
   // And it is a snapshot, not a ratchet: the quiet figure comes back when the chain does.
   assert.equal(policy.networkFeeBps(bscAt(0.1), usd(100)), quiet);

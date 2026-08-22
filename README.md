@@ -39,14 +39,19 @@ become false.
 
 ## Supported chains
 
+Settlement is 95,000 gas on every EVM chain — measured against the compiled
+contracts by `contracts/test/settlement-gas.test.mjs`, not estimated — so what
+differs is the price of gas, which comes from a live snapshot rather than a table.
+The figures below are that arithmetic at a quiet moment, and the payer covers them.
+
 | Chain | Address model | Settlement cost per invoice | Status |
 |---|---|---|---|
-| TON | shared address + memo | $0 | adapter written |
-| BNB Smart Chain | unique (CREATE2 forwarder) | ~$0.015 | adapter written · **first chain to go live** |
-| Polygon | unique (CREATE2 forwarder) | ~$0.015 | adapter written |
-| Ethereum | unique (CREATE2 forwarder) | ~$0.014 at 0.05 gwei | adapter written · gated on live gas |
+| TON | shared address + memo | $0 — the payer's transfer arrives in the merchant's wallet | adapter written |
+| TRON | pooled: the merchant's own wallets | $0 — same reason, and no memo needed | adapter written |
+| BNB Smart Chain | unique (CREATE2 clone) | ~$0.006 at 0.1 gwei | adapter written · **first chain to go live** |
+| Polygon | unique (CREATE2 clone) | ~$0.001 at 25 gwei | adapter written |
+| Ethereum | unique (CREATE2 clone) | ~$0.045 at 0.156 gwei | adapter written · gated on live gas |
 | Solana | unique | ~$0.001 | design settled, not implemented |
-| TRON | unique + energy delegation | ~$0.30 | design settled, built last |
 
 Ethereum, Polygon and BNB share one adapter — they differ only in RPC endpoint,
 native token price and confirmation depth, all registry entries rather than code.
@@ -100,13 +105,21 @@ published Keccak, EIP-1014 and EIP-55 vectors.
 
 ## The non-custodial guarantee
 
-`Forwarder` takes the merchant's payout address as an immutable constructor
-argument. Constructor arguments are part of the init code, and CREATE2 derives
-the contract address from a hash of that init code — so the deposit address *is*
-a commitment to the destination. There is no admin function, no owner and no
-upgrade path. Deployment is deferred: the address is published while no code
-exists at it, and the contract is deployed in the same transaction that forwards
-the funds.
+A deposit address is an 87-byte minimal proxy: 45 bytes of EIP-1167 naming the
+`ForwarderLogic` deployed once per chain, then the merchant's payout address, the
+fee destination and the fee rate, packed. Those bytes are the init code, CREATE2
+derives the address from a hash of them — so the deposit address *is* a commitment
+to the destination and to the fee. `ForwarderLogic` reads them back out of the
+clone's own code with EXTCODECOPY; nothing about where the money goes comes from
+whoever calls. There is no admin function, no owner and no upgrade path.
+Deployment is deferred: the address is published while no code exists at it, and
+the clone is deployed in the same transaction that forwards the funds.
+
+It used to be a whole copy of the forwarder, with the three parameters as
+immutable constructor arguments. Same guarantee, 385,291 gas a settlement, four
+fifths of it spent writing bytecode identical to the bytecode next door. The
+proxy costs 86,546 — and since `FeePolicy` refuses an invoice too small to carry
+its own settlement, that difference is the floor under what a merchant can sell.
 
 ### The whole loop, verified end to end
 

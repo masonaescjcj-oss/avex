@@ -660,18 +660,18 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
 
 <span class="c"># 201 Created — amountDue is grossed up, amountNet is what reaches you</span>
 {
-  <span class="k">"amountDue"</span>: <span class="s">"20124652095076906358"</span>,
+  <span class="k">"amountDue"</span>: <span class="s">"20106564793405046747"</span>,
   <span class="k">"amountNet"</span>: <span class="s">"20000000000000000000"</span>,
-  <span class="k">"feeBps"</span>: <span class="s">62</span>,
-  <span class="k">"networkFeeBps"</span>: <span class="s">12</span>,
+  <span class="k">"feeBps"</span>: <span class="s">53</span>,
+  <span class="k">"networkFeeBps"</span>: <span class="s">3</span>,
   <span class="k">"feePayer"</span>: <span class="s">"payer"</span>
 }</pre>
       <p>
         <strong>The transfer costs something, and that part is always the customer's.</strong>
-        <code>feeBps</code> above is 62 rather than your 50, and the twelve is
+        <code>feeBps</code> above is 53 rather than your 50, and the three is
         <code>networkFeeBps</code>: what the chain charged to move this particular payment,
         measured when the invoice was created and expressed as a share of it. A $20 order on BNB
-        Chain at a quiet moment is issued for about $20.02; the same order on TRON is issued for
+        Chain at a quiet moment is issued for about $20.01; the same order on TRON is issued for
         $20.00, because there the payment lands in your own wallet and we send nothing.
       </p>
       <p class="note">
@@ -719,8 +719,8 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
       <p>
         Each chain has a smallest order it can carry, derived from live gas rather than set in a
         table: roughly two hundred and fifty times what one settlement costs there. At a quiet
-        tenth of a gwei that is about <strong>$6 on BNB Chain</strong> and tens of dollars on
-        Ethereum, where one settlement really costs about twenty cents; below
+        tenth of a gwei that is about <strong>$1.43 on BNB Chain</strong> and $11 to $17 on
+        Ethereum, where one settlement costs four or five cents at today's gas; below
         it, <code>POST /v1/invoices</code> answers <code>422 amount_below_minimum</code> and the
         hosted checkout shows that network as unavailable rather than letting a customer pick it.
       </p>
@@ -963,8 +963,8 @@ curl https://api.avex.example/v1/organizations/<em>ORG_ID</em>/invoices \
   <span class="k">"amountPaid"</span>: <span class="s">"0"</span>,
   <span class="k">"depositAddress"</span>: <span class="s">"AVEXTEST-BSC-…"</span>,
   <span class="k">"memo"</span>: <span class="k">null</span>,
-  <span class="k">"feeBps"</span>: <span class="s">62</span>,
-  <span class="k">"networkFeeBps"</span>: <span class="s">12</span>,
+  <span class="k">"feeBps"</span>: <span class="s">53</span>,
+  <span class="k">"networkFeeBps"</span>: <span class="s">3</span>,
   <span class="k">"toleranceBps"</span>: <span class="s">50</span>,
   <span class="k">"expiresAt"</span>: <span class="s">"2026-08-18T09:19:00.000Z"</span>
 }</pre>

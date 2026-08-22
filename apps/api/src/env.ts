@@ -124,17 +124,19 @@ const schema = z.object({
     .transform(parsePairs),
 
   /**
-   * Compiled `Forwarder` creation code, hex.
+   * Deployed `ForwarderLogic` address per chain, as `chain=address`.
    *
-   * Every derived address is a hash over these bytes, so recompiling with different
-   * settings changes every address already handed out. It is configuration rather
-   * than a build artifact for exactly that reason — the value has to match whatever
-   * was deployed, which may predate this build.
+   * Every deposit address is a minimal proxy pointing here, so this address is part of the hash
+   * that produces it. Per chain because each chain has its own deployment, and it must be the
+   * logic the factory in `FORWARDER_FACTORIES` was constructed with — a mismatched pair derives
+   * addresses that factory will never settle.
+   *
+   * This replaced `FORWARDER_CREATION_CODE`, which carried the compiled bytecode of a forwarder
+   * back when each deposit address deployed a full copy of it. Configuration rather than a build
+   * artifact for the same reason as before: the value has to match what was deployed, which may
+   * predate this build.
    */
-  FORWARDER_CREATION_CODE: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]*$/, 'must be hex')
-    .default('0x'),
+  FORWARDER_IMPLEMENTATIONS: z.string().default('').transform(parsePairs),
 
   /** One wallet per shared-address chain, as `chain=address`. TON today. */
   SHARED_DEPOSIT_WALLETS: z.string().default('').transform(parsePairs),

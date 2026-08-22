@@ -41,7 +41,7 @@ export interface DepositTarget {
 
 export interface EvmChainConfig {
   readonly factory: string;
-  readonly forwarderCreationCode: string;
+  readonly implementation: string;
 }
 
 export interface DepositAddressConfig {
@@ -156,7 +156,7 @@ export class DepositAddressDeriver {
     if (evm) {
       const create2: Create2Config = {
         factory: evm.factory,
-        forwarderCreationCode: evm.forwarderCreationCode,
+        implementation: evm.implementation,
       };
       return {
         address: predictForwarder(

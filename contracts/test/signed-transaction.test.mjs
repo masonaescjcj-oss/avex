@@ -122,10 +122,29 @@ describe('signed transactions on a real EVM', () => {
      * transaction we signed, then call it with another. If the encoding were wrong in
      * a way the parser tolerated, the call would revert or hit the wrong selector.
      */
+    /**
+     * The logic contract first, because the factory takes its address.
+     *
+     * Also signed, rather than injected into the state — the point of this suite is that our
+     * own encoder produces transactions a real client would accept, and a deployment with a
+     * constructor argument is the case where a padding mistake would show.
+     */
+    const logic = await signAndRun({
+      to: null,
+      data: hexToBytes(`0x${artifacts.ForwarderLogic.creationCode.replace(/^0x/, '')}`),
+      gasLimit: 3_000_000n,
+    });
+    assert.equal(logic.result.execResult.exceptionError, undefined);
+    const logicAddress = logic.result.createdAddress;
+    assert.ok(logicAddress, 'the logic deployment should produce an address');
+
     const factory = artifacts.ForwarderFactory;
     const deployment = await signAndRun({
       to: null,
-      data: hexToBytes(`0x${factory.creationCode.replace(/^0x/, "")}`),
+      data: hexToBytes(
+        `0x${factory.creationCode.replace(/^0x/, '')}` +
+          logicAddress.toString().replace('0x', '').padStart(64, '0'),
+      ),
       gasLimit: 3_000_000n,
     });
 
@@ -161,7 +180,7 @@ describe('signed transactions on a real EVM', () => {
       factoryAddress.toString(),
       salt,
       core.initCodeHash(
-        { factory: factoryAddress.toString(), forwarderCreationCode: artifacts.Forwarder.creationCode },
+        { factory: factoryAddress.toString(), implementation: logicAddress.toString() },
         destination,
       ),
     );

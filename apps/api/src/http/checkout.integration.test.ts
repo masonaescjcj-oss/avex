@@ -52,7 +52,7 @@ import { buildServer } from './server.js';
 const databaseUrl = process.env.DATABASE_URL;
 
 const FACTORY = '0x00000000000000000000000000000000000f4c70';
-const CREATION_CODE = '0x60806040523480156100115760006000fd5b50';
+const IMPLEMENTATION = '0x00000000000000000000000000000000000000e1';
 const FEE_COLLECTOR = '0x3333333333333333333333333333333333333333';
 const TON_WALLET = 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs';
 
@@ -121,14 +121,14 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     const deriver = new DepositAddressDeriver(
       {
         evm: {
-          bsc: { factory: FACTORY, forwarderCreationCode: CREATION_CODE },
+          bsc: { factory: FACTORY, implementation: IMPLEMENTATION },
           /**
            * Configured but deliberately left without a payout address in the tests
            * below, so "payable" can be tested on a chain this deployment does support.
            * With only bsc and ton configured, the supported-chain filter masked the
            * payout requirement entirely and a mutation removing it passed.
            */
-          polygon: { factory: FACTORY, forwarderCreationCode: CREATION_CODE },
+          polygon: { factory: FACTORY, implementation: IMPLEMENTATION },
         },
         shared: { ton: TON_WALLET },
         // TRON, so a pooled currency can reach the options list at all.

@@ -179,11 +179,21 @@ export function compose(options: ComposeOptions): Composed {
    */
   const deriver = new DepositAddressDeriver(
     {
+      /**
+       * A chain needs both halves, and one without the other is dropped.
+       *
+       * A factory with no logic address would derive addresses from an empty string — valid
+       * hex, a real address, and one nothing can ever settle. Leaving the chain out instead
+       * means it cannot issue invoices, which is the same safe direction a missing factory has
+       * always taken.
+       */
       evm: Object.fromEntries(
-        Object.entries(env.FORWARDER_FACTORIES).map(([chain, factory]) => [
-          chain,
-          { factory, forwarderCreationCode: env.FORWARDER_CREATION_CODE },
-        ]),
+        Object.entries(env.FORWARDER_FACTORIES)
+          .filter(([chain]) => env.FORWARDER_IMPLEMENTATIONS[chain])
+          .map(([chain, factory]) => [
+            chain,
+            { factory, implementation: env.FORWARDER_IMPLEMENTATIONS[chain]! },
+          ]),
       ),
       shared: env.SHARED_DEPOSIT_WALLETS,
       /**

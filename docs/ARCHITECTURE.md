@@ -5,15 +5,24 @@
 Funds move payer → merchant. AVEX never holds a balance it could redirect.
 
 On EVM chains this is enforced by arithmetic rather than promised in a document.
-`Forwarder` takes its destination as a constructor argument and stores it
-`immutable`; constructor arguments are part of the init code, and CREATE2 derives
-the contract address from a hash of that init code. So the deposit address
-*is* a commitment to the destination. There is no admin function, no owner, and
-no upgrade path. Handing a payer address `0xABC…` is a verifiable claim that
-anything sent there can only reach one merchant.
+A deposit address is a minimal proxy with its destination, fee destination and fee
+rate appended to its code; those bytes are the init code, and CREATE2 derives the
+address from a hash of them. So the deposit address *is* a commitment to the
+destination. `ForwarderLogic` — one contract per chain, which every deposit
+address delegates to — reads those parameters out of the clone's own code rather
+than taking them from a caller. There is no admin function, no owner, and no
+upgrade path. Handing a payer address `0xABC…` is a verifiable claim that anything
+sent there can only reach one merchant.
+
+The parameters were Solidity immutables in a full copy of the contract until the
+gas bill made the case: 313,400 of a settlement's 385,291 gas was depositing
+1,567 bytes of code identical at every address. The proxy is 87 bytes and the
+settlement is 86,546. The guarantee is deliberately unchanged — the cheaper design
+that passed the parameters in at settlement, and derived the address from them,
+would have made a bug in the factory able to redirect a funded address.
 
 This also allows deployment to be deferred: the address is computed and published
-while no code exists at it, and the contract is deployed in the same transaction
+while no code exists at it, and the clone is deployed in the same transaction
 that forwards the funds.
 
 Why this matters beyond principle:

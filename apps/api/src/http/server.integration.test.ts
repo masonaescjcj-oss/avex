@@ -71,7 +71,7 @@ const databaseUrl = process.env.DATABASE_URL;
  * is tested where it belongs — against a real EVM, in contracts/test.
  */
 const TEST_FACTORY = '0x00000000000000000000000000000000000f4c70';
-const TEST_CREATION_CODE = '0x60806040523480156100115760006000fd5b50';
+const TEST_IMPLEMENTATION = '0x00000000000000000000000000000000000000e1';
 const TEST_FEE_COLLECTOR = '0x3333333333333333333333333333333333333333';
 
 /** $1 a token, matching what the fake price sources in this file report. */
@@ -92,9 +92,9 @@ function invoiceServices(
   const deriver = new DepositAddressDeriver(
     {
       evm: {
-        bsc: { factory: TEST_FACTORY, forwarderCreationCode: TEST_CREATION_CODE },
-        ethereum: { factory: TEST_FACTORY, forwarderCreationCode: TEST_CREATION_CODE },
-        polygon: { factory: TEST_FACTORY, forwarderCreationCode: TEST_CREATION_CODE },
+        bsc: { factory: TEST_FACTORY, implementation: TEST_IMPLEMENTATION },
+        ethereum: { factory: TEST_FACTORY, implementation: TEST_IMPLEMENTATION },
+        polygon: { factory: TEST_FACTORY, implementation: TEST_IMPLEMENTATION },
       },
       // TON is the shared-address case, kept in so memo derivation is exercised.
       shared: { ton: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs' },

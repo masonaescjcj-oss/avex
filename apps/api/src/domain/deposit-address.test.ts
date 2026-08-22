@@ -20,18 +20,18 @@ import { DepositAddressDeriver, DepositAddressError, memoFor } from './deposit-a
 
 const FACTORY = '0x00000000000000000000000000000000000f4c70';
 const OTHER_FACTORY = '0x000000000000000000000000000000000000beef';
-const CREATION_CODE = '0x60806040523480156100115760006000fd5b50';
+const IMPLEMENTATION = '0x00000000000000000000000000000000000000e1';
 const MERCHANT = '0x1111111111111111111111111111111111111111';
 const OTHER_MERCHANT = '0x2222222222222222222222222222222222222222';
 const COLLECTOR = '0x3333333333333333333333333333333333333333';
 const TON_WALLET = 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs';
 
-const deriver = (factory = FACTORY, creationCode = CREATION_CODE) =>
+const deriver = (factory = FACTORY, implementationAddress = IMPLEMENTATION) =>
   new DepositAddressDeriver(
     {
       evm: {
-        bsc: { factory, forwarderCreationCode: creationCode },
-        ethereum: { factory, forwarderCreationCode: creationCode },
+        bsc: { factory, implementation: implementationAddress },
+        ethereum: { factory, implementation: implementationAddress },
       },
       shared: { ton: TON_WALLET },
     },
@@ -144,20 +144,23 @@ describe('deposit address derivation', () => {
     assert.notEqual(here.address, there.address);
   });
 
-  test('the creation code is part of the address', () => {
+  test('the logic contract is part of the address', () => {
     /**
-     * The reason `FORWARDER_CREATION_CODE` is configured rather than read from a build
-     * artifact. Recompiling with different settings changes every address already
-     * handed out, so the value has to match whatever was actually deployed — which may
-     * predate the running build.
+     * The reason `FORWARDER_IMPLEMENTATIONS` is configured per chain rather than derived.
+     *
+     * Every deposit address is a minimal proxy naming the logic it delegates to, so that address
+     * is inside the hash. A deployment that pointed at a different logic contract — a redeploy,
+     * another chain's copy — would derive different addresses for the same invoices, and the
+     * factory already deployed would never settle them. So the value has to match what is
+     * actually out there, which may predate the running build.
      */
     const original = deriver().derive({ invoiceId: INVOICE, chain: 'bsc', payoutAddress: MERCHANT });
-    const recompiled = deriver(FACTORY, CREATION_CODE + 'ff').derive({
+    const redeployed = deriver(FACTORY, '0x00000000000000000000000000000000000000e2').derive({
       invoiceId: INVOICE,
       chain: 'bsc',
       payoutAddress: MERCHANT,
     });
-    assert.notEqual(original.address, recompiled.address);
+    assert.notEqual(original.address, redeployed.address);
   });
 
   test('the same invoice on two chains gets two addresses', () => {

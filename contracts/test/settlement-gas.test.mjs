@@ -60,6 +60,7 @@ describe('settlement gas matches the registry cost model', () => {
   let core;
   let nonce = 0n;
   let factory;
+  let logic;
   let registry;
 
   before(async () => {
@@ -73,7 +74,14 @@ describe('settlement gas matches the registry cost model', () => {
       createAccount({ nonce: 0n, balance: 10n ** 24n }),
     );
 
-    factory = (await run({ data: artifacts.ForwarderFactory.creationCode })).createdAddress;
+    // The logic contract, deployed once per chain in production and once here. Its address is
+    // in every clone's code, so the factory takes it as a constructor argument.
+    logic = (await run({ data: artifacts.ForwarderLogic.creationCode })).createdAddress;
+    factory = (
+      await run({
+        data: artifacts.ForwarderFactory.creationCode + addressWord(logic.toString()),
+      })
+    ).createdAddress;
   });
 
   const selector = (signature) => core.keccak256Hex(signature).slice(0, 10);
@@ -146,7 +154,7 @@ describe('settlement gas matches the registry cost model', () => {
       const address = core.predictForwarder(
         {
           factory: factory.toString(),
-          forwarderCreationCode: artifacts.Forwarder.creationCode,
+          implementation: logic.toString(),
         },
         item.invoiceId,
         item.destination,

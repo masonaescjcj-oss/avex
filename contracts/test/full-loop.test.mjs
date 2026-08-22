@@ -49,6 +49,7 @@ describe('the full payment loop', () => {
   let operator;
   let nonce = 0n;
   let factory;
+  let logic;
   let token;
 
   const selector = (signature) => core.keccak256Hex(signature).slice(0, 10);
@@ -63,7 +64,12 @@ describe('the full payment loop', () => {
       createAccount({ nonce: 0n, balance: 10n ** 22n }),
     );
 
-    factory = await deploy(artifacts.ForwarderFactory.creationCode);
+    // The logic first: the factory names it in every clone it builds.
+    logic = await deploy(artifacts.ForwarderLogic.creationCode);
+    factory = await deploy(
+      artifacts.ForwarderFactory.creationCode,
+      logic.toString().replace('0x', '').padStart(64, '0'),
+    );
     token = await deploy(
       artifacts.MockERC20.creationCode,
       word(96n) + word(18n) + word(0n) + word(4n) + Buffer.from('USDT').toString('hex').padEnd(64, '0'),
@@ -107,7 +113,7 @@ describe('the full payment loop', () => {
     // ── 1. Derive the deposit address, before anything exists at it ────────────
     const create2 = {
       factory: factory.toString(),
-      forwarderCreationCode: artifacts.Forwarder.creationCode,
+      implementation: logic.toString(),
     };
     const depositAddress = core.predictForwarder(create2, invoiceId, MERCHANT);
 
@@ -307,7 +313,7 @@ describe('the full payment loop', () => {
     // a forwarder is per invoice, not per merchant.
     const create2 = {
       factory: factory.toString(),
-      forwarderCreationCode: artifacts.Forwarder.creationCode,
+      implementation: logic.toString(),
     };
     const invoiceId = 'inv_second';
     const amount = 7n * 10n ** 18n;

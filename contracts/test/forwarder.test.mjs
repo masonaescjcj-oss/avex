@@ -114,12 +114,21 @@ function settleBatchCall(items) {
   return selector(SETTLE_BATCH) + word(32n) + word(BigInt(items.length)) + elements;
 }
 
+/**
+ * The logic contract every deposit address delegates to, deployed once in `before`.
+ *
+ * Module-level because `offChainAddress` needs it and that helper predates the clone design:
+ * before it, a deposit address was a full copy of the forwarder and the only thing the
+ * derivation needed was compiled bytecode.
+ */
+let logicAddress;
+
 /** The address the application would publish for these parameters. */
 function offChainAddress(factoryAddress, invoiceId, destination, fee = NO_FEE) {
   return predictForwarder(
     {
       factory: factoryAddress.toString(),
-      forwarderCreationCode: artifacts.Forwarder.creationCode,
+      implementation: logicAddress.toString(),
     },
     invoiceId,
     destination,
@@ -183,16 +192,25 @@ describe('Forwarder on a real EVM', () => {
     return result.execResult;
   }
 
-  test('the factory deploys', async () => {
-    const address = await deploy(artifacts.ForwarderFactory.creationCode);
-    assert.ok(address, 'factory should have an address');
-    factoryAddress = address;
+  test('the logic and the factory deploy', async () => {
+    /**
+     * Two contracts now, and the order matters: the factory takes the logic address as a
+     * constructor argument, because every clone it builds names that address in its own code.
+     */
+    logicAddress = await deploy(artifacts.ForwarderLogic.creationCode);
+    assert.ok(logicAddress, 'logic should have an address');
+
+    factoryAddress = await deploy(
+      artifacts.ForwarderFactory.creationCode,
+      addressWord(logicAddress.toString()),
+    );
+    assert.ok(factoryAddress, 'factory should have an address');
   });
 
   test('the off-chain address matches what the contract predicts', async () => {
-    // The claim under test. `predictForwarder` composes init code as
-    // creationCode ++ abi.encode(destination) and hashes it; the factory does the
-    // same inside the EVM. A mismatch means every published address is wrong.
+    // The claim under test. `predictForwarder` composes the clone's init code — a minimal
+    // proxy naming the logic, with the parameters packed after it — and hashes it; the factory
+    // does the same inside the EVM. A mismatch means every published address is wrong.
     const invoiceId = 'inv_01HQZX3E7K';
 
     const offChain = offChainAddress(factoryAddress, invoiceId, MERCHANT);
@@ -237,8 +255,8 @@ describe('Forwarder on a real EVM', () => {
     );
     const stored = `0x${bytesToHex(result.returnValue).slice(-40)}`;
 
-    // Immutable, set in the constructor, and part of the init code hash — so this
-    // value is what the address itself commits to.
+    // Appended to the clone's own code, and part of the init code hash — so this value is what
+    // the address itself commits to, and it is read back out of that code rather than passed in.
     assert.equal(stored.toLowerCase(), MERCHANT.toLowerCase());
   });
 
@@ -374,7 +392,19 @@ describe('Forwarder on a real EVM', () => {
     assert.ok(received < amount);
   });
 
-  test('native value sent before deployment is forwarded on deployment', async () => {
+  test('native value sent before deployment is forwarded when it is settled', async () => {
+    /**
+     * A payer who sent the native asset to an address with no code yet is not stranded, and
+     * this is the test of that — but the mechanism changed with the clone design and the
+     * difference is worth stating.
+     *
+     * The old forwarder swept native funds in its constructor, so deployment alone paid the
+     * merchant. A clone has no constructor: its init code copies 87 bytes and returns. So the
+     * sweep is `flushNative`, which is what `settleBatch` calls immediately after deploying —
+     * one transaction either way, and the funds move in it. What would strand a payer is a
+     * settlement path that deployed without flushing, which is why this exercises the path
+     * production uses rather than `deploy` on its own.
+     */
     const depositAddress = offChainAddress(factoryAddress, 'inv_native', MERCHANT);
     const target = createAddressFromString(depositAddress.toLowerCase());
 
@@ -386,15 +416,16 @@ describe('Forwarder on a real EVM', () => {
       (await vm.stateManager.getAccount(createAddressFromString(MERCHANT.toLowerCase())))
         ?.balance ?? 0n;
 
-    const result = await call(factoryAddress, deployCall('inv_native', MERCHANT));
-    assert.equal(result.exceptionError, undefined, 'deployment reverted');
+    const result = await call(
+      factoryAddress,
+      settleBatchCall([{ invoiceId: 'inv_native', destination: MERCHANT }]),
+    );
+    assert.equal(result.exceptionError, undefined, 'settlement reverted');
 
     const merchantAfter =
       (await vm.stateManager.getAccount(createAddressFromString(MERCHANT.toLowerCase())))
         ?.balance ?? 0n;
 
-    // The constructor sweeps whatever was waiting, so a payer who sent before
-    // deployment is not stranded.
     assert.equal(merchantAfter - merchantBefore, value);
   });
 
@@ -598,8 +629,11 @@ describe('Forwarder on a real EVM', () => {
     const merchantBefore = await nativeBalance(MERCHANT);
     const collectorBefore = await nativeBalance(FEE_COLLECTOR);
 
-    const result = await call(factoryAddress, deployCall('inv_native_fee', MERCHANT, fee));
-    assert.equal(result.exceptionError, undefined, 'deployment reverted');
+    const result = await call(
+      factoryAddress,
+      settleBatchCall([{ invoiceId: 'inv_native_fee', destination: MERCHANT, fee }]),
+    );
+    assert.equal(result.exceptionError, undefined, 'settlement reverted');
 
     const collected = (await nativeBalance(FEE_COLLECTOR)) - collectorBefore;
     const paid = (await nativeBalance(MERCHANT)) - merchantBefore;
@@ -759,6 +793,117 @@ describe('Forwarder on a real EVM', () => {
       `0x${bytesToHex(destination.returnValue).slice(-40)}`.toLowerCase(),
       MERCHANT.toLowerCase(),
     );
+  });
+
+  // ── the clone, and what it costs ──────────────────────────────────────────
+  //
+  // A deposit address used to be a full copy of the forwarder: 1,567 bytes at 200 gas each,
+  // four fifths of what a settlement cost. It is now an 87-byte proxy delegating to one shared
+  // contract, and the tests below are the properties that had to survive that — because the
+  // cheap version of this change was the one that gave up the guarantee.
+
+  test('a deposit address is 87 bytes, and its parameters are in them', async () => {
+    /**
+     * The bytes, read back off the chain. This is what "the address commits to the fee" means
+     * concretely: the parameters are the last 42 bytes of the code the address holds, so they
+     * are part of the init code CREATE2 hashed, so an address with different parameters is a
+     * different address.
+     */
+    const fee = { feeDestination: FEE_COLLECTOR, feeBps: 175 };
+    const depositAddress = offChainAddress(factoryAddress, 'inv_shape', MERCHANT, fee);
+    await call(factoryAddress, deployCall('inv_shape', MERCHANT, fee));
+
+    const code = bytesToHex(
+      await vm.stateManager.getCode(createAddressFromString(depositAddress.toLowerCase())),
+    ).replace(/^0x/, '');
+
+    assert.equal(code.length / 2, 87, 'a deposit address should be 45 bytes of proxy plus 42');
+    assert.equal(
+      code.slice(90),
+      (MERCHANT + FEE_COLLECTOR).replace(/0x/g, '').toLowerCase() + '00af',
+      'destination, fee destination and 175bps, packed',
+    );
+    // And the proxy names the logic contract, which is the other half of the address.
+    assert.ok(code.includes(logicAddress.toString().replace('0x', '').toLowerCase()));
+  });
+
+  test('the destination comes from the code, not from whoever calls', async () => {
+    /**
+     * The property the whole design rests on, and the reason the parameters are in the clone's
+     * bytes rather than passed in by the factory.
+     *
+     * Leaving them out would have made a deposit address 45 bytes instead of 87 — 8,400 gas
+     * cheaper — with the factory supplying the destination at settlement and the address
+     * deriving from it. The guarantee would then have been "the factory's code is correct"
+     * rather than "the address cannot pay anyone else". So: `flush` is called here directly, by
+     * an arbitrary sender, with no parameters at all, and the money still reaches the merchant.
+     */
+    const token = await plainToken('DIRECT');
+    const depositAddress = offChainAddress(factoryAddress, 'inv_direct', MERCHANT);
+    const amount = 500n * 10n ** 18n;
+    await call(
+      token,
+      selector('mint(address,uint256)') + addressWord(depositAddress) + word(amount),
+    );
+
+    await call(factoryAddress, deployCall('inv_direct', MERCHANT));
+    const before = await tokenBalance(token, MERCHANT);
+
+    const result = await call(
+      createAddressFromString(depositAddress.toLowerCase()),
+      selector('flush(address)') + addressWord(token.toString()),
+    );
+    assert.equal(result.exceptionError, undefined, 'a direct flush must work');
+    assert.equal((await tokenBalance(token, MERCHANT)) - before, amount);
+  });
+
+  test('a second payment to a settled address is still swept', async () => {
+    /**
+     * The reason the clone deposits code at all.
+     *
+     * The cheapest possible design deposits *nothing* — a constructor that transfers and
+     * returns empty code, about 14,000 gas less. It is a trap: the account keeps a nonce of 1,
+     * so CREATE2 can never deploy there again, and a payer who sends a second transfer to an
+     * address they already used would have funds nobody could ever move. Depositing 87 bytes
+     * buys the ability to flush the same address forever.
+     */
+    const token = await plainToken('AGAIN');
+    const depositAddress = offChainAddress(factoryAddress, 'inv_again', MERCHANT);
+    const mint = (amount) =>
+      call(token, selector('mint(address,uint256)') + addressWord(depositAddress) + word(amount));
+
+    await mint(10n ** 18n);
+    await call(
+      factoryAddress,
+      settleBatchCall([
+        { invoiceId: 'inv_again', destination: MERCHANT, token: token.toString() },
+      ]),
+    );
+
+    // A late payer, long after the invoice was settled.
+    await mint(7n * 10n ** 18n);
+    const before = await tokenBalance(token, MERCHANT);
+    const result = await call(
+      factoryAddress,
+      settleBatchCall([
+        { invoiceId: 'inv_again', destination: MERCHANT, token: token.toString() },
+      ]),
+    );
+
+    assert.equal(result.exceptionError, undefined, 'a second sweep must work');
+    assert.equal((await tokenBalance(token, MERCHANT)) - before, 7n * 10n ** 18n);
+    assert.equal(await tokenBalance(token, depositAddress), 0n);
+  });
+
+  test('the logic contract refuses to be used as a forwarder itself', async () => {
+    /**
+     * Called directly rather than through a clone, `config` would read offset 45 of its own
+     * instructions and hand back a fragment of bytecode as an address. Nothing is at risk —
+     * this contract never holds funds — but a function that answers a plausible-looking lie is
+     * worse than one that refuses.
+     */
+    const result = await call(logicAddress, selector('destination()'));
+    assert.ok(result.exceptionError, 'a direct call to the logic should revert');
   });
 
   test('the artifacts record the exact compiler settings', () => {

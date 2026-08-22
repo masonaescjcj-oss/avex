@@ -163,7 +163,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
         evm: {
           bsc: {
             factory: '0x00000000000000000000000000000000000f4c70',
-            forwarderCreationCode: '0x60806040523480156100115760006000fd5b50',
+            implementation: '0x00000000000000000000000000000000000000e1',
           },
         },
         shared: {},
