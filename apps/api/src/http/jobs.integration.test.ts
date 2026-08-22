@@ -229,6 +229,21 @@ describe('the scheduler hook', { skip: databaseUrl ? false : 'DATABASE_URL not s
     const response = await call({ authorization: 'Bearer anything-at-all' });
     assert.equal(response.statusCode, 403, response.body);
   });
+
+  test('the cron secret is accepted as a bearer token, because a scheduler may have no choice', async () => {
+    /**
+     * Vercel's scheduler sends `Authorization: Bearer <secret>` and offers no way to set a
+     * custom header. Without this a deployment there could not run these jobs at all — the
+     * payout and deposit-wallet delays would never elapse and a failed webhook would never be
+     * retried, both silently.
+     *
+     * It widens nothing, which is the case above: a bearer token that is not the cron secret is
+     * still refused, and `authenticate` never consults `CRON_SECRET`, so this is not a way to
+     * turn a session into a scheduler or the other way round.
+     */
+    const response = await call({ authorization: `Bearer ${SECRET}` });
+    assert.equal(response.statusCode, 200, response.body);
+  });
 });
 
 describe('the scheduler hook, unconfigured', {

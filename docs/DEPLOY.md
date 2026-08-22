@@ -249,3 +249,14 @@ export. That is an availability risk to weigh, not a legal opinion.
 and `pg_net`, so `deploy/supabase/cron.sql` applies to a self-hosted instance unchanged. A
 VPS running that image plus this API is the same system with none of that exposure, and the
 only thing lost is somebody else carrying the pager.
+
+## Driving the jobs
+
+`POST /internal/jobs` runs them for a deployment with no process to hold timers in. It accepts
+the secret as `x-cron-secret` or as `Authorization: Bearer` — the second because Vercel's
+scheduler sends that and cannot be told to send anything else.
+
+One caveat that decides the deployment shape: the webhook drain wants to run every ten seconds,
+and no hosted scheduler fires that often. A deployment driven only by a hosted cron retries
+failed webhooks once a minute at best. The gateway needs a long-running host anyway, for the
+watcher — see `docs/GO-LIVE.md`.

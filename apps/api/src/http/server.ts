@@ -542,7 +542,24 @@ export function buildServer(context: AppContext): FastifyInstance {
       return reply.status(404).send({ error: 'not_found', message: 'No such route.' });
     }
 
-    const presented = request.headers['x-cron-secret'];
+    /**
+     * Two places the secret may arrive, because the scheduler does not always get to choose.
+     *
+     * `x-cron-secret` is the one to prefer: it says what it is, and it cannot be confused with a
+     * session token by anything reading logs. But Vercel's scheduler sends `Authorization:
+     * Bearer <secret>` and offers no way to set a custom header, so a deployment there could not
+     * drive these jobs at all — the payout and deposit-wallet delays would never elapse, and a
+     * webhook that failed would never be retried.
+     *
+     * Both are compared in constant time against the same secret. Accepting a bearer token here
+     * does not widen anything: this route does one thing, and `authenticate` never consults
+     * `CRON_SECRET`, so a cron secret is not a session and a session is not a cron secret.
+     */
+    const header = request.headers['x-cron-secret'];
+    const bearer = /^Bearer (.+)$/.exec(
+      typeof request.headers.authorization === 'string' ? request.headers.authorization : '',
+    )?.[1];
+    const presented = typeof header === 'string' ? header : bearer;
     if (typeof presented !== 'string' || !secretMatches(presented, expected)) {
       return reply.status(403).send({ error: 'forbidden', message: 'Bad or missing secret.' });
     }
