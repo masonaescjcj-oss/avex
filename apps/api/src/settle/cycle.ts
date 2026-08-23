@@ -14,6 +14,7 @@ import type {
 
 import type { SettlementSource } from '../domain/settlement-source.js';
 import type { SettlementStore } from '../domain/settlement-store.js';
+import { GasWatch } from './gas-watch.js';
 
 /**
  * One pass of settlement, on one chain.
@@ -87,6 +88,14 @@ export interface CycleDependencies {
    * until the process restarts, which is the one moment nobody is reading it.
    */
   readonly alerts?: { forward(alerts: readonly Alert[], now?: number): Promise<void> };
+  /**
+   * Whether the gas wallet has runway, checked whether or not there is work.
+   *
+   * Injected so a test can supply its own thresholds, and defaulted so forgetting it does not
+   * silently disable the one alert that arrives in time to be acted on. Pass an explicit `null`
+   * to turn it off.
+   */
+  readonly gasWatch?: GasWatch | null;
 }
 
 export class SettlementCycle {
@@ -99,9 +108,11 @@ export class SettlementCycle {
    * that invites somebody to forget the second half.
    */
   private readonly queue: SettlementQueue;
+  private readonly gasWatch: GasWatch | null;
 
   constructor(private readonly deps: CycleDependencies) {
     this.log = deps.log ?? (() => {});
+    this.gasWatch = deps.gasWatch === undefined ? new GasWatch() : deps.gasWatch;
     this.queue = new SettlementQueue(
       new Map<ChainId, ChainAdapter>([[deps.chain, deps.adapter]]),
       deps.feePolicy,
@@ -128,6 +139,37 @@ export class SettlementCycle {
     const nonce = await this.deps.runner.start();
     const orphans = await this.reconcileOrphans();
     return { nonce, orphans };
+  }
+
+  /**
+   * Read the gas balance and say whether it is running out.
+   *
+   * Every pass, and deliberately not conditional on there being work: a wallet draining while
+   * the queue is empty is the case the runner's own check cannot see, and it is the likeliest
+   * one — a quiet chain over a weekend.
+   *
+   * Never throws. A balance read is one RPC call and the settlement pass does not depend on it,
+   * so a failing endpoint must cost a log line rather than the pass. Returning no alerts on
+   * failure is the right silence: an unread balance is not a low balance, and claiming one would
+   * train an operator to ignore the alert that matters.
+   */
+  private async checkGas(snapshot: GasSnapshot | null): Promise<readonly Alert[]> {
+    if (this.gasWatch === null) return [];
+
+    try {
+      const balance = await this.deps.signer.balanceWei();
+      const { alerts, reading } = this.gasWatch.check(this.deps.chain, balance, snapshot);
+      if (reading !== null) {
+        this.log('gas runway', { chain: this.deps.chain, settlements: reading.runway });
+      }
+      return alerts;
+    } catch (error) {
+      this.log('could not read the gas balance', {
+        chain: this.deps.chain,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
   }
 
   async once(now: number = Date.now()): Promise<CycleReport> {
@@ -213,7 +255,10 @@ export class SettlementCycle {
      * cover a settlement, a nonce that is stuck, a batch that reverted. Draining first would
      * forward the previous pass's news and leave this pass's in the buffer for thirty seconds.
      */
-    await this.deps.alerts?.forward(this.deps.runner.takeAlerts(), now);
+    await this.deps.alerts?.forward(
+      [...(await this.checkGas(snapshot)), ...this.deps.runner.takeAlerts()],
+      now,
+    );
 
     return {
       chain: this.deps.chain,

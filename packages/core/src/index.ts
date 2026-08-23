@@ -29,7 +29,6 @@ export { SolanaAdapter } from './chains/solana/SolanaAdapter.js';
 export * from './fees/FeePolicy.js';
 export * from './fees/fee-payer.js';
 export * from './sweep/SettlementQueue.js';
-export * from './invoice/InvoiceService.js';
 export * from './webhook/signer.js';
 export { keccak256, keccak256Hex, toHex, fromHex, concatBytes } from './crypto/keccak256.js';
 

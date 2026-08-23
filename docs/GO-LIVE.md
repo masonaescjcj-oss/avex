@@ -231,10 +231,16 @@ The same wallet pays gas. It needs a balance and an alarm on that balance.
 
 ### 10. Operations — *code and operator*
 
-- Alerting: set `OPERATOR_EMAIL`. Critical alerts — a gas wallet that cannot cover a
-  settlement, a nonce nothing can get past, a settlement that reverted — are emailed once per
-  kind per fifteen minutes. Warnings stay in the log. Without the address everything is logged
-  and settlement says so at startup.
+- Alerting: set `OPERATOR_EMAIL`. Critical alerts — a gas wallet running out, a nonce nothing
+  can get past, a settlement that reverted — are emailed once per kind per fifteen minutes.
+  Warnings stay in the log. Without the address everything is logged and settlement says so at
+  startup.
+- The gas wallet is checked every settlement pass whether or not there is work, and emails at
+  about ten settlements of remaining runway — while topping up is still a calm decision. It used
+  to be checked only against the transaction in hand, which meant a wallet draining on a quiet
+  chain was never looked at, and the message that arrived in time was a `warning`, which is
+  logged rather than emailed. The only email an operator got was the one that meant settlement
+  had already stopped.
 - A cursor that stops advancing for ten minutes, five failed polls in a row, or a price feed
   suspending is an alert on the same address. The first is the failure nobody reports: a payer's
   transfer confirms, the merchant sees nothing, and each blames the other while every other
@@ -265,9 +271,6 @@ Not blockers, and worth naming so they are not rediscovered as surprises.
   tested. What is missing is a call to one provider's sign API. It is optional now that
   `SETTLEMENT_KEY_FILE` exists: see item 9 for why a credential file plus a small balance is
   proportionate to what the key actually controls.
-- **`InvoiceService` in `@avex/core` is superseded.** `apps/api/src/domain/invoice-creation.ts`
-  is what runs; the core class is reached only by its own test. It is still exported from the
-  package index, so it reads as public API.
 - **The QR encoder stops at version 6.** Roughly 106 bytes, against a deposit address of 42 and
   an address-plus-memo of about 57, so nothing the checkout draws comes close. It throws rather
   than truncating if that ever changes.
