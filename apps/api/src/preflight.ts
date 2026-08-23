@@ -144,30 +144,52 @@ export function preflight(env: Env): Preflight {
 
   const settling = withRpc.filter((chain) => chainConfig(chain).settlement.kind !== 'direct');
 
-  if (settling.length > 0 && !env.SETTLEMENT_KEY_HEX) {
+  const hasKey = Boolean(env.SETTLEMENT_KEY_FILE ?? env.SETTLEMENT_KEY_HEX);
+
+  if (settling.length > 0 && !hasKey) {
     add(
       'blocked',
       'settlement',
-      `SETTLEMENT_KEY_HEX is not set, and moving funds on ${settling.join(', ')} needs a ` +
-        'transaction we sign. ' +
-        'Payments there will be detected, credited, announced by webhook, and left at their ' +
-        'deposit addresses. Chains that settle directly — TRON, TON — are unaffected.',
+      `no settlement key is configured, and moving funds on ${settling.join(', ')} needs a ` +
+        'transaction we sign. Set SETTLEMENT_KEY_FILE to a file holding it, or ' +
+        'SETTLEMENT_KEY_HEX for development. Payments there will be detected, credited, ' +
+        'announced by webhook, and left at their deposit addresses, where they can only ever ' +
+        'pay their own merchant. Chains that settle directly — TRON, TON — are unaffected.',
     );
   }
 
-  if (env.SETTLEMENT_KEY_HEX && env.NODE_ENV === 'production') {
+  if (env.SETTLEMENT_KEY_FILE && env.SETTLEMENT_KEY_HEX) {
+    add(
+      'blocked',
+      'settlement',
+      'SETTLEMENT_KEY_FILE and SETTLEMENT_KEY_HEX are both set. Startup refuses rather than ' +
+        'preferring one, because two keys is two intentions and the alarm would be on the ' +
+        'balance of whichever was not chosen.',
+    );
+  }
+
+  if (env.SETTLEMENT_KEY_HEX && !env.SETTLEMENT_KEY_FILE && env.NODE_ENV === 'production') {
     /**
      * A refusal repeated here so it is not first met at startup.
      *
-     * `LocalKeyProvider` throws in production, on purpose: the key pays for every settlement, so
-     * a copy of it is a wallet somebody else can drain. What is needed is a KMS-backed provider,
-     * and that is a decision rather than a variable.
+     * What it is about is the exposure of an environment variable, not the key being in memory:
+     * it stays in `/proc/<pid>/environ` for the life of the process, in any core dump, and in
+     * whatever set it. A file the process opens once is none of those.
+     *
+     * Not stated as "use a KMS", which is what this said and which is the wrong bar for what is
+     * at risk. The key is the gas wallet and cannot redirect a merchant's money — a deposit
+     * address pays the destination written into its own code — so what a thief gets is the
+     * native balance and the ability to hold up settlements. A credential file plus a small
+     * balance and an alarm is proportionate; a KMS is available through `DerKeyProvider` for a
+     * deployment that wants signing the key can never leave.
      */
     add(
       'blocked',
       'settlement',
-      'SETTLEMENT_KEY_HEX is set with NODE_ENV=production. The key provider refuses to hold a ' +
-        'settlement key in process memory there — use a KMS-backed KeyProvider.',
+      'SETTLEMENT_KEY_HEX is set with NODE_ENV=production, and startup refuses it: an ' +
+        'environment variable stays in /proc/<pid>/environ and in whatever set it. Put the key ' +
+        'in a file and point SETTLEMENT_KEY_FILE at it — under systemd, ' +
+        'LoadCredentialEncrypted= and ${CREDENTIALS_DIRECTORY}/settlement-key.',
     );
   }
 

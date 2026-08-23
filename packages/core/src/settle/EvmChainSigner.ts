@@ -48,11 +48,40 @@ export class SignerError extends Error {
 }
 
 /**
- * A key held in this process. Development only, and it enforces that itself.
+ * A key held in this process, and a refusal about where it came from.
  *
- * The refusal is in the constructor rather than in configuration, because a warning
- * in a README is not a control. If this class is ever reachable in production, the
- * process fails to start — which is the only failure mode cheap enough to be safe.
+ * ## What this key can and cannot do
+ *
+ * Worth stating precisely, because the earlier version of this comment implied more than the
+ * contracts allow and sent operators looking for a KMS they may not be able to buy.
+ *
+ * It **cannot move a merchant's money anywhere but to that merchant.** A deposit address is a
+ * clone whose payout destination, fee destination and fee rate are bytes of its own code, and
+ * `flush` reads them with EXTCODECOPY from `address(this)`. Nothing about the destination comes
+ * from the caller, `flush` is deliberately callable by anyone, and the factory cannot redirect
+ * it either. So a stolen key buys no access to customer funds and none to the fee collector,
+ * which is its own address in every clone.
+ *
+ * What it is, is the **gas wallet**. A thief can drain its native balance and can spend nonces
+ * to keep our own settlements from confirming until somebody notices. That is the whole loss,
+ * and it bounds the defence that is proportionate: keep the balance small, alarm on it, and the
+ * exposure is a few days of gas rather than a merchant's takings.
+ *
+ * ## Why `source` and not a boolean
+ *
+ * The refusal below is about how the key reached this process, not about the fact that it is in
+ * memory — every local signer holds it in memory, including a well-run one.
+ *
+ * An `environment` key is exposed in ways a file is not: it is in `/proc/<pid>/environ` for the
+ * life of the process, in any core dump, in the unit file or `EnvironmentFile` that set it, in
+ * whatever backup copies that file, and in the shell history of whoever exported it to try
+ * something. A `credential` key is a path the process opens once — with systemd's
+ * `LoadCredentialEncrypted` it is encrypted at rest and decrypted into a tmpfs visible only to
+ * that unit's mount namespace.
+ *
+ * Neither is a KMS, and this class does not pretend to be one. A KMS never hands the key over
+ * at all: it signs a digest on request, so the key cannot be exfiltrated and access to it is
+ * revocable and logged. `DerKeyProvider` below is the seam for one.
  */
 export class LocalKeyProvider implements KeyProvider {
   private readonly key: Uint8Array;
@@ -60,14 +89,22 @@ export class LocalKeyProvider implements KeyProvider {
 
   constructor(
     privateKeyHex: string,
-    options: { readonly environment: string; readonly allowOutsideDevelopment?: boolean } = {
-      environment: 'production',
-    },
+    options: {
+      readonly environment: string;
+      /**
+       * How the key reached this process. `environment` is refused in production.
+       *
+       * Defaults to `environment`, so a caller that says nothing gets the strict answer.
+       */
+      readonly source?: 'environment' | 'credential';
+    } = { environment: 'production' },
   ) {
-    const environment = options.environment;
-    if (environment === 'production' && options.allowOutsideDevelopment !== true) {
+    if (options.environment === 'production' && (options.source ?? 'environment') === 'environment') {
       throw new SignerError(
-        'refusing to hold a settlement key in process memory in production; use a KMS-backed KeyProvider',
+        'refusing a settlement key from an environment variable in production: it stays in ' +
+          '/proc/<pid>/environ, in core dumps, and in whatever set it. Put the key in a file ' +
+          'and pass source: "credential" — systemd LoadCredentialEncrypted is the intended ' +
+          'shape — or supply a DerKeyProvider backed by a KMS.',
       );
     }
 

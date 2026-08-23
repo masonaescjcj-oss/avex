@@ -42,15 +42,28 @@ test('a key in process memory is refused in production', () => {
    */
   assert.throws(
     () => new LocalKeyProvider(KEY_HEX, { environment: 'production' }),
-    /refusing to hold a settlement key in process memory/,
+    /refusing a settlement key from an environment variable in production/,
   );
 });
 
-test('production can be overridden only explicitly', () => {
-  // Deliberately possible, because someone will have a reason; deliberately loud.
+test('an unstated source is treated as an environment variable', () => {
+  /**
+   * The default has to be the strict answer, because the caller that forgets to say is exactly
+   * the caller reading the key from wherever was easiest.
+   */
+  assert.throws(() => new LocalKeyProvider(KEY_HEX, { environment: 'production' }), SignerError);
+});
+
+test('a key delivered as a credential is allowed in production', () => {
+  /**
+   * Allowed because the refusal is about the exposure of an environment variable, not about the
+   * key being in memory — every local signer holds it in memory. A file the process opens once
+   * is not in `/proc/<pid>/environ`, not in the unit that started it, and under
+   * `LoadCredentialEncrypted` not in plaintext on disk either.
+   */
   const provider = new LocalKeyProvider(KEY_HEX, {
     environment: 'production',
-    allowOutsideDevelopment: true,
+    source: 'credential',
   });
   assert.ok(provider);
 });

@@ -4,7 +4,6 @@ import type { ChainId } from '@avex/core';
 import {
   EVM_CHAIN_IDS,
   EvmChainSigner,
-  LocalKeyProvider,
   evmChainId,
 } from '@avex/core';
 
@@ -14,6 +13,7 @@ import { loadEnv } from './env.js';
 import { compose } from './compose.js';
 import { startJobTimers } from './jobs.js';
 import { JsonRpcCaller } from './rpc/json-rpc-caller.js';
+import { settlementKeys } from './settle/keys.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -90,8 +90,9 @@ async function main(): Promise<void> {
    * than a crash, because a missing settlement key must not stop the checkout.
    */
   const signers = new Map<string, EvmChainSigner>();
-  if (env.SETTLEMENT_KEY_HEX) {
-    const keys = new LocalKeyProvider(env.SETTLEMENT_KEY_HEX, { environment: env.NODE_ENV });
+  const settlement = settlementKeys(env);
+  if (settlement) {
+    const { keys } = settlement;
 
     for (const [chain, urls] of Object.entries(env.EVM_RPC_URLS)) {
       if (!(chain in EVM_CHAIN_IDS) || urls.length === 0) continue;
@@ -141,8 +142,9 @@ async function main(): Promise<void> {
   if (signers.size === 0) {
     app.log.warn(
       'no settlement signer is configured: payments will be credited but funds will not be ' +
-        'swept out of forwarders. Set SETTLEMENT_KEY_HEX for development, or supply a ' +
-        'KMS-backed KeyProvider in production.',
+        'swept out of forwarders. Set SETTLEMENT_KEY_FILE to a file holding the key — a ' +
+        'systemd encrypted credential is the intended shape — or SETTLEMENT_KEY_HEX for ' +
+        'development, which is refused in production.',
     );
   } else {
     for (const [chain, signer] of signers) {

@@ -108,6 +108,20 @@ const schema = z.object({
    */
   SETTLEMENT_KEY_HEX: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
 
+  /**
+   * A file holding the settlement key, which is the production path.
+   *
+   * Read once at startup and never again. The intended shape is a systemd encrypted credential:
+   * `systemd-creds encrypt` at deploy time, `LoadCredentialEncrypted=` in the unit, and this set
+   * to `${CREDENTIALS_DIRECTORY}/settlement-key` — which systemd decrypts into a tmpfs visible
+   * only inside that unit's mount namespace. Any readable path works; the point is that it is
+   * not an environment variable, which lives in `/proc/<pid>/environ` for the life of the
+   * process and in whatever set it.
+   *
+   * Set this or `SETTLEMENT_KEY_HEX`, never both.
+   */
+  SETTLEMENT_KEY_FILE: z.string().min(1).optional(),
+
   /** Fraction of the fee ceiling offered as a tip. Integer basis points internally. */
   SETTLEMENT_PRIORITY_FRACTION: z.coerce.number().min(0).max(1).default(0.1),
 

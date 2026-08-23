@@ -121,9 +121,46 @@ describe('preflight', () => {
     // The key provider refuses it at startup; saying so here means it is not discovered then.
     const result = check({ NODE_ENV: 'production' });
     assert.equal(result.verdict, 'blocked');
-    assert.match(
-      result.findings.find((finding) => finding.detail.includes('NODE_ENV=production'))!.detail,
-      /KMS-backed/,
+
+    const finding = result.findings.find((entry) => entry.detail.includes('NODE_ENV=production'))!;
+    /**
+     * It has to name the way forward, and the way forward is a file.
+     *
+     * This asserted `/KMS-backed/`, which was the wrong bar: a KMS protects a key that can move
+     * other people's money, and this one is the gas wallet — a deposit address pays the
+     * destination written into its own code. An operator told to get a KMS on a host that does
+     * not sell one has been given a dead end instead of an instruction.
+     */
+    assert.match(finding.detail, /SETTLEMENT_KEY_FILE/);
+  });
+
+  test('a key in a file is accepted in production', () => {
+    /**
+     * The other half of the rule above, and the reason it is not simply strictness: the
+     * production path has to exist, or the refusal is a wall rather than a redirection.
+     */
+    const result = check({
+      NODE_ENV: 'production',
+      SETTLEMENT_KEY_HEX: undefined,
+      SETTLEMENT_KEY_FILE: '/run/credentials/avex-watcher.service/settlement-key',
+    });
+
+    assert.ok(
+      !result.findings.some((finding) => finding.area === 'settlement'),
+      'a key file in production is the intended setup and must raise nothing',
+    );
+  });
+
+  test('both key variables together are blocked', () => {
+    // Two keys is two intentions, and the gas alarm would be on whichever was not chosen.
+    const result = check({
+      SETTLEMENT_KEY_FILE: '/etc/avex/settlement-key',
+    });
+
+    assert.equal(result.verdict, 'blocked');
+    assert.ok(
+      result.findings.some((finding) => finding.detail.includes('both set')),
+      'the finding must say they are both set',
     );
   });
 

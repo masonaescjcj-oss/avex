@@ -155,10 +155,77 @@ produced them.
 
 ### 9. A settlement key and a gas wallet — *needs the operator*
 
-`LocalKeyProvider` refuses to hold a key in process memory when `NODE_ENV` is production, and
-that refusal is correct: the key can move every merchant's funds out of a forwarder to that
-merchant, and holding it in an environment variable makes it as exposed as the process. A
-KMS-backed `KeyProvider` is a small class against whatever the operator's host offers.
+**What this key can do, precisely.** It cannot move a merchant's money anywhere but to that
+merchant. A deposit address is a clone whose payout destination, fee destination and fee rate are
+bytes of its own code; `flush` reads them with `EXTCODECOPY` from `address(this)`, takes nothing
+from the caller, and is deliberately callable by anyone. The factory cannot redirect it either.
+So a stolen key reaches no customer funds and not the fee collector, which is its own address in
+every clone.
+
+What it *is* is the **gas wallet**. A thief drains its native balance and can occupy nonces to
+keep settlements from confirming until somebody notices. That is the whole loss, and it sets the
+proportionate defence: keep the balance to a few days of gas and alarm on it (item 10), and the
+exposure is a tank of petrol rather than a merchant's takings.
+
+**Two ways to supply it.**
+
+`SETTLEMENT_KEY_FILE` is the production path — a file the process opens once. Startup refuses
+`SETTLEMENT_KEY_HEX` when `NODE_ENV=production`, and the refusal is about the exposure of an
+environment variable rather than about the key being in memory: a variable stays in
+`/proc/<pid>/environ` for the life of the process, in any core dump, and in the unit or
+`EnvironmentFile` that set it. A file is none of those.
+
+Three ways to place that file, best first. Check what the host has with
+`systemd-analyze --version` — the numbers matter, and Hetzner's Ubuntu 22.04 images ship 249,
+which has only the third.
+
+**systemd ≥ 250 — an encrypted credential.**
+
+```
+systemd-creds encrypt --name=settlement-key - /etc/avex/settlement-key.cred
+# paste 0x… then ctrl-D. The plaintext never reaches the disk.
+
+# in the unit
+LoadCredentialEncrypted=settlement-key:/etc/avex/settlement-key.cred
+Environment=SETTLEMENT_KEY_FILE=%d/settlement-key
+```
+
+`%d` is `$CREDENTIALS_DIRECTORY`: a tmpfs mounted only inside that unit's namespace, mode 0400,
+owned by the service user. Where the host has a TPM the credential is sealed to it; where it has
+not — most cloud VMs, Hetzner Cloud included — it is encrypted with a root-only host key, which
+still removes the plaintext at rest, the backup copy and the shell history from the picture.
+
+**systemd ≥ 247 — a plain credential.** Same isolation, no encryption at rest:
+
+```
+LoadCredential=settlement-key:/etc/avex/settlement-key
+Environment=SETTLEMENT_KEY_FILE=/run/credentials/avex-watcher.service/settlement-key
+```
+
+**Anything older, or no systemd — just a file.**
+
+```
+install -m 600 -o avex -g avex /dev/stdin /etc/avex/settlement-key
+# in the unit, or the environment file
+SETTLEMENT_KEY_FILE=/etc/avex/settlement-key
+```
+
+This is the floor and it is still the right side of the line: the exposure that matters is a
+variable readable in `/proc` and copied into every backup of the environment file, and a
+`0600` file owned by the service user is neither.
+
+A **KMS** is the stronger thing and is not required here. It never hands the key over at all: it
+signs a digest on request, so the key cannot be exfiltrated and access is revocable and logged.
+`DerKeyProvider` in `@avex/core` is the seam and does the hard part already — DER parsing,
+normalising a high `s`, finding the recovery id, verifying the signature recovers to the expected
+address. What is missing is a call to one provider's sign API.
+
+One thing to check before committing to a provider: Ethereum signs on **secp256k1**, and a
+managed KMS's default elliptic curve is NIST P-256, which is a different curve and cannot produce
+these signatures. secp256k1 is a separate capability that not every provider offers, and where it
+is offered it can be restricted to a particular protection level. AWS KMS supports it as the
+`ECC_SECG_P256K1` key spec; for anything else, read the provider's list of supported key specs
+rather than assuming.
 
 The same wallet pays gas. It needs a balance and an alarm on that balance.
 
@@ -192,12 +259,12 @@ The same wallet pays gas. It needs a balance and an alarm on that balance.
 
 Not blockers, and worth naming so they are not rediscovered as surprises.
 
-- **A KMS `KeyProvider` is half-built.** `DerKeyProvider` in `@avex/core` does the hard part —
-  DER parsing, normalising a high `s`, finding the recovery id, and verifying the signature
-  recovers to the address the key is supposed to control — and it is tested. What is missing is a
-  call to a specific KMS's sign API, and any way to select it: `main.ts` constructs
-  `LocalKeyProvider` from `SETTLEMENT_KEY_HEX` and nothing else. So item 9 above is smaller than
-  it reads, and its blocking half is a decision about where the key lives.
+- **A KMS `KeyProvider` is half-built, and no longer on the critical path.** `DerKeyProvider` in
+  `@avex/core` does the hard part — DER parsing, normalising a high `s`, finding the recovery id,
+  and verifying the signature recovers to the address the key is supposed to control — and it is
+  tested. What is missing is a call to one provider's sign API. It is optional now that
+  `SETTLEMENT_KEY_FILE` exists: see item 9 for why a credential file plus a small balance is
+  proportionate to what the key actually controls.
 - **`InvoiceService` in `@avex/core` is superseded.** `apps/api/src/domain/invoice-creation.ts`
   is what runs; the core class is reached only by its own test. It is still exported from the
   package index, so it reads as public API.

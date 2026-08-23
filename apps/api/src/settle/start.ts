@@ -4,7 +4,6 @@ import {
   EVM_CHAIN_IDS,
   EvmChainSigner,
   FeePolicy,
-  LocalKeyProvider,
   SettlementRunner,
   evmChainId,
 } from '@avex/core';
@@ -16,6 +15,7 @@ import { RpcGasOracle } from '../domain/gas-oracle.js';
 import { SettlementSource } from '../domain/settlement-source.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import type { Env } from '../env.js';
+import { settlementKeys } from './keys.js';
 import { JsonRpcCaller } from '../rpc/json-rpc-caller.js';
 import { runLoop, type LoopHandle } from '../watch/loop.js';
 import type { AlertForwarder } from './alerts.js';
@@ -63,26 +63,43 @@ export interface StartSettlementInput {
 export async function startSettlement(input: StartSettlementInput): Promise<readonly LoopHandle[]> {
   const { env, db, adapters, log } = input;
 
-  if (!env.SETTLEMENT_KEY_HEX) {
-    log('not settling: no SETTLEMENT_KEY_HEX', {
+  /**
+   * One key provider for every chain, from the one place that decides where a key comes from.
+   *
+   * Null means no key is configured, which is a deployment choice rather than an error: payments
+   * are still detected, credited and announced, and the funds stay at their deposit addresses,
+   * where they can only ever pay their own merchant. Said out loud on every startup, because a
+   * gateway that detects payments and never moves them looks healthy from every angle except the
+   * merchant's balance.
+   *
+   * Anything else `settlementKeys` finds — a key file that cannot be read, a malformed one, both
+   * variables set — throws, and should: that is a deployment that believes it can settle and
+   * cannot, and the first settlement is far too late to discover it.
+   */
+  const configured = settlementKeys(env);
+  if (!configured) {
+    log('not settling: no settlement key configured', {
       detail:
-        'payments will be detected and credited, and funds will stay at their deposit ' +
-        'addresses. Chains whose payer transfer reaches the merchant directly — TRON, TON — are ' +
-        'unaffected: there is nothing to settle on them.',
+        'set SETTLEMENT_KEY_FILE (production) or SETTLEMENT_KEY_HEX (development). Payments ' +
+        'will be detected and credited, and funds will stay at their deposit addresses. Chains ' +
+        "whose payer transfer reaches the merchant directly — TRON, TON — are unaffected: " +
+        'there is nothing to settle on them.',
     });
     return [];
   }
 
+  const { keys, source: keySource } = configured;
   /**
-   * One key provider for every chain, and it refuses to exist in production.
+   * Which path the key came by, on the startup line.
    *
-   * `LocalKeyProvider` throws when `NODE_ENV` is production unless explicitly overridden, and
-   * that refusal is right: this key can move every merchant's funds out of a forwarder — only
-   * ever to that merchant, but it also pays for the transaction, so a copy of it is a wallet
-   * somebody else can drain. A KMS-backed provider is the production answer; this is the
-   * testnet and staging one, and the error it throws names the difference.
+   * Worth a line because the two are not equivalent and the difference is invisible afterwards:
+   * an environment variable stays in `/proc/<pid>/environ` and in whatever set it, where a
+   * credential file does not.
    */
-  const keys = new LocalKeyProvider(env.SETTLEMENT_KEY_HEX, { environment: env.NODE_ENV });
+  log('settlement key loaded', {
+    from: keySource,
+    address: await keys.address(),
+  });
 
   const store = new SettlementStore(db);
   const source = new SettlementSource(db);
