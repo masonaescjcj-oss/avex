@@ -103,11 +103,22 @@ export function preflight(env: Env): Preflight {
       }
     }
 
-    if (config.addressModel === 'shared-memo' && !env.SHARED_DEPOSIT_WALLETS[chain]) {
+    if (config.addressModel === 'shared-memo') {
+      /**
+       * Not "configure a wallet and it works", which is what this said.
+       *
+       * No adapter is built for a shared-address chain, so a payment on one cannot be credited —
+       * and `depositAddressConfig` therefore refuses to offer it whether a wallet is set or not.
+       * Reporting the missing variable as the gap pointed at the wrong thing: an operator who
+       * set it would have been told they had fixed something.
+       */
       add(
         'degraded',
         `chains.${chain}`,
-        'has an RPC endpoint and no SHARED_DEPOSIT_WALLETS entry, so it cannot issue invoices.',
+        'has an RPC endpoint and cannot be offered: no adapter is built for a shared-address ' +
+          'chain in this build, so a transfer to the shared wallet could never be matched to an ' +
+          'invoice. Setting SHARED_DEPOSIT_WALLETS does not change that — the chain is left off ' +
+          'the checkout on purpose.',
       );
     }
 

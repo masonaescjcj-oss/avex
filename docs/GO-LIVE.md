@@ -176,6 +176,31 @@ The same wallet pays gas. It needs a balance and an alarm on that balance.
 
 ## Not blockers
 
-- **Solana.** Designed, not implemented. Nothing depends on it.
+- **Solana.** Designed, not implemented — `SolanaAdapter` throws on every method. Nothing
+  depends on it, and it is no longer possible to configure a deployment into offering it: it is
+  `unique` in the registry but not an EVM chain, so `depositAddressConfig` leaves it out.
+- **TON.** `TonAdapter` is a sketch: it polls one address it is never given, credits native TON
+  rather than jettons, and has no tests. So no adapter is built for a shared-address chain, and
+  the checkout does not offer one — `SHARED_DEPOSIT_WALLETS` is read and then dropped, which
+  `preflight` says out loud. Turning TON on means finishing the adapter and adding
+  `'shared-memo'` to `CREDITABLE_ADDRESS_MODELS`; `deposit-address-agreement.test.ts` fails until
+  both halves are done, which is the point of it.
 - **Telegram Stars.** Works, but needs the merchant's own bot, so it is per-merchant setup
   rather than a launch task.
+
+## Known unfinished, and where
+
+Not blockers, and worth naming so they are not rediscovered as surprises.
+
+- **A KMS `KeyProvider` is half-built.** `DerKeyProvider` in `@avex/core` does the hard part —
+  DER parsing, normalising a high `s`, finding the recovery id, and verifying the signature
+  recovers to the address the key is supposed to control — and it is tested. What is missing is a
+  call to a specific KMS's sign API, and any way to select it: `main.ts` constructs
+  `LocalKeyProvider` from `SETTLEMENT_KEY_HEX` and nothing else. So item 9 above is smaller than
+  it reads, and its blocking half is a decision about where the key lives.
+- **`InvoiceService` in `@avex/core` is superseded.** `apps/api/src/domain/invoice-creation.ts`
+  is what runs; the core class is reached only by its own test. It is still exported from the
+  package index, so it reads as public API.
+- **The QR encoder stops at version 6.** Roughly 106 bytes, against a deposit address of 42 and
+  an address-plus-memo of about 57, so nothing the checkout draws comes close. It throws rather
+  than truncating if that ever changes.

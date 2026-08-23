@@ -18,6 +18,7 @@ import { AssetService } from './domain/asset-service.js';
 import { AuditService } from './domain/audit.js';
 import { AuthService } from './domain/auth-service.js';
 import { CheckoutService } from './domain/checkout-service.js';
+import { depositAddressConfig } from './domain/deposit-address-config.js';
 import { DepositAddressDeriver } from './domain/deposit-address.js';
 import { CommissionLedger } from './domain/commission-ledger.js';
 import { delayFor } from './domain/rbac.js';
@@ -194,40 +195,11 @@ export function compose(options: ComposeOptions): Composed {
   /**
    * Address derivation, built from configuration alone.
    *
-   * Every EVM chain shares one creation code because they run identical bytecode; the
-   * factory address differs because each chain has its own deployment. A chain absent from
-   * `FORWARDER_FACTORIES` simply cannot issue invoices, which is the safe direction — a
-   * defaulted factory would hand payers addresses no CREATE2 produces.
+   * The rule for which chains this offers is in `depositAddressConfig`, next to the deriver and
+   * beside the test that holds it to the watcher's rule. It is not inline here because the two
+   * sides disagreeing is a way to take money and never report it.
    */
-  const deriver = new DepositAddressDeriver(
-    {
-      /**
-       * A chain needs both halves, and one without the other is dropped.
-       *
-       * A factory with no logic address would derive addresses from an empty string — valid
-       * hex, a real address, and one nothing can ever settle. Leaving the chain out instead
-       * means it cannot issue invoices, which is the same safe direction a missing factory has
-       * always taken.
-       */
-      evm: Object.fromEntries(
-        Object.entries(env.FORWARDER_FACTORIES)
-          .filter(([chain]) => env.FORWARDER_IMPLEMENTATIONS[chain])
-          .map(([chain, factory]) => [
-            chain,
-            { factory, implementation: env.FORWARDER_IMPLEMENTATIONS[chain]! },
-          ]),
-      ),
-      shared: env.SHARED_DEPOSIT_WALLETS,
-      /**
-       * Read from the chain registry rather than from configuration, because it is not a
-       * deployment choice. A chain is pooled because of how its transfers work — TRC-20 carries
-       * no memo and a per-invoice contract pays for its own code — and no environment variable
-       * changes that.
-       */
-      pooled: SUPPORTED_CHAINS.filter((chain) => chainConfig(chain).addressModel === 'pooled'),
-    },
-    env.MEMO_SECRET,
-  );
+  const deriver = new DepositAddressDeriver(depositAddressConfig(env), env.MEMO_SECRET);
 
   /** The merchant's own deposit wallets, for the chains whose addresses are not derivable. */
   const walletPool = new WalletPoolService(db);
