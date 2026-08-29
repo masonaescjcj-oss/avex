@@ -1,0 +1,885 @@
+#!/usr/bin/env bash
+#
+# Bring an AVEX Pay gateway up on one Linux host.
+#
+#   sudo bash deploy/install.sh --check      # look at the host, change nothing
+#   sudo bash deploy/install.sh --selftest   # generate the files into a temp dir and check them
+#   sudo bash deploy/install.sh              # do it
+#
+# This is docs/GO-LIVE-fa.md steps 02 and 04 through 06, plus 11 and 12, as one run. It exists
+# because that document is thirteen steps and most of them are the same few facts typed into five
+# files, which is a lot of places to make one mistake.
+#
+# What it will not do, because it cannot: create your database, create your mail account, fund a
+# wallet, click through the dashboard, or send a real payment. It asks for the connection strings
+# and does everything downstream of them.
+#
+# ## The rules it follows
+#
+# It never overwrites a secret. An existing api.env is left alone unless you pass --reconfigure,
+# and even then the old one is kept beside it. A settlement key that exists is never regenerated:
+# a new key is a new gas wallet, and the old one still holds the balance.
+#
+# It never prints a secret. Connection strings and keys are read with the echo off and written
+# with mode 0600. The one thing it does print is the settlement wallet's address, because you have
+# to fund it.
+#
+# It is idempotent, so it is also how you apply a config change or pick up a new commit.
+
+set -euo pipefail
+
+# ── paths ────────────────────────────────────────────────────────────────────
+#
+# Overridable through AVEX_ROOT so --selftest can build into a temporary directory. Nothing else
+# should set it.
+
+: "${AVEX_ROOT:=}"
+APP_DIR="$AVEX_ROOT/opt/avex"
+CONF_DIR="$AVEX_ROOT/etc/avex"
+ENV_FILE="$CONF_DIR/api.env"
+KEY_FILE="$CONF_DIR/settlement-key"
+KEY_CRED="$CONF_DIR/settlement-key.cred"
+UNIT_DIR="$AVEX_ROOT/etc/systemd/system"
+CADDY_FILE="$AVEX_ROOT/etc/caddy/Caddyfile"
+readonly SERVICE_USER=avex
+readonly REPO_DEFAULT=https://github.com/masonaescjcj-oss/avex.git
+
+MODE=install
+BRANCH=main
+REPO="$REPO_DEFAULT"
+
+# Where this script lives, so --selftest can validate the generated configuration against the
+# real schema in this checkout rather than against a list of key names it might forget to update.
+SCRIPT_DIR=$( cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd )
+REPO_ROOT=$(dirname "$SCRIPT_DIR")
+
+# Filled by detect_host.
+SYSTEMD_VERSION=0
+NODE_MAJOR=0
+KEY_MECHANISM=file
+# The absolute path to node, for ExecStart.
+#
+# Detected rather than hardcoded to /usr/bin/node. That is where apt puts it, but an operator who
+# already had node — from nvm, from a tarball in /opt — would get units naming a binary that is
+# not there, and the failure arrives as a unit that will not start rather than as anything about
+# paths.
+NODE_BIN=/usr/bin/node
+
+# Filled by ask_configuration, consumed by write_env_file. Globals because bash has no other way
+# to return eight strings, and because none of them may be passed as arguments — an argument is
+# visible in `ps` to every user on the host.
+db_url='' direct_url='' smtp_url='' mail_from='' operator_email=''
+app_url='' tron_rpc=''
+
+# ── output ───────────────────────────────────────────────────────────────────
+
+if [[ -t 1 ]]; then
+  B=$'\e[1m'; R=$'\e[0m'; DIM=$'\e[2m'; GREEN=$'\e[32m'; YELLOW=$'\e[33m'; RED=$'\e[31m'
+else
+  B=''; R=''; DIM=''; GREEN=''; YELLOW=''; RED=''
+fi
+
+step() { printf '\n%s==>%s %s%s%s\n' "$GREEN" "$R" "$B" "$*" "$R"; }
+info() { printf '    %s\n' "$*"; }
+skip() { printf '    %salready done: %s%s\n' "$DIM" "$*" "$R"; }
+warn() { printf '    %s! %s%s\n' "$YELLOW" "$*" "$R"; }
+die()  { printf '\n%serror:%s %s\n' "$RED" "$R" "$*" >&2; exit 1; }
+line() { printf '    %-46s %s\n' "$1" "$2"; }
+
+# Reads a value with the echo off and will not take an empty answer.
+ask_secret() {
+  local prompt=$1 __out=$2 value=''
+  while [[ -z $value ]]; do
+    printf '    %s: ' "$prompt" >&2
+    read -rs value
+    printf '\n' >&2
+  done
+  printf -v "$__out" '%s' "$value"
+}
+
+ask() {
+  local prompt=$1 __out=$2 fallback=${3-} value=''
+  if [[ -n $fallback ]]; then printf '    %s [%s]: ' "$prompt" "$fallback" >&2
+  else printf '    %s: ' "$prompt" >&2
+  fi
+  read -r value
+  printf -v "$__out" '%s' "${value:-$fallback}"
+}
+
+confirm() {
+  local answer=''
+  printf '    %s [y/N] ' "$1" >&2
+  read -r answer
+  [[ $answer == [yY]* ]]
+}
+
+usage() {
+  cat <<'USAGE'
+usage: sudo bash deploy/install.sh [options]
+
+  --check          Report what the host has and what would change. Changes nothing.
+  --selftest       Generate the env file and the units into a temporary directory, validate
+                   them, and delete them. Touches nothing real.
+  --reconfigure    Ask the configuration questions again, keeping the old api.env beside it.
+  --repo URL       Where to clone from. Defaults to the AVEX repository.
+  --branch NAME    Branch to check out. Defaults to main.
+  -h, --help       This.
+USAGE
+}
+
+# ── the host ─────────────────────────────────────────────────────────────────
+
+detect_host() {
+  if command -v systemd-analyze >/dev/null 2>&1; then
+    SYSTEMD_VERSION=$(systemd-analyze --version 2>/dev/null | head -1 | grep -oE '[0-9]+' | head -1)
+  fi
+
+  # How the settlement key is delivered, decided from what systemd can do. The tiers are not
+  # cosmetic: encrypted credentials need 250, plain ones — still a tmpfs visible only to the unit
+  # — need 247. Ubuntu 22.04 ships 249, which is a default Hetzner image, so the middle tier is
+  # the common case rather than a fallback nobody hits.
+  if   (( SYSTEMD_VERSION >= 250 )); then KEY_MECHANISM=encrypted
+  elif (( SYSTEMD_VERSION >= 247 )); then KEY_MECHANISM=credential
+  else KEY_MECHANISM=file
+  fi
+
+  if command -v node >/dev/null 2>&1; then
+    NODE_MAJOR=$(node --version | tr -d 'v' | cut -d. -f1)
+    NODE_BIN=$(command -v node)
+  fi
+}
+
+report_host() {
+  step "Host"
+  info "$( (source /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") || echo 'unknown distribution' )"
+  info "systemd $SYSTEMD_VERSION, so the settlement key goes in as: $B$KEY_MECHANISM$R"
+  if (( NODE_MAJOR >= 22 )); then
+    info "node $(node --version) at $NODE_BIN"
+  else
+    warn "node $( ((NODE_MAJOR)) && node --version || echo 'not installed' ) — this needs 22 or newer"
+  fi
+  for tool in git openssl curl; do
+    command -v "$tool" >/dev/null 2>&1 || warn "$tool is missing"
+  done
+  command -v caddy >/dev/null 2>&1 ||
+    warn "caddy is not installed — nothing would terminate TLS in front of the API"
+}
+
+report_check() {
+  step "What would change"
+  line "user $SERVICE_USER" \
+    "$( id -u "$SERVICE_USER" >/dev/null 2>&1 && echo 'exists' || echo 'would be created' )"
+  line "$APP_DIR" \
+    "$( [[ -d $APP_DIR/.git ]] && echo 'exists, would be updated' || echo 'would be cloned' )"
+  line "$ENV_FILE" \
+    "$( [[ -f $ENV_FILE ]] && echo 'exists, would be left alone' || echo 'would be written' )"
+  line "settlement key" \
+    "$( [[ -f $KEY_FILE || -f $KEY_CRED ]] && echo 'exists, would be left alone' || echo 'would be offered' )"
+  line "$UNIT_DIR/avex-api.service" \
+    "$( [[ -f $UNIT_DIR/avex-api.service ]] && echo 'would be rewritten' || echo 'would be written' )"
+  line "$UNIT_DIR/avex-watcher.service" \
+    "$( [[ -f $UNIT_DIR/avex-watcher.service ]] && echo 'would be rewritten' || echo 'would be written' )"
+  printf '\n    %sNothing was changed. Run without --check to do it.%s\n\n' "$DIM" "$R"
+}
+
+# ── packages ─────────────────────────────────────────────────────────────────
+
+apt_updated=0
+apt_get() {
+  (( apt_updated )) || { DEBIAN_FRONTEND=noninteractive apt-get update -qq; apt_updated=1; }
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@"
+}
+
+install_packages() {
+  step "Packages"
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    warn "no apt-get here; install node 22+, git, curl and openssl yourself"
+    (( NODE_MAJOR >= 22 )) || die "node 22 or newer is required"
+    return
+  fi
+
+  local need=() tool
+  for tool in git curl openssl ca-certificates gnupg; do
+    command -v "$tool" >/dev/null 2>&1 || need+=("$tool")
+  done
+  if (( ${#need[@]} )); then
+    info "installing: ${need[*]}"
+    apt_get "${need[@]}"
+  else
+    skip "git, curl, openssl"
+  fi
+
+  if (( NODE_MAJOR >= 22 )); then
+    skip "node $(node --version)"
+    return
+  fi
+
+  # NodeSource as an apt repository, with its key verified, rather than a piped installer script.
+  # Ubuntu's own `nodejs` is 18 and this project needs 22.
+  info "adding the NodeSource repository for node 22"
+  install -d -m 0755 /usr/share/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key |
+    gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+  chmod 0644 /usr/share/keyrings/nodesource.gpg
+  echo 'deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main' \
+    > /etc/apt/sources.list.d/nodesource.list
+  apt_updated=0
+  apt_get nodejs
+  hash -r
+  NODE_MAJOR=$(node --version | tr -d 'v' | cut -d. -f1)
+  NODE_BIN=$(command -v node)
+  info "node $(node --version) at $NODE_BIN"
+}
+
+# ── user, directories, code ──────────────────────────────────────────────────
+
+ensure_user() {
+  step "Service user and directories"
+
+  if id -u "$SERVICE_USER" >/dev/null 2>&1; then
+    skip "user $SERVICE_USER"
+  else
+    useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
+    info "created $SERVICE_USER, with no shell and no password"
+  fi
+
+  # 0750 root:avex — the service reads it, nobody else on the host can.
+  install -d -m 0750 -o root -g "$SERVICE_USER" "$CONF_DIR"
+  install -d -m 0755 "$APP_DIR"
+  info "$CONF_DIR is 0750 root:$SERVICE_USER"
+}
+
+sync_code() {
+  step "Code"
+
+  if [[ -d $APP_DIR/.git ]]; then
+    info "updating $APP_DIR to $BRANCH"
+    git -C "$APP_DIR" remote set-url origin "$REPO"
+    git -C "$APP_DIR" fetch --quiet origin "$BRANCH"
+    git -C "$APP_DIR" checkout --quiet -B "$BRANCH" "origin/$BRANCH"
+  else
+    info "cloning $REPO ($BRANCH)"
+    git clone --quiet --branch "$BRANCH" "$REPO" "$APP_DIR"
+  fi
+  info "at $(git -C "$APP_DIR" rev-parse --short HEAD)"
+
+  # --include=dev is load-bearing: the build runs tsc, a devDependency, and a host with
+  # NODE_ENV=production set makes plain `npm ci` skip it. The failure then arrives as a missing
+  # module rather than as anything about environments.
+  info "installing dependencies"
+  ( cd "$APP_DIR" && NODE_ENV=development npm ci --include=dev --silent )
+  info "building"
+  ( cd "$APP_DIR" && npm run build --workspace @avex/api --silent )
+  chown -R "$SERVICE_USER" "$APP_DIR"
+}
+
+# ── configuration ────────────────────────────────────────────────────────────
+
+ask_configuration() {
+  cat <<'PROMPT'
+    Nothing below is echoed except the addresses and domains.
+
+    The direct database string must be the one on port 5432, not the pooler on
+    6543: this schema creates enum types, and CREATE TYPE through a transaction
+    pooler fails in a way that reads like a syntax error in the migration.
+
+PROMPT
+
+  ask_secret "DATABASE_URL (the pooler on 6543, or the direct one if you have only one)" db_url
+  ask_secret "DIRECT_DATABASE_URL (5432 — the same value again if identical)" direct_url
+  ask_secret "SMTP_URL, e.g. smtps://user:pass@smtp.example.net:465" smtp_url
+  ask "MAIL_FROM" mail_from "no-reply@avexpay.net"
+  ask "OPERATOR_EMAIL — where critical alerts go" operator_email
+  ask "The public domain of the static pages" app_url "https://avexpay.net"
+  ask "TRON JSON-RPC endpoint (blank to skip TRON)" tron_rpc "https://api.trongrid.io/jsonrpc"
+}
+
+# Single-quote a value for the environment file.
+#
+# Not cosmetic, and the reason is worth stating. systemd's `EnvironmentFile=` has its own parser
+# and handles `KEY=value with spaces` correctly — but everything else that reads this file goes
+# through the shell, because `set -a; . api.env` is how the migrations, the preflight and the
+# admin bootstrap get their configuration, here and in the documentation.
+#
+# Unquoted, `MAIL_FROM_NAME=AVEX Pay` makes the shell run `Pay` as a command. That is the harmless
+# version. A database password containing a semicolon or `$(...)` would be *executed* by the shell
+# that sourced the file — an injection whose payload the operator pasted in themselves, which is
+# the kind nobody thinks to look for. Both quoting styles are understood by systemd's parser too,
+# so one form is correct everywhere.
+#
+# A literal single quote cannot be represented safely for both parsers at once, so it is refused
+# rather than mangled. In a connection string it belongs percent-encoded as %27 anyway.
+quote_env() {
+  local value=$1
+  if [[ $value == *"'"* ]]; then
+    die "a configuration value contains a single quote, which cannot be written safely.
+       Percent-encode it (%27) and run this again."
+  fi
+  printf "'%s'" "$value"
+}
+
+write_env_file() {
+  local rpc_urls='' memo_secret
+  [[ -n $tron_rpc ]] && rpc_urls="tron=$tron_rpc"
+  memo_secret=$(openssl rand -hex 24)
+
+  umask 077
+  cat > "$ENV_FILE" <<ENVFILE
+# Written by deploy/install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ).
+# Mode 0600, owned by $SERVICE_USER. Re-run with --reconfigure to change it.
+
+# Every value is single-quoted. systemd's parser and the shell both understand
+# that, and unquoted it would be the shell running part of a password.
+
+NODE_ENV='production'
+PORT='3000'
+HOST='127.0.0.1'
+
+DATABASE_URL=$(quote_env "$db_url")
+DIRECT_DATABASE_URL=$(quote_env "$direct_url")
+
+# The static pages, not the API: a verification link is APP_URL/dashboard and a
+# payer's link is APP_URL/pay/<id>. Pointing this at the API host produces mail
+# whose links 404.
+APP_URL=$(quote_env "$app_url")
+
+SMTP_URL=$(quote_env "$smtp_url")
+MAIL_FROM=$(quote_env "$mail_from")
+MAIL_FROM_NAME='AVEX Pay'
+OPERATOR_EMAIL=$(quote_env "$operator_email")
+
+CHECKOUT_ORIGINS=$(quote_env "$app_url")
+DASHBOARD_ORIGINS=$(quote_env "$app_url")
+
+# TRON serves an Ethereum-compatible JSON-RPC, which is why it lives here.
+EVM_RPC_URLS=$(quote_env "$rpc_urls")
+
+# Generated here, once. A memo is visible to anyone watching the shared wallet,
+# so a guessable one would let a stranger claim someone else's payment.
+MEMO_SECRET=$(quote_env "$memo_secret")
+
+# EVM chains: fill these in after running contracts/deploy.mjs. Both halves of a
+# chain or neither — a factory without its logic address derives addresses that
+# nothing can ever settle.
+# FORWARDER_FACTORIES=bsc=0x...
+# FORWARDER_IMPLEMENTATIONS=bsc=0x...
+# FEE_COLLECTORS=bsc=0x...
+ENVFILE
+  umask 022
+  chown "$SERVICE_USER" "$ENV_FILE" 2>/dev/null || true
+  chmod 0600 "$ENV_FILE"
+}
+
+configure() {
+  step "Configuration"
+
+  if [[ -f $ENV_FILE ]]; then
+    if [[ $MODE == reconfigure ]]; then
+      local backup="$ENV_FILE.bak-$(date +%Y%m%d%H%M%S)"
+      cp -p "$ENV_FILE" "$backup"
+      warn "kept the old configuration at $backup"
+    else
+      skip "$ENV_FILE — pass --reconfigure to change it"
+      return
+    fi
+  fi
+
+  ask_configuration
+  write_env_file
+  unset db_url direct_url smtp_url
+  info "wrote $ENV_FILE (0600, $SERVICE_USER)"
+}
+
+# ── the settlement key ───────────────────────────────────────────────────────
+
+setup_key() {
+  step "Settlement key"
+
+  if [[ -f $KEY_FILE || -f $KEY_CRED ]]; then
+    # Never regenerated: a new key is a new gas wallet, and the old one holds the balance.
+    skip "a settlement key is already in place"
+    return
+  fi
+
+  if ! confirm "Set up a settlement key now? Say no for a TRON-only launch — it needs none."; then
+    info "skipped. Payments will be detected and credited; EVM funds stay at their deposit"
+    info "addresses, where they can only ever pay their own merchant."
+    return
+  fi
+
+  local key address
+  key=$(openssl rand -hex 32)
+  address=$( cd "$APP_DIR" && node --input-type=module -e '
+    import { addressFromPrivateKey } from "./packages/core/dist/index.js";
+    const hex = process.argv[1].replace(/^0x/, "");
+    const bytes = Uint8Array.from(hex.match(/../g).map((b) => parseInt(b, 16)));
+    process.stdout.write(addressFromPrivateKey(bytes));
+  ' "$key" )
+
+  if [[ $KEY_MECHANISM == encrypted ]]; then
+    printf '0x%s' "$key" | systemd-creds encrypt --name=settlement-key - "$KEY_CRED"
+    chmod 0600 "$KEY_CRED"
+    info "encrypted into $KEY_CRED — the plaintext never reached the disk"
+  else
+    umask 077
+    printf '0x%s\n' "$key" > "$KEY_FILE"
+    umask 022
+    chown "$SERVICE_USER" "$KEY_FILE" 2>/dev/null || true
+    chmod 0600 "$KEY_FILE"
+    info "wrote $KEY_FILE (0600, $SERVICE_USER)"
+  fi
+  unset key
+
+  printf "\n    %sFund this address with the chain's native token — it pays gas:%s\n" "$B" "$R"
+  printf '      %s%s%s\n\n' "$B" "$address" "$R"
+  info "It cannot redirect a merchant's money: a deposit address pays the destination"
+  info "written into its own code. What it holds is the gas balance, so keep it to a"
+  info "few days' worth and let the alerts watch it."
+}
+
+# What the watcher's unit should say about the key, from what is actually on disk.
+key_directives() {
+  if [[ -f $KEY_CRED ]]; then
+    printf 'LoadCredentialEncrypted=settlement-key:%s\nEnvironment=SETTLEMENT_KEY_FILE=%%d/settlement-key' \
+      "$KEY_CRED"
+  elif [[ -f $KEY_FILE && $KEY_MECHANISM == credential ]]; then
+    # %n is the full unit name; %N drops the .service suffix the directory keeps.
+    printf 'LoadCredential=settlement-key:%s\nEnvironment=SETTLEMENT_KEY_FILE=/run/credentials/%%n/settlement-key' \
+      "$KEY_FILE"
+  elif [[ -f $KEY_FILE ]]; then
+    printf 'Environment=SETTLEMENT_KEY_FILE=%s' "$KEY_FILE"
+  fi
+}
+
+# ── the units ────────────────────────────────────────────────────────────────
+
+# The fourth argument decides whether this unit gets the settlement key. Only the watcher does:
+# it is the process that settles, and the API no longer builds a signer at all. Handing the key
+# to both would double the number of processes a gas wallet could be drained from, for nothing.
+write_unit() {
+  local name=$1 description=$2 entry=$3 wants_key=${4:-without-key} credentials=''
+  [[ $wants_key == with-key ]] && credentials=$(key_directives)
+
+  cat > "$UNIT_DIR/$name" <<UNIT
+# Written by deploy/install.sh. Re-run it to regenerate.
+[Unit]
+Description=$description
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$APP_DIR/apps/api
+EnvironmentFile=$ENV_FILE
+$credentials
+ExecStart=$NODE_BIN $entry
+Restart=always
+RestartSec=5
+
+# It needs its own code and the network, and nothing else.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  info "wrote $UNIT_DIR/$name"
+}
+
+write_units() {
+  step "Services"
+  install -d -m 0755 "$UNIT_DIR"
+  write_unit avex-api.service     'AVEX Pay API'           dist/main.js    without-key
+  write_unit avex-watcher.service 'AVEX Pay chain watcher' dist/watcher.js with-key
+}
+
+# ── TLS ──────────────────────────────────────────────────────────────────────
+
+setup_tls() {
+  step "TLS"
+
+  if ! command -v caddy >/dev/null 2>&1; then
+    warn "caddy is not installed, so nothing terminates TLS."
+    warn "install it, or put any reverse proxy in front of 127.0.0.1:3000."
+    return
+  fi
+
+  if [[ -f $CADDY_FILE ]] && grep -q 'reverse_proxy 127.0.0.1:3000' "$CADDY_FILE"; then
+    skip "the Caddyfile already proxies to the API"
+    return
+  fi
+
+  local host domain
+  domain=$( grep -oP '(?<=^APP_URL=).*' "$ENV_FILE" | sed 's|https\?://||' )
+  ask "The hostname Caddy should serve the API on" host "api.${domain:-avexpay.net}"
+
+  install -d -m 0755 "$(dirname "$CADDY_FILE")"
+  cat > "$CADDY_FILE" <<CADDY
+# Written by deploy/install.sh.
+#
+# The API listens on 127.0.0.1 only, so this is the only way in and TLS is not optional.
+$host {
+  reverse_proxy 127.0.0.1:3000
+}
+CADDY
+  info "wrote $CADDY_FILE for $host"
+  systemctl reload caddy 2>/dev/null || systemctl restart caddy 2>/dev/null ||
+    warn "start caddy yourself: systemctl enable --now caddy"
+  info "point an A record for $host at this host's IP; Caddy gets the certificate itself"
+}
+
+# ── database, preflight, start ───────────────────────────────────────────────
+
+# Runs a workspace script with the configuration loaded, and without it leaking into this shell.
+with_env() {
+  ( cd "$APP_DIR" && set -a && . "$ENV_FILE" && set +a && "$@" )
+}
+
+migrate() {
+  step "Database"
+
+  local output status
+  set +e
+  output=$( with_env npm run db:migrate --workspace @avex/api 2>&1 )
+  status=$?
+  set -e
+
+  if (( status == 0 )); then
+    info "migrations applied"
+    return
+  fi
+
+  printf '%s\n' "$output" | tail -20
+  die "migrations failed. The usual cause is a pooled string in DIRECT_DATABASE_URL: CREATE TYPE
+       cannot run through a transaction pooler and fails looking like a syntax error in the
+       migration. Use the direct string on port 5432."
+}
+
+PREFLIGHT_STATUS=0
+run_preflight() {
+  step "Preflight"
+  info "what this deployment cannot do, from its configuration alone:"
+  printf '\n'
+  set +e
+  with_env npm run preflight --workspace @avex/api --silent 2>&1 | sed 's/^/    /'
+  PREFLIGHT_STATUS=${PIPESTATUS[0]}
+  set -e
+}
+
+start_services() {
+  step "Starting"
+  systemctl daemon-reload
+
+  # The API first, and once. The curated asset catalogue — USDT on TRON and the rest — is written
+  # when the API starts and only read by the watcher, so a watcher started first on a fresh
+  # database has an approved, listed nothing to look for. It refuses to start and says why, which
+  # is correct and baffling if you do not know the order.
+  systemctl enable --now avex-api.service
+  info "avex-api starting; waiting for it to answer"
+
+  local healthy=0 _
+  for _ in $(seq 1 30); do
+    if curl -fsS --max-time 2 http://127.0.0.1:3000/health >/dev/null 2>&1; then
+      healthy=1
+      break
+    fi
+    sleep 1
+  done
+
+  if ! (( healthy )); then
+    warn "the API did not answer within 30 seconds. Its log:"
+    journalctl -u avex-api.service -n 25 --no-pager | sed 's/^/      /'
+    warn "the watcher was not started, because it needs the API to have run once."
+    return
+  fi
+
+  info "the API answers on 127.0.0.1:3000"
+  systemctl enable --now avex-watcher.service
+  sleep 3
+  if systemctl is-active --quiet avex-watcher.service; then
+    info "the watcher is running"
+  else
+    warn "the watcher is not running. Its own log says why:"
+    journalctl -u avex-watcher.service -n 15 --no-pager | sed 's/^/      /'
+  fi
+}
+
+bootstrap_admin() {
+  step "Admin account"
+
+  if ! confirm "Create the first admin account now? It can only ever be done once."; then
+    info "later: cd $APP_DIR && set -a; . $ENV_FILE; set +a"
+    info "       npm run admin:bootstrap --workspace @avex/api"
+    return
+  fi
+
+  printf '\n'
+  with_env npm run admin:bootstrap --workspace @avex/api --silent ||
+    warn "that did not complete. Run it again with the two lines above."
+}
+
+summary() {
+  step "Done, and what is left for you"
+  local pages
+  pages=$( grep -oP '(?<=^APP_URL=).*' "$ENV_FILE" 2>/dev/null || echo 'https://avexpay.net' )
+  cat <<NEXT
+    Nothing above needed a browser. These do:
+
+      1. Sign in at $pages/dashboard, create a merchant, and register three to five
+         TRON deposit wallets. The keys stay with you; we only ever hold addresses.
+      2. Make one invoice and pay it with a real wallet, for a small amount:
+             journalctl -u avex-watcher -f
+      3. Then the same from a phone, scanning the QR with a real camera.
+
+    Afterwards:
+
+      systemctl status avex-api avex-watcher
+      journalctl -u avex-watcher -f
+      sudo bash $APP_DIR/deploy/install.sh                # pick up a new commit
+      sudo bash $APP_DIR/deploy/install.sh --reconfigure   # change the configuration
+
+NEXT
+}
+
+# ── self-test ────────────────────────────────────────────────────────────────
+#
+# Generates the two files that break a deployment when they are wrong — the environment file and
+# the units — into a temporary directory, checks them, and deletes them. It touches nothing real.
+#
+# Worth having because these are the parts of this script whose mistakes are silent: a unit with a
+# bad directive fails at `systemctl start` with a message about the unit rather than about what is
+# wrong, and an environment file missing one key fails at boot inside zod.
+
+selftest() {
+  local root failures=0
+  root=$(mktemp -d)
+  # shellcheck disable=SC2064
+  trap "rm -rf '$root'" EXIT
+
+  AVEX_ROOT="$root"
+  APP_DIR="$root/opt/avex"
+  CONF_DIR="$root/etc/avex"
+  ENV_FILE="$CONF_DIR/api.env"
+  KEY_FILE="$CONF_DIR/settlement-key"
+  KEY_CRED="$CONF_DIR/settlement-key.cred"
+  UNIT_DIR="$root/etc/systemd/system"
+
+  install -d -m 0750 "$CONF_DIR"
+  install -d -m 0755 "$UNIT_DIR"
+
+  step "Self-test"
+  info "building into $root"
+
+  db_url='postgres://u:p@db.example:6543/postgres'
+  direct_url='postgres://u:p@db.example:5432/postgres'
+  smtp_url='smtps://u:p@smtp.example:465'
+  mail_from='no-reply@avexpay.net'
+  operator_email='ops@avexpay.net'
+  app_url='https://avexpay.net'
+  tron_rpc='https://api.trongrid.io/jsonrpc'
+
+  write_env_file
+
+  local check
+  # Every key the API refuses to boot without, plus the two whose absence is silent.
+  for check in NODE_ENV PORT HOST DATABASE_URL DIRECT_DATABASE_URL APP_URL SMTP_URL MAIL_FROM \
+               OPERATOR_EMAIL CHECKOUT_ORIGINS DASHBOARD_ORIGINS EVM_RPC_URLS MEMO_SECRET; do
+    if grep -q "^$check='" "$ENV_FILE"; then
+      line "$check" 'present'
+    else
+      line "$check" 'MISSING'
+      failures=$(( failures + 1 ))
+    fi
+  done
+
+  # The real test: does the API's own configuration schema accept this file?
+  #
+  # Everything above is a list of key names, and a list is a thing that goes stale the first time
+  # somebody adds a required variable. `loadEnv` is the function that will actually reject the
+  # file at boot, so asking it directly is the only check that cannot drift.
+  if [[ -f $REPO_ROOT/apps/api/dist/env.js ]]; then
+    local verdict
+    set +e
+    verdict=$( cd "$REPO_ROOT" && env -i \
+      "PATH=$PATH" \
+      bash -c "set -a; . '$ENV_FILE'; set +a; exec node --input-type=module -e '
+        import { loadEnv } from \"./apps/api/dist/env.js\";
+        const env = loadEnv();
+        process.stdout.write(\"accepted, and settles: \" + (env.SETTLEMENT_KEY_FILE !== undefined));
+      '" 2>&1 )
+    local status=$?
+    set -e
+    if (( status == 0 )); then
+      line 'loadEnv on the generated file' "$verdict"
+    else
+      line 'loadEnv on the generated file' 'REJECTED:'
+      printf '%s\n' "$verdict" | sed 's/^/        /'
+      failures=$(( failures + 1 ))
+    fi
+  else
+    line 'loadEnv on the generated file' 'skipped — build the API first to check this'
+  fi
+
+  local mode
+  mode=$(stat -c '%a' "$ENV_FILE")
+  if [[ $mode == 600 ]]; then line 'api.env mode' '0600'
+  else line 'api.env mode' "$mode, should be 600"; failures=$(( failures + 1 ))
+  fi
+
+  if [[ $(grep -c "^MEMO_SECRET='.\{40,\}'" "$ENV_FILE") == 1 ]]; then
+    line 'MEMO_SECRET' 'generated, long enough'
+  else
+    line 'MEMO_SECRET' 'too short or missing'; failures=$(( failures + 1 ))
+  fi
+
+  # The bug this file used to have, asserted so it cannot come back.
+  #
+  # An unquoted value with a space made the shell run the second word as a command; the same flaw
+  # with a `;` or a `$(...)` in a password would have executed it. So the check is not "does it
+  # parse" but "does a hostile value survive a round trip through the shell unchanged".
+  local nasty="pa ss;word \$(echo pwned)\`echo also\` &|<>*?"
+  local previous_smtp=$smtp_url
+  smtp_url="smtps://user:$nasty@smtp.example:465"
+  write_env_file
+  local round_trip
+  round_trip=$( set -a; . "$ENV_FILE"; set +a; printf '%s' "$SMTP_URL" )
+  if [[ $round_trip == "smtps://user:$nasty@smtp.example:465" ]]; then
+    line 'a password full of shell metacharacters' 'survives sourcing unchanged'
+  else
+    line 'a password full of shell metacharacters' 'MANGLED OR EXECUTED:'
+    printf '        got: %s\n' "$round_trip"
+    failures=$(( failures + 1 ))
+  fi
+  smtp_url=$previous_smtp
+  write_env_file
+
+  # A key on disk, so the watcher's unit gets the directives a real run would give it.
+  printf '0x%064d\n' 1 > "$KEY_FILE"
+  chmod 0600 "$KEY_FILE"
+  write_units
+
+  local unit
+  for unit in avex-api.service avex-watcher.service; do
+    if ! command -v systemd-analyze >/dev/null 2>&1; then
+      line "$unit" 'written (systemd-analyze is not here to check it)'
+      continue
+    fi
+
+    # Captured into a variable rather than piped.
+    #
+    # `systemd-analyze verify` exits non-zero whenever it has anything to say, and with
+    # `pipefail` on, a pipeline ending in `grep -q` inherits that non-zero status even when the
+    # grep matched — so the check read as "valid" for every unit including a broken one. It did,
+    # until a deliberately bogus directive failed to be caught.
+    #
+    # Three complaints are artefacts of checking a unit somewhere other than the host it is for,
+    # and only these three are filtered: the target units of After=/Wants= are absent offline,
+    # node lives somewhere other than /usr/bin on a development machine, and the service user is
+    # created by this script's own earlier step. Everything else is a real finding.
+    local complaints
+    complaints=$( systemd-analyze verify "$UNIT_DIR/$unit" 2>&1 |
+      grep -vE 'Unit .* not found|is not executable|Unknown user|User or group .* not found' |
+      grep -v '^[[:space:]]*$' || true )
+
+    if [[ -n $complaints ]]; then
+      line "$unit" 'systemd-analyze had complaints:'
+      printf '%s\n' "$complaints" | sed 's/^/        /'
+      failures=$(( failures + 1 ))
+    else
+      line "$unit" 'valid'
+    fi
+  done
+
+  # An absolute ExecStart, asserted directly.
+  #
+  # systemd will search a fixed list of directories for a bare command name, so a relative one
+  # sometimes works and sometimes does not depending on where node was installed — which is the
+  # worst of both. The selftest cannot check that the path exists, because it may be running on a
+  # different machine than the unit will, so it checks the part that is knowable here.
+  local exec_line
+  exec_line=$( grep -h '^ExecStart=' "$UNIT_DIR/avex-api.service" | head -1 )
+  if [[ ${exec_line#ExecStart=} == /* ]]; then
+    line 'ExecStart is an absolute path' "${exec_line#ExecStart=}"
+  else
+    line 'ExecStart is an absolute path' "NO: $exec_line"
+    failures=$(( failures + 1 ))
+  fi
+
+  # The one asymmetry that matters, asserted rather than assumed.
+  if grep -q 'SETTLEMENT_KEY_FILE' "$UNIT_DIR/avex-watcher.service"; then
+    line 'the watcher gets the key' 'yes'
+  else
+    line 'the watcher gets the key' 'NO — it cannot settle'; failures=$(( failures + 1 ))
+  fi
+  if grep -q 'SETTLEMENT_KEY_FILE' "$UNIT_DIR/avex-api.service"; then
+    line 'the API is kept away from it' 'NO — it has the key and does not need it'
+    failures=$(( failures + 1 ))
+  else
+    line 'the API is kept away from it' 'yes'
+  fi
+
+  printf '\n'
+  if (( failures )); then
+    die "$failures problem(s). Nothing real was touched."
+  fi
+  info "${GREEN}everything the script generates is well-formed.${R} Nothing real was touched."
+  printf '\n'
+}
+
+# ── main ─────────────────────────────────────────────────────────────────────
+
+main() {
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --check)       MODE=check; shift ;;
+      --selftest)    MODE=selftest; shift ;;
+      --reconfigure) MODE=reconfigure; shift ;;
+      --repo)        REPO=${2:?--repo needs a URL}; shift 2 ;;
+      --branch)      BRANCH=${2:?--branch needs a name}; shift 2 ;;
+      -h|--help)     usage; exit 0 ;;
+      *)             usage >&2; die "unknown option: $1" ;;
+    esac
+  done
+
+  detect_host
+
+  if [[ $MODE == selftest ]]; then
+    selftest
+    exit 0
+  fi
+
+  [[ $EUID -eq 0 ]] ||
+    die "run this with sudo: it creates a user, writes to /etc and installs units."
+
+  report_host
+
+  if [[ $MODE == check ]]; then
+    report_check
+    exit 0
+  fi
+
+  install_packages
+  ensure_user
+  sync_code
+  configure
+  setup_key
+  write_units
+  setup_tls
+  migrate
+  run_preflight
+  start_services
+  bootstrap_admin
+  summary
+
+  exit "$PREFLIGHT_STATUS"
+}
+
+main "$@"

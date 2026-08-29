@@ -48,6 +48,28 @@ taking real money, and it is the reason the order below is what it is.
 - The payer pays the network fee; invoices below what a chain can carry are refused.
 - Transactional email over SMTP.
 
+## The short way
+
+```
+sudo bash deploy/install.sh --selftest   # generate the files into a temp dir and check them
+sudo bash deploy/install.sh --check      # look at the host, change nothing
+sudo bash deploy/install.sh              # do it
+```
+
+One run covers items 2 through 4 and 9 through 10 below: node, the service user, the checkout and
+build, the configuration file, the settlement key placed by the best mechanism that host's systemd
+offers, both units, the Caddyfile, the migrations, the preflight, starting the API and *then* the
+watcher, and the first admin account. It asks for the database string, `SMTP_URL` and an alert
+address; everything else has a default.
+
+It never rewrites a secret, never prints one, and is safe to run again — which makes it the
+upgrade path too. `--selftest` builds everything it would write into a temporary directory and
+checks it there, including running the generated configuration through the API's own schema.
+
+What it cannot do is item 1 and items 5 through 8: create the database, click through the
+dashboard, send a real payment, deploy the contracts. The rest of this file is what the script is
+doing and why, which is what you want when something does not work.
+
 ## Checking where you are
 
 ```

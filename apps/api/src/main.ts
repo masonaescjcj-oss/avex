@@ -1,19 +1,10 @@
 
 import { createDatabase } from './db/client.js';
-import type { ChainId } from '@avex/core';
-import {
-  EVM_CHAIN_IDS,
-  EvmChainSigner,
-  evmChainId,
-} from '@avex/core';
-
 import { DatabaseWatchStore } from './domain/watch-store.js';
 import { PriceTickWriter } from './domain/price-repository.js';
 import { loadEnv } from './env.js';
 import { compose } from './compose.js';
 import { startJobTimers } from './jobs.js';
-import { JsonRpcCaller } from './rpc/json-rpc-caller.js';
-import { settlementKeys } from './settle/keys.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -78,37 +69,19 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
   /**
-   * Settlement signers, one per configured EVM chain.
+   * No settlement signer here, deliberately.
    *
-   * Built here rather than lazily so a misconfigured key stops the process at startup.
-   * The alternative — discovering it when the first settlement runs — means a merchant
-   * has already been told their payment succeeded.
+   * This process does not settle — the watcher does, and it builds its own signers from
+   * `startSettlement`. What used to be here was a signer per chain, constructed to read a
+   * balance and a nonce for one startup log line and then discarded.
    *
-   * When no key is configured the map is empty and the runner simply has nothing to
-   * sign with: the gateway still accepts payments and credits invoices, it just does
-   * not move funds out of forwarders. That is a deliberate, visible degradation rather
-   * than a crash, because a missing settlement key must not stop the checkout.
+   * Removing it takes the settlement key out of this process entirely, which is the point: the
+   * key is a gas wallet somebody could drain, and two processes holding it is twice the surface
+   * for a log line. The figure it produced is now reported continuously by the watcher's own
+   * gas check, which alerts on it rather than printing it once at a moment nobody is reading.
+   *
+   * That is also why the unit files hand `SETTLEMENT_KEY_FILE` only to `avex-watcher`.
    */
-  const signers = new Map<string, EvmChainSigner>();
-  const settlement = settlementKeys(env);
-  if (settlement) {
-    const { keys } = settlement;
-
-    for (const [chain, urls] of Object.entries(env.EVM_RPC_URLS)) {
-      if (!(chain in EVM_CHAIN_IDS) || urls.length === 0) continue;
-
-      // One caller per chain, reusing the endpoint pool's fallback and timeouts.
-      const caller = new JsonRpcCaller({ [chain]: urls }, chain as ChainId);
-      const signer = new EvmChainSigner(
-        { call: (method, params) => caller.request(method, params) },
-        keys,
-        { chainId: evmChainId(chain), priorityFraction: env.SETTLEMENT_PRIORITY_FRACTION },
-      );
-      // Resolves the address, which is also the first proof the provider works.
-      await signer.initialise();
-      signers.set(chain, signer);
-    }
-  }
 
   await app.listen({ port: env.PORT, host: env.HOST });
   app.log.info({ seeded }, 'curated asset catalogue synchronised');
@@ -139,22 +112,17 @@ async function main(): Promise<void> {
     'watcher cursors loaded; no watcher loop runs in this process yet',
   );
 
-  if (signers.size === 0) {
-    app.log.warn(
-      'no settlement signer is configured: payments will be credited but funds will not be ' +
-        'swept out of forwarders. Set SETTLEMENT_KEY_FILE to a file holding the key — a ' +
-        'systemd encrypted credential is the intended shape — or SETTLEMENT_KEY_HEX for ' +
-        'development, which is refused in production.',
-    );
-  } else {
-    for (const [chain, signer] of signers) {
-      const [balance, nonce] = await Promise.all([signer.balanceWei(), signer.pendingNonce()]);
-      app.log.info(
-        { chain, address: signer.address, balanceWei: balance.toString(), nonce },
-        'settlement signer ready',
-      );
-    }
-  }
+  /**
+   * Whether anything settles is the watcher's business, and it says so at its own startup.
+   *
+   * Named here anyway, because "the API is up" is the line an operator reads first and
+   * "payments are credited but nothing is moved" is the state they most need not to assume
+   * away. It is a fact about the deployment, not a complaint about this process.
+   */
+  app.log.info(
+    { settles: env.SETTLEMENT_KEY_FILE !== undefined || env.SETTLEMENT_KEY_HEX !== undefined },
+    'settlement runs in the watcher process, not this one',
+  );
 }
 
 main().catch((error: unknown) => {
