@@ -478,7 +478,10 @@ PROMPT
   done
   ask_secret "SMTP_URL, e.g. smtps://user:pass@smtp.example.net:465" smtp_url
   ask "MAIL_FROM" mail_from "no-reply@avexpay.net"
-  ask "OPERATOR_EMAIL — where critical alerts go" operator_email
+  ask "OPERATOR_EMAIL — where critical alerts go (blank = log only)" operator_email
+  if [[ -z $operator_email ]]; then
+    warn "no alert address: a dry gas wallet and a stalled watcher will be logged only."
+  fi
   ask "The public domain of the static pages" app_url "https://avexpay.net"
   ask "TRON JSON-RPC endpoint (blank to skip TRON)" tron_rpc "https://api.trongrid.io/jsonrpc"
 }
@@ -505,6 +508,18 @@ quote_env() {
        Percent-encode it (%27) and run this again."
   fi
   printf "'%s'" "$value"
+}
+
+# A setting line, or nothing at all when the value is blank.
+#
+# The difference is not cosmetic: an optional variable is optional when it is *absent*, and
+# `OPERATOR_EMAIL=''` is present and empty, which fails the email check and stops the API booting.
+# Pressing Enter at a prompt with no default did exactly that — the first thing anybody following
+# the guide would have hit, reported as an invalid email they never typed.
+optional_line() {
+  local name=$1 value=$2
+  [[ -z $value ]] && return 0
+  printf '%s=%s' "$name" "$(quote_env "$value")"
 }
 
 write_env_file() {
@@ -535,7 +550,7 @@ APP_URL=$(quote_env "$app_url")
 SMTP_URL=$(quote_env "$smtp_url")
 MAIL_FROM=$(quote_env "$mail_from")
 MAIL_FROM_NAME='AVEX Pay'
-OPERATOR_EMAIL=$(quote_env "$operator_email")
+$(optional_line OPERATOR_EMAIL "$operator_email")
 
 CHECKOUT_ORIGINS=$(quote_env "$app_url")
 DASHBOARD_ORIGINS=$(quote_env "$app_url")
@@ -706,12 +721,22 @@ setup_tls() {
     cat > "$snippet" <<PROXY
 # Written by deploy/install.sh for $server, which is already serving this host.
 #
-# Include it from your $server configuration and reload. The API listens on loopback only, so
-# this is the only way in, and the certificate is $server's business rather than ours.
+# Port 80 only, and deliberately. A block with \`listen 443 ssl\` and no \`ssl_certificate\`
+# makes nginx refuse to load at all — so a snippet that assumed a certificate would take this
+# host's existing sites down on the next reload, which is a bad trade for saving one command.
+#
+# Install it and get a certificate:
+#
+#   ln -sf $snippet /etc/nginx/conf.d/$(basename "$snippet")
+#   nginx -t && systemctl reload nginx
+#   certbot --nginx -d $host
+#
+# certbot rewrites this block to add 443 and the certificate paths itself, which is the one way
+# those paths are certain to be right.
 
 server {
+    listen 80;
     server_name $host;
-    listen 443 ssl;
 
     location / {
         proxy_pass         http://127.0.0.1:$API_PORT;
@@ -719,12 +744,18 @@ server {
         proxy_set_header   Host \$host;
         proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 60s;
     }
 }
 PROXY
-    info "$server already owns 443, so nothing here was changed."
-    info "a server block for it is at $snippet — include it and reload $server."
-    info "point an A record for $host at this host, and give $server a certificate for it."
+    info "$server already owns 80/443, so nothing of its configuration was changed."
+    info "a server block is at $snippet. To install it:"
+    info "    ln -sf $snippet /etc/nginx/conf.d/$(basename "$snippet")"
+    info "    nginx -t && systemctl reload nginx"
+    info "then point an A record for $host at this host and run:"
+    info "    certbot --nginx -d $host"
+    info "It listens on 80 only: a block naming 443 without a certificate makes nginx refuse to"
+    info "load, which would take this host's other sites down. certbot adds 443 itself."
     return
   fi
 
@@ -1080,6 +1111,20 @@ selftest() {
       line "$unit" 'valid'
     fi
   done
+
+  # A blank optional answer must leave the line out, not write it empty.
+  local previous_operator=$operator_email
+  operator_email=''
+  write_env_file
+  if grep -q '^OPERATOR_EMAIL' "$ENV_FILE"; then
+    line 'a blank OPERATOR_EMAIL is omitted' 'NO: the line was written empty'
+    note_failure 'a blank OPERATOR_EMAIL is written empty, which stops the API booting'
+    failures=$(( failures + 1 ))
+  else
+    line 'a blank OPERATOR_EMAIL is omitted' 'yes, the line is absent'
+  fi
+  operator_email=$previous_operator
+  write_env_file
 
   # The one prompt whose wrong answer is expensive.
   local case_url problem

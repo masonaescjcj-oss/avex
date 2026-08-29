@@ -4,6 +4,10 @@ Non-custodial crypto payment gateway with Telegram Stars. Merchants accept
 stablecoins and native assets; funds move from the payer to the merchant's own
 wallet without AVEX ever being able to redirect them.
 
+**Bringing one up:** [`START.md`](START.md) is the whole procedure as commands to run in order,
+with the answer to give at every prompt. [`docs/GO-LIVE-fa.md`](docs/GO-LIVE-fa.md) is the same
+ground with the reasoning, for when something does not work.
+
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design and the
 reasoning behind it, and [`docs/roadmap.html`](docs/roadmap.html) for the
 twelve-phase build plan.
