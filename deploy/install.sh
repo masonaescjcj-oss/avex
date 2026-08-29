@@ -64,6 +64,9 @@ KEY_MECHANISM=file
 # not there, and the failure arrives as a unit that will not start rather than as anything about
 # paths.
 NODE_BIN=/usr/bin/node
+# The loopback port the API binds. Not a constant, because this host may already have something
+# on 3000 — see pick_port.
+API_PORT=3000
 
 # Filled by ask_configuration, consumed by write_env_file. Globals because bash has no other way
 # to return eight strings, and because none of them may be passed as arguments — an argument is
@@ -127,6 +130,56 @@ usage: sudo bash deploy/install.sh [options]
 USAGE
 }
 
+# ── is this host already busy? ───────────────────────────────────────────────
+#
+# The three ways a gateway install can damage a server that is already running something. None of
+# them are hypothetical: a host reached by `ssh root@… pm2 restart <app>` has all three.
+
+port_in_use() {
+  local port=$1
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH "sport = :$port" 2>/dev/null | grep -q .
+  else
+    # bash's own network redirection: a successful connect means somebody is listening.
+    (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && { exec 3<&-; return 0; }
+    return 1
+  fi
+}
+
+# Find a free loopback port, starting at 3000.
+#
+# This matters more than it looks. The old code hardcoded 3000 and then waited for
+# `curl 127.0.0.1:3000/health` to answer — so on a host where something else already held 3000,
+# our API would fail to bind, the *other* application would answer the health check, and the
+# installer would report success and start the watcher against an API that was never running.
+# Choosing a port that is provably free before anything starts removes the ambiguity rather than
+# trying to tell the two apart afterwards.
+pick_port() {
+  local candidate=3000
+  while port_in_use "$candidate"; do
+    warn "port $candidate is already taken on this host"
+    candidate=$(( candidate + 1 ))
+    (( candidate < 3100 )) || die "no free port between 3000 and 3099"
+  done
+  API_PORT=$candidate
+  [[ $API_PORT == 3000 ]] || info "the API will use port $API_PORT instead"
+}
+
+# Whatever is already terminating TLS.
+#
+# Installing Caddy in front of an nginx that already owns 443 gives a Caddy that cannot start and
+# a site that still works, which is the confusing order to discover it in. So if something else
+# is there, this writes a server block for it and changes nothing.
+existing_web_server() {
+  local name
+  for name in nginx apache2 httpd caddy; do
+    if systemctl is-active --quiet "$name" 2>/dev/null; then
+      printf '%s' "$name"
+      return
+    fi
+  done
+}
+
 # ── the host ─────────────────────────────────────────────────────────────────
 
 detect_host() {
@@ -147,6 +200,28 @@ detect_host() {
     NODE_MAJOR=$(node --version | tr -d 'v' | cut -d. -f1)
     NODE_BIN=$(command -v node)
   fi
+}
+
+# Everything already running that this install could disturb, reported before it does anything.
+report_neighbours() {
+  local server pm2_apps
+
+  server=$(existing_web_server)
+  [[ -n $server ]] && info "$server is running and already owns ports 80/443"
+
+  if command -v pm2 >/dev/null 2>&1; then
+    pm2_apps=$(pm2 jlist 2>/dev/null | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | paste -sd', ' -)
+    [[ -n $pm2_apps ]] && info "pm2 is running: $pm2_apps"
+  fi
+
+  port_in_use 3000 && warn "something already listens on port 3000"
+
+  # Explicit, and not tidiness.
+  #
+  # The line above is an AND list, so on a host where port 3000 is *free* it evaluates to 1 — and
+  # a function whose last statement returns 1 returns 1, which under `set -e` ends the script.
+  # The symptom was --check printing the host and then stopping, with no error and exit 0.
+  return 0
 }
 
 report_host() {
@@ -213,6 +288,22 @@ install_packages() {
   if (( NODE_MAJOR >= 22 )); then
     skip "node $(node --version)"
     return
+  fi
+
+  # An older node, on a host that is running something with it.
+  #
+  # Replacing the system node under a live application is the kind of change that works until its
+  # next restart. So it is a decision, taken by the person who knows what else is on the box, not
+  # a step this script takes on their behalf.
+  if (( NODE_MAJOR > 0 )); then
+    warn "node $(node --version) is installed and this project needs 22."
+    if command -v pm2 >/dev/null 2>&1 && pm2 jlist 2>/dev/null | grep -q '"name"'; then
+      warn "pm2 is running applications on that node. Upgrading it changes what they run"
+      warn "the next time they restart."
+    fi
+    confirm "Upgrade the system node to 22?" ||
+      die "stopped. Install node 22 in a way that suits this host — nvm, a tarball in /opt, a
+       container — and run this again; the units use whichever node is first on PATH."
   fi
 
   # NodeSource as an apt repository, with its key verified, rather than a piped installer script.
@@ -333,7 +424,7 @@ write_env_file() {
 # that, and unquoted it would be the shell running part of a password.
 
 NODE_ENV='production'
-PORT='3000'
+PORT='$API_PORT'
 HOST='127.0.0.1'
 
 DATABASE_URL=$(quote_env "$db_url")
@@ -506,19 +597,51 @@ write_units() {
 setup_tls() {
   step "TLS"
 
+  local server domain host
+  server=$(existing_web_server)
+  domain=$( grep -oP "(?<=^APP_URL=').*(?=')" "$ENV_FILE" | sed 's|https\?://||' )
+
+  if [[ -n $server && $server != caddy ]]; then
+    # Something else already owns 443. Writing a Caddyfile here would give a Caddy that cannot
+    # bind and a site that still works, which is a confusing order to find out in.
+    ask "The hostname the API should answer on" host "api.${domain:-avexpay.net}"
+    local snippet="$CONF_DIR/$server-api.conf"
+    cat > "$snippet" <<PROXY
+# Written by deploy/install.sh for $server, which is already serving this host.
+#
+# Include it from your $server configuration and reload. The API listens on loopback only, so
+# this is the only way in, and the certificate is $server's business rather than ours.
+
+server {
+    server_name $host;
+    listen 443 ssl;
+
+    location / {
+        proxy_pass         http://127.0.0.1:$API_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+    }
+}
+PROXY
+    info "$server already owns 443, so nothing here was changed."
+    info "a server block for it is at $snippet — include it and reload $server."
+    info "point an A record for $host at this host, and give $server a certificate for it."
+    return
+  fi
+
   if ! command -v caddy >/dev/null 2>&1; then
     warn "caddy is not installed, so nothing terminates TLS."
     warn "install it, or put any reverse proxy in front of 127.0.0.1:3000."
     return
   fi
 
-  if [[ -f $CADDY_FILE ]] && grep -q 'reverse_proxy 127.0.0.1:3000' "$CADDY_FILE"; then
+  if [[ -f $CADDY_FILE ]] && grep -q "reverse_proxy 127.0.0.1:$API_PORT" "$CADDY_FILE"; then
     skip "the Caddyfile already proxies to the API"
     return
   fi
 
-  local host domain
-  domain=$( grep -oP '(?<=^APP_URL=).*' "$ENV_FILE" | sed 's|https\?://||' )
   ask "The hostname Caddy should serve the API on" host "api.${domain:-avexpay.net}"
 
   install -d -m 0755 "$(dirname "$CADDY_FILE")"
@@ -527,7 +650,7 @@ setup_tls() {
 #
 # The API listens on 127.0.0.1 only, so this is the only way in and TLS is not optional.
 $host {
-  reverse_proxy 127.0.0.1:3000
+  reverse_proxy 127.0.0.1:$API_PORT
 }
 CADDY
   info "wrote $CADDY_FILE for $host"
@@ -587,7 +710,7 @@ start_services() {
 
   local healthy=0 _
   for _ in $(seq 1 30); do
-    if curl -fsS --max-time 2 http://127.0.0.1:3000/health >/dev/null 2>&1; then
+    if curl -fsS --max-time 2 "http://127.0.0.1:$API_PORT/health" >/dev/null 2>&1; then
       healthy=1
       break
     fi
@@ -601,7 +724,7 @@ start_services() {
     return
   fi
 
-  info "the API answers on 127.0.0.1:3000"
+  info "the API answers on 127.0.0.1:$API_PORT"
   systemctl enable --now avex-watcher.service
   sleep 3
   if systemctl is-active --quiet avex-watcher.service; then
@@ -629,7 +752,7 @@ bootstrap_admin() {
 summary() {
   step "Done, and what is left for you"
   local pages
-  pages=$( grep -oP '(?<=^APP_URL=).*' "$ENV_FILE" 2>/dev/null || echo 'https://avexpay.net' )
+  pages=$( grep -oP "(?<=^APP_URL=').*(?=')" "$ENV_FILE" 2>/dev/null || echo 'https://avexpay.net' )
   cat <<NEXT
     Nothing above needed a browser. These do:
 
@@ -798,6 +921,31 @@ selftest() {
     fi
   done
 
+  # The port has to reach every place that mentions it.
+  #
+  # It used to be the literal 3000 in the env file, in the Caddyfile and in the health check, so
+  # picking a different one would have started an API on one port and waited on another.
+  API_PORT=3777
+  write_env_file
+  if grep -q "^PORT='3777'" "$ENV_FILE"; then
+    line 'the chosen port reaches api.env' '3777'
+  else
+    line 'the chosen port reaches api.env' "NO: $(grep '^PORT=' "$ENV_FILE")"
+    failures=$(( failures + 1 ))
+  fi
+  API_PORT=3000
+  write_env_file
+
+  # And the quoted values are still readable by the code that reads them back.
+  local read_back
+  read_back=$( grep -oP "(?<=^APP_URL=').*(?=')" "$ENV_FILE" )
+  if [[ $read_back == "$app_url" ]]; then
+    line 'APP_URL reads back out of the quotes' "$read_back"
+  else
+    line 'APP_URL reads back out of the quotes' "NO: got '$read_back'"
+    failures=$(( failures + 1 ))
+  fi
+
   # An absolute ExecStart, asserted directly.
   #
   # systemd will search a fixed list of directories for a bare command name, so a relative one
@@ -860,12 +1008,14 @@ main() {
     die "run this with sudo: it creates a user, writes to /etc and installs units."
 
   report_host
+  report_neighbours
 
   if [[ $MODE == check ]]; then
     report_check
     exit 0
   fi
 
+  pick_port
   install_packages
   ensure_user
   sync_code
