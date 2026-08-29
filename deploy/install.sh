@@ -430,6 +430,26 @@ sync_code() {
 
 # ── configuration ────────────────────────────────────────────────────────────
 
+# Why a string is unusable for migrations, or empty if it is fine.
+#
+# Caught at the prompt rather than at the migration, because the migration's own failure is the
+# single most misleading error in this deployment: `CREATE TYPE` through a transaction-mode pooler
+# fails looking like a syntax error inside the migration file, and the hour that follows is spent
+# reading SQL that is correct. One string comparison here saves it.
+#
+# Pure and separate so the self-test can exercise it without a prompt.
+direct_url_problem() {
+  local url=$1
+  case $url in
+    *:6543/*|*:6543)
+      printf '%s' 'it is the transaction pooler on port 6543'
+      ;;
+    *pgbouncer=true*)
+      printf '%s' 'it carries pgbouncer=true, which marks a transaction pooler'
+      ;;
+  esac
+}
+
 ask_configuration() {
   cat <<'PROMPT'
     Nothing below is echoed except the addresses and domains.
@@ -441,7 +461,18 @@ ask_configuration() {
 PROMPT
 
   ask_secret "DATABASE_URL (the pooler on 6543, or the direct one if you have only one)" db_url
-  ask_secret "DIRECT_DATABASE_URL (5432 — the same value again if identical)" direct_url
+
+  # Asked until it is usable. A wrong answer here is only discovered at the migration, several
+  # minutes and one misleading error later.
+  local problem
+  while :; do
+    ask_secret "DIRECT_DATABASE_URL (session or direct, port 5432 — never 6543)" direct_url
+    problem=$(direct_url_problem "$direct_url")
+    [[ -z $problem ]] && break
+    warn "that cannot run migrations: $problem."
+    warn "use the *direct* connection, or the *session* pooler — both keep one backend per"
+    warn "connection, which is what CREATE TYPE needs. On Supabase both are on port 5432."
+  done
   ask_secret "SMTP_URL, e.g. smtps://user:pass@smtp.example.net:465" smtp_url
   ask "MAIL_FROM" mail_from "no-reply@avexpay.net"
   ask "OPERATOR_EMAIL — where critical alerts go" operator_email
@@ -744,9 +775,18 @@ migrate() {
   fi
 
   printf '%s\n' "$output" | tail -20
-  die "migrations failed. The usual cause is a pooled string in DIRECT_DATABASE_URL: CREATE TYPE
-       cannot run through a transaction pooler and fails looking like a syntax error in the
-       migration. Use the direct string on port 5432."
+  die "migrations failed. Two causes account for almost all of it.
+
+       A transaction pooler in DIRECT_DATABASE_URL: CREATE TYPE cannot run through one and fails
+       looking like a syntax error in the migration file. The prompt now refuses port 6543, so
+       this is only reachable by editing api.env by hand.
+
+       No route to the host: a Supabase project's *direct* endpoint resolves to IPv6 only unless
+       the IPv4 add-on is enabled, and a server without working outbound IPv6 cannot reach it —
+       the error is a timeout or 'network unreachable' rather than anything about addresses. The
+       fix is the *session* pooler on port 5432, which is reachable over IPv4 and, being session
+       mode, runs CREATE TYPE perfectly well. Check with:
+           curl -6 -sS --max-time 5 https://supabase.com >/dev/null && echo 'IPv6 works'"
 }
 
 PREFLIGHT_STATUS=0
@@ -1035,6 +1075,32 @@ selftest() {
       printf '%s\n' "$advisories" | sed 's/^/        /'
     else
       line "$unit" 'valid'
+    fi
+  done
+
+  # The one prompt whose wrong answer is expensive.
+  local case_url problem
+  for case_url in \
+    'postgres://u:p@aws-0-eu-central-1.pooler.supabase.com:6543/postgres' \
+    'postgres://u:p@host:5432/postgres?pgbouncer=true'; do
+    problem=$(direct_url_problem "$case_url")
+    if [[ -n $problem ]]; then
+      line 'a transaction pooler is refused for migrations' "${problem:0:44}"
+    else
+      line 'a transaction pooler is refused for migrations' 'NO — it would be accepted'
+      note_failure 'a transaction pooler would be accepted as DIRECT_DATABASE_URL'
+      failures=$(( failures + 1 ))
+    fi
+  done
+  for case_url in \
+    'postgres://u:p@db.abcdefgh.supabase.co:5432/postgres' \
+    'postgres://u:p@aws-0-eu-central-1.pooler.supabase.com:5432/postgres'; do
+    if [[ -z $(direct_url_problem "$case_url") ]]; then
+      line 'a session or direct string is accepted' "${case_url##*@}"
+    else
+      line 'a session or direct string is accepted' 'NO — it would be rejected'
+      note_failure 'a usable DIRECT_DATABASE_URL would be rejected'
+      failures=$(( failures + 1 ))
     fi
   done
 
