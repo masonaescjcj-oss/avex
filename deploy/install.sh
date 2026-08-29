@@ -136,6 +136,9 @@ usage: sudo bash deploy/install.sh [options]
   --check          Report what the host has and what would change. Changes nothing.
   --selftest       Generate the env file and the units into a temporary directory, validate
                    them, and delete them. Touches nothing real.
+  --check-db       Ask for the two connection strings and test them: connect, authenticate,
+                   and — for the migration string — create a type and roll it back. Writes
+                   nothing, keeps nothing, and needs no root.
   --reconfigure    Ask the configuration questions again, keeping the old api.env beside it.
   --repo URL       Where to clone from. Defaults to the AVEX repository.
   --branch NAME    Branch to check out. Defaults to main.
@@ -1172,12 +1175,58 @@ selftest() {
   printf '\n'
 }
 
+# ── the database, before anything depends on it ──────────────────────────────
+#
+# Separate from the install so it can be run first, and repeatedly, while a connection string is
+# still being worked out. Needs no root and writes nothing.
+#
+# Worth its own mode because "is the database reachable" is the question everything else waits on,
+# and the way it fails is not obvious: a transaction pooler answers `select 1` perfectly and then
+# cannot run a migration, and a Supabase direct endpoint on an IPv4-only host hangs rather than
+# refusing. Finding that out here costs seconds; finding it out at the migration costs an hour of
+# reading correct SQL.
+
+check_db() {
+  local probe="$REPO_ROOT/deploy/check-db.mjs"
+  [[ -f $probe ]] || die "cannot find $probe — run this from a checkout of the repository."
+  command -v node >/dev/null 2>&1 || die "node is needed for this check; install it first."
+  [[ -d $REPO_ROOT/node_modules/postgres ]] ||
+    die "the postgres driver is not installed. Run: cd $REPO_ROOT && npm ci --include=dev"
+
+  step "Database connection"
+  local pooled direct problem status=0
+
+  ask_secret "DATABASE_URL (transaction pooler, port 6543)" pooled
+  printf '\n'
+  ( cd "$REPO_ROOT" && node "$probe" pooled "$pooled" ) || status=1
+
+  printf '\n'
+  while :; do
+    ask_secret "DIRECT_DATABASE_URL (session or direct, port 5432 — never 6543)" direct
+    problem=$(direct_url_problem "$direct")
+    [[ -z $problem ]] && break
+    warn "that cannot run migrations: $problem."
+  done
+  printf '\n'
+  ( cd "$REPO_ROOT" && node "$probe" direct "$direct" ) || status=1
+
+  unset pooled direct
+  printf '\n'
+  if (( status == 0 )); then
+    info "${GREEN}both strings work.${R} Nothing was written — run the installer to use them."
+  else
+    warn "fix the above and run this again. Nothing was written."
+  fi
+  return "$status"
+}
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 main() {
   while [[ $# -gt 0 ]]; do
     case $1 in
       --check)       MODE=check; shift ;;
+      --check-db)    MODE=check-db; shift ;;
       --selftest)    MODE=selftest; shift ;;
       --reconfigure) MODE=reconfigure; shift ;;
       --repo)        REPO=${2:?--repo needs a URL}; shift 2 ;;
@@ -1192,6 +1241,11 @@ main() {
   if [[ $MODE == selftest ]]; then
     selftest
     exit 0
+  fi
+
+  if [[ $MODE == check-db ]]; then
+    check_db
+    exit $?
   fi
 
   [[ $EUID -eq 0 ]] ||
