@@ -193,6 +193,37 @@ existing_web_server() {
   done
 }
 
+# What the build needs, measured rather than guessed.
+#
+# `tsc -b` over this project peaks at about 573 MB of resident memory, and npm's own resolution
+# adds a few hundred more. That is fine on a spare host and not obviously fine on a 2 GB box that
+# is already running three applications and touching swap — which is the case this exists for.
+readonly BUILD_PEAK_MB=573
+
+# Available memory now, and whether the build is likely to fit in it.
+#
+# The danger is not a slow build. It is the kernel's OOM killer, which picks a victim by size and
+# may well pick somebody's production process rather than the compiler that caused the shortage.
+# So this reports the numbers and `sync_code` caps the compiler's heap, which turns a shortfall
+# into a failed build instead of a killed application.
+report_memory() {
+  command -v free >/dev/null 2>&1 || return 0
+
+  local available swap_free
+  available=$( free -m | awk '/^Mem:/ {print $7}' )
+  swap_free=$( free -m | awk '/^Swap:/ {print $4}' )
+  [[ -n $available ]] || return 0
+
+  info "memory: ${available}MB available, ${swap_free:-0}MB free swap"
+
+  if (( available < BUILD_PEAK_MB )); then
+    warn "the build peaks near ${BUILD_PEAK_MB}MB and only ${available}MB is available."
+    warn "it will lean on swap. The compiler's heap is capped so a shortfall fails the build"
+    warn "rather than letting the kernel pick one of this host's other processes to kill."
+  fi
+  return 0
+}
+
 # ── the host ─────────────────────────────────────────────────────────────────
 
 detect_host() {
@@ -223,9 +254,14 @@ report_neighbours() {
   [[ -n $server ]] && info "$server is running and already owns ports 80/443"
 
   if command -v pm2 >/dev/null 2>&1; then
-    pm2_apps=$(pm2 jlist 2>/dev/null | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | paste -sd', ' -)
+    # sort -u because `pm2 jlist` carries each name twice, once at the top level and once inside
+    # pm2_env, and the report read "trade-backend,trade-backend".
+    pm2_apps=$( pm2 jlist 2>/dev/null | grep -o '"name":"[^"]*"' | cut -d'"' -f4 |
+      sort -u | paste -sd', ' - )
     [[ -n $pm2_apps ]] && info "pm2 is running: $pm2_apps"
   fi
+
+  report_memory
 
   port_in_use 3000 && warn "something already listens on port 3000"
 
@@ -375,10 +411,20 @@ sync_code() {
   # --include=dev is load-bearing: the build runs tsc, a devDependency, and a host with
   # NODE_ENV=production set makes plain `npm ci` skip it. The failure then arrives as a missing
   # module rather than as anything about environments.
-  info "installing dependencies"
-  ( cd "$APP_DIR" && NODE_ENV=development npm ci --include=dev --silent )
+  # A capped heap for both, and the cap is the point rather than a tuning knob.
+  #
+  # Unbounded, node grows until the kernel intervenes, and the OOM killer chooses its victim by
+  # size across the whole host — so a compile that wanted one more hundred megabytes can end with
+  # somebody's unrelated production process dead and no message connecting the two. Capped, the
+  # same shortage is an "out of memory" from node, the build stops, and everything else on the
+  # host is untouched.
+  local heap_mb=$(( BUILD_PEAK_MB + 128 ))
+  info "installing dependencies (heap capped at ${heap_mb}MB)"
+  ( cd "$APP_DIR" && NODE_ENV=development NODE_OPTIONS="--max-old-space-size=$heap_mb" \
+      npm ci --include=dev --silent )
   info "building"
-  ( cd "$APP_DIR" && npm run build --workspace @avex/api --silent )
+  ( cd "$APP_DIR" && NODE_OPTIONS="--max-old-space-size=$heap_mb" \
+      npm run build --workspace @avex/api --silent )
   chown -R "$SERVICE_USER" "$APP_DIR"
 }
 
@@ -798,6 +844,50 @@ NEXT
 # bad directive fails at `systemctl start` with a message about the unit rather than about what is
 # wrong, and an environment file missing one key fails at boot inside zod.
 
+# Names of the checks that failed, so they are readable at the end instead of scrolled off.
+FAILED_CHECKS=()
+note_failure() { FAILED_CHECKS+=("$1"); }
+
+# What `systemd-analyze verify` says about a unit's *directives*, with the host-specific parts
+# neutralised first.
+#
+# Filtering the analyzer's complaints by message text was the previous approach and it was
+# fragile: the wording for an unresolvable user or a missing binary differs between systemd
+# versions, so a real finding on one host was filtered on another and a filtered artefact on one
+# was reported as a failure on the next. This instead verifies a copy in which the three things
+# that legitimately do not resolve yet are replaced by things that always do — the service user
+# does not exist until a later step, the working directory is created by that step, and node may
+# be anywhere. What is left is the syntax and the directive names, which is the whole point of
+# the check.
+#
+# `2>&1` and a captured variable, not a pipe: the analyzer exits non-zero whenever it has anything
+# to say, and under `set -o pipefail` a pipeline ending in `grep -q` inherits that, which is how
+# this check once reported every unit as valid including a deliberately broken one.
+verify_unit() {
+  local unit=$1 dir neutral
+  # A directory, because the copy has to keep a valid unit *name*: `systemd-analyze verify` will
+  # not look at a file whose name is not `<something>.service`, and refuses with "Failed to
+  # prepare filename … Invalid argument", which reads like a problem with the unit.
+  dir=$(mktemp -d)
+  neutral="$dir/$(basename "$unit")"
+
+  sed -e 's|^User=.*|User=root|' \
+      -e 's|^WorkingDirectory=.*|WorkingDirectory=/tmp|' \
+      -e 's|^ExecStart=.*|ExecStart=/bin/true|' \
+      -e '/^LoadCredential/d' \
+      "$unit" > "$neutral"
+
+  local output
+  output=$( systemd-analyze verify "$neutral" 2>&1 || true )
+  rm -rf "$dir"
+
+  # After=/Wants= targets are genuinely absent when verifying offline, and the temporary name is
+  # not a real unit name.
+  printf '%s' "$output" |
+    grep -vE 'Unit .* not found|Failed to (load|resolve) unit|not a valid unit name' |
+    grep -v '^[[:space:]]*$' || true
+}
+
 selftest() {
   local root failures=0
   root=$(mktemp -d)
@@ -836,7 +926,7 @@ selftest() {
       line "$check" 'present'
     else
       line "$check" 'MISSING'
-      failures=$(( failures + 1 ))
+      note_failure "a required key is missing from api.env"; failures=$(( failures + 1 ))
     fi
   done
 
@@ -862,7 +952,7 @@ selftest() {
     else
       line 'loadEnv on the generated file' 'REJECTED:'
       printf '%s\n' "$verdict" | sed 's/^/        /'
-      failures=$(( failures + 1 ))
+      note_failure "the generated api.env is rejected by loadEnv"; failures=$(( failures + 1 ))
     fi
   else
     line 'loadEnv on the generated file' 'skipped — build the API first to check this'
@@ -871,13 +961,13 @@ selftest() {
   local mode
   mode=$(stat -c '%a' "$ENV_FILE")
   if [[ $mode == 600 ]]; then line 'api.env mode' '0600'
-  else line 'api.env mode' "$mode, should be 600"; failures=$(( failures + 1 ))
+  else line 'api.env mode' "$mode, should be 600"; note_failure "api.env is not mode 0600"; failures=$(( failures + 1 ))
   fi
 
   if [[ $(grep -c "^MEMO_SECRET='.\{40,\}'" "$ENV_FILE") == 1 ]]; then
     line 'MEMO_SECRET' 'generated, long enough'
   else
-    line 'MEMO_SECRET' 'too short or missing'; failures=$(( failures + 1 ))
+    line 'MEMO_SECRET' 'too short or missing'; note_failure "MEMO_SECRET is too short"; failures=$(( failures + 1 ))
   fi
 
   # The bug this file used to have, asserted so it cannot come back.
@@ -896,7 +986,7 @@ selftest() {
   else
     line 'a password full of shell metacharacters' 'MANGLED OR EXECUTED:'
     printf '        got: %s\n' "$round_trip"
-    failures=$(( failures + 1 ))
+    note_failure "a shell metacharacter in a password is mangled"; failures=$(( failures + 1 ))
   fi
   smtp_url=$previous_smtp
   write_env_file
@@ -913,25 +1003,13 @@ selftest() {
       continue
     fi
 
-    # Captured into a variable rather than piped.
-    #
-    # `systemd-analyze verify` exits non-zero whenever it has anything to say, and with
-    # `pipefail` on, a pipeline ending in `grep -q` inherits that non-zero status even when the
-    # grep matched — so the check read as "valid" for every unit including a broken one. It did,
-    # until a deliberately bogus directive failed to be caught.
-    #
-    # Three complaints are artefacts of checking a unit somewhere other than the host it is for,
-    # and only these three are filtered: the target units of After=/Wants= are absent offline,
-    # node lives somewhere other than /usr/bin on a development machine, and the service user is
-    # created by this script's own earlier step. Everything else is a real finding.
     local complaints
-    complaints=$( systemd-analyze verify "$UNIT_DIR/$unit" 2>&1 |
-      grep -vE 'Unit .* not found|is not executable|Unknown user|User or group .* not found' |
-      grep -v '^[[:space:]]*$' || true )
+    complaints=$( verify_unit "$UNIT_DIR/$unit" )
 
     if [[ -n $complaints ]]; then
       line "$unit" 'systemd-analyze had complaints:'
       printf '%s\n' "$complaints" | sed 's/^/        /'
+      note_failure "$unit is not a valid unit"
       failures=$(( failures + 1 ))
     else
       line "$unit" 'valid'
@@ -948,7 +1026,7 @@ selftest() {
     line 'the chosen port reaches api.env' '3777'
   else
     line 'the chosen port reaches api.env' "NO: $(grep '^PORT=' "$ENV_FILE")"
-    failures=$(( failures + 1 ))
+    note_failure "the chosen port does not reach api.env"; failures=$(( failures + 1 ))
   fi
   API_PORT=3000
   write_env_file
@@ -960,7 +1038,7 @@ selftest() {
     line 'APP_URL reads back out of the quotes' "$read_back"
   else
     line 'APP_URL reads back out of the quotes' "NO: got '$read_back'"
-    failures=$(( failures + 1 ))
+    note_failure "APP_URL cannot be read back out of its quotes"; failures=$(( failures + 1 ))
   fi
 
   # An absolute ExecStart, asserted directly.
@@ -975,25 +1053,32 @@ selftest() {
     line 'ExecStart is an absolute path' "${exec_line#ExecStart=}"
   else
     line 'ExecStart is an absolute path' "NO: $exec_line"
-    failures=$(( failures + 1 ))
+    note_failure "ExecStart is not an absolute path"; failures=$(( failures + 1 ))
   fi
 
   # The one asymmetry that matters, asserted rather than assumed.
   if grep -q 'SETTLEMENT_KEY_FILE' "$UNIT_DIR/avex-watcher.service"; then
     line 'the watcher gets the key' 'yes'
   else
-    line 'the watcher gets the key' 'NO — it cannot settle'; failures=$(( failures + 1 ))
+    line 'the watcher gets the key' 'NO — it cannot settle'; note_failure "the watcher would not get the settlement key"; failures=$(( failures + 1 ))
   fi
   if grep -q 'SETTLEMENT_KEY_FILE' "$UNIT_DIR/avex-api.service"; then
     line 'the API is kept away from it' 'NO — it has the key and does not need it'
-    failures=$(( failures + 1 ))
+    note_failure "the API would be given the settlement key"; failures=$(( failures + 1 ))
   else
     line 'the API is kept away from it' 'yes'
   fi
 
   printf '\n'
   if (( failures )); then
-    die "$failures problem(s). Nothing real was touched."
+    # Listed again here, because on a long run the failing lines have scrolled off the top and
+    # "2 problem(s)" is not something anybody can act on.
+    printf '    %swhat failed:%s\n' "$B" "$R"
+    local failed
+    for failed in "${FAILED_CHECKS[@]}"; do
+      printf '      - %s\n' "$failed"
+    done
+    die "$failures problem(s) above. Nothing real was touched."
   fi
   info "${GREEN}everything the script generates is well-formed.${R} Nothing real was touched."
   printf '\n'
