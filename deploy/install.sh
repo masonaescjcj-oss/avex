@@ -881,12 +881,26 @@ verify_unit() {
   output=$( systemd-analyze verify "$neutral" 2>&1 || true )
   rm -rf "$dir"
 
-  # After=/Wants= targets are genuinely absent when verifying offline, and the temporary name is
-  # not a real unit name.
-  printf '%s' "$output" |
-    grep -vE 'Unit .* not found|Failed to (load|resolve) unit|not a valid unit name' |
-    grep -v '^[[:space:]]*$' || true
+  printf '%s' "$output" | grep -v '^[[:space:]]*$' || true
 }
+
+# The messages that mean the unit is actually wrong, as systemd words them.
+#
+# A positive list, and the inversion matters. Filtering out the artefacts and failing on whatever
+# was left made every unrecognised message fatal — so a newer systemd saying something new about a
+# perfectly good unit blocked the install, which is what happened on 259 after 255 was silent. A
+# list of the defects we care about fails on those and treats anything else as advisory: worth
+# printing, not worth stopping for.
+#
+# These five cover every way a unit file can be wrong rather than merely unusual, and each was
+# taken from systemd's own output rather than guessed:
+#
+#   Unknown key name 'Bogus' in section 'Service', ignoring.
+#   Unknown section 'Servce'. Ignoring.
+#   Failed to parse service restart specifier, ignoring: alwayss
+#   Unit b.service has a bad unit file setting.
+#   Service has no ExecStart=, ExecStop=, or SuccessAction=. Refusing.
+readonly UNIT_DEFECTS='Unknown key name|Unknown section|Failed to parse|bad unit file setting|Refusing'
 
 selftest() {
   local root failures=0
@@ -1003,14 +1017,22 @@ selftest() {
       continue
     fi
 
-    local complaints
+    local complaints defects advisories
     complaints=$( verify_unit "$UNIT_DIR/$unit" )
+    defects=$(    printf '%s' "$complaints" | grep -E  "$UNIT_DEFECTS" || true )
+    advisories=$( printf '%s' "$complaints" | grep -vE "$UNIT_DEFECTS" | grep -v '^$' || true )
 
-    if [[ -n $complaints ]]; then
-      line "$unit" 'systemd-analyze had complaints:'
-      printf '%s\n' "$complaints" | sed 's/^/        /'
-      note_failure "$unit is not a valid unit"
+    if [[ -n $defects ]]; then
+      line "$unit" 'has a real defect:'
+      printf '%s\n' "$defects" | sed 's/^/        /'
+      # The text goes in the ledger too, because on a long run this line scrolls off and a name
+      # alone is not something anybody can act on.
+      note_failure "$unit: $(printf '%s' "$defects" | head -1)"
       failures=$(( failures + 1 ))
+    elif [[ -n $advisories ]]; then
+      # This systemd has something to say that is not a defect. Said, not failed on.
+      line "$unit" 'valid, with notes from systemd:'
+      printf '%s\n' "$advisories" | sed 's/^/        /'
     else
       line "$unit" 'valid'
     fi
