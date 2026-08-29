@@ -45,13 +45,26 @@ readonly SERVICE_USER=avex
 readonly REPO_DEFAULT=https://github.com/masonaescjcj-oss/avex.git
 
 MODE=install
-BRANCH=main
-REPO="$REPO_DEFAULT"
 
 # Where this script lives, so --selftest can validate the generated configuration against the
 # real schema in this checkout rather than against a list of key names it might forget to update.
 SCRIPT_DIR=$( cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd )
 REPO_ROOT=$(dirname "$SCRIPT_DIR")
+
+# The branch and remote default to the ones this script was run from, not to main.
+#
+# `sync_code` moves $APP_DIR onto $BRANCH from $REPO, so a hardcoded default means running the
+# script out of a checkout of anything else silently replaces that code with main's — including
+# this script, so the next run would not even have the fix. Somebody who cloned a branch meant
+# that branch, and somebody who cloned a fork meant that fork.
+BRANCH=main
+REPO="$REPO_DEFAULT"
+if git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+  BRANCH=$( git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main )
+  # A detached HEAD names no branch; main is the honest fallback and --branch overrides it.
+  [[ $BRANCH == HEAD ]] && BRANCH=main
+  REPO=$( git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || echo "$REPO_DEFAULT" )
+fi
 
 # Filled by detect_host.
 SYSTEMD_VERSION=0
@@ -246,6 +259,8 @@ report_check() {
     "$( id -u "$SERVICE_USER" >/dev/null 2>&1 && echo 'exists' || echo 'would be created' )"
   line "$APP_DIR" \
     "$( [[ -d $APP_DIR/.git ]] && echo 'exists, would be updated' || echo 'would be cloned' )"
+  line "  from" "$REPO"
+  line "  branch" "$BRANCH"
   line "$ENV_FILE" \
     "$( [[ -f $ENV_FILE ]] && echo 'exists, would be left alone' || echo 'would be written' )"
   line "settlement key" \
@@ -343,6 +358,8 @@ ensure_user() {
 
 sync_code() {
   step "Code"
+
+  info "branch $BRANCH from $REPO"
 
   if [[ -d $APP_DIR/.git ]]; then
     info "updating $APP_DIR to $BRANCH"
