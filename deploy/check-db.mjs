@@ -62,8 +62,88 @@ const readable = (error) => {
   }
 };
 
+/**
+ * Whether the host can be reached at all, before a connection is attempted.
+ *
+ * This exists because of a real finding rather than a hypothetical. A Supabase project's *direct*
+ * endpoint — `db.<ref>.supabase.co` — publishes an AAAA record and no A record unless the IPv4
+ * add-on is bought. On a host with no outbound IPv6 that produces a ten-second silence and then
+ * `CONNECT_TIMEOUT`, which names neither IPv6 nor the add-on nor the fix, and which looks
+ * identical to a wrong password or a firewall.
+ *
+ * Resolving first turns that into a sentence. The pooler hostnames do publish A records, which is
+ * why the advice is to use the session pooler rather than to buy anything.
+ */
+async function reachability(hostname) {
+  const dns = await import('node:dns/promises');
+
+  /**
+   * `lookup`, not `resolve`.
+   *
+   * `dns.resolve` talks to the nameservers and ignores everything else the system knows, so it
+   * reports `localhost` as unresolvable — which it is, in DNS, and is not in any sense that
+   * matters. `lookup` goes through the same resolver the driver itself will use, including
+   * /etc/hosts, which makes its answer the one worth acting on.
+   */
+  let addresses;
+  try {
+    addresses = await dns.lookup(hostname, { all: true, verbatim: true });
+  } catch {
+    return { ok: false, why: 'unresolvable' };
+  }
+  if (addresses.length === 0) return { ok: false, why: 'unresolvable' };
+  if (addresses.some((entry) => entry.family === 4)) return { ok: true };
+
+  /**
+   * IPv6 only. Whether that is a problem depends on this machine, so it is measured rather than
+   * assumed: a host with working IPv6 reaches it fine and needs no warning.
+   */
+  const { createConnection } = await import('node:net');
+  const localIpv6 = await new Promise((resolve) => {
+    const socket = createConnection({ host: '2001:4860:4860::8888', port: 53, family: 6 });
+    const settle = (answer) => {
+      socket.destroy();
+      resolve(answer);
+    };
+    socket.setTimeout(4000);
+    socket.on('connect', () => settle(true));
+    socket.on('timeout', () => settle(false));
+    socket.on('error', () => settle(false));
+  });
+
+  return localIpv6 ? { ok: true } : { ok: false, why: 'ipv6-only' };
+}
+
 let sql;
 let failed = false;
+
+const hostname = (() => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+})();
+
+if (hostname) {
+  const reach = await reachability(hostname);
+  if (reach.why === 'ipv6-only') {
+    say('FAILED', `${where} publishes no IPv4 address, and this host has no working IPv6.`);
+    say('', 'This is the Supabase *direct* endpoint. It is IPv6-only unless the IPv4 add-on is');
+    say('', 'enabled on the project, so nothing here can reach it — the connection would sit');
+    say('', 'silent for ten seconds and then time out, saying nothing about addresses.');
+    say('', '');
+    say('', 'Use the SESSION POOLER instead. In the dashboard:');
+    say('', '  Project Settings -> Database -> Connection string -> Session pooler');
+    say('', 'Its hostname looks like aws-N-<region>.pooler.supabase.com and it does publish');
+    say('', 'IPv4. Being session mode, it runs CREATE TYPE, so migrations work through it.');
+    process.exit(1);
+  }
+  if (reach.why === 'unresolvable') {
+    say('FAILED', `${where} does not resolve at all — check the hostname against the dashboard.`);
+    process.exit(1);
+  }
+}
 
 try {
   /**
