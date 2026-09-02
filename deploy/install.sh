@@ -429,6 +429,32 @@ sync_code() {
   ( cd "$APP_DIR" && NODE_OPTIONS="--max-old-space-size=$heap_mb" \
       npm run build --workspace @avex/api --silent )
   chown -R "$SERVICE_USER" "$APP_DIR"
+  write_build_stamp
+}
+
+# Record which commit this build came from, for /health to report.
+#
+# Written here, on every run, because the question it answers is "did my update actually
+# take" — and until this existed the answer needed SSH and `git log`. Two builds of the API
+# are otherwise indistinguishable from outside: most releases change no route and no
+# response shape, so a page redeployed against a server that silently kept serving the old
+# build looks exactly like a bug in the page.
+#
+# Not a secret, so 0644. It names a commit of a private repository and the time it was
+# built, which is what an operator needs and nothing an outsider can act on.
+write_build_stamp() {
+  local commit branch
+  commit=$(git -C "$APP_DIR" rev-parse --short=12 HEAD)
+  branch=$(git -C "$APP_DIR" rev-parse --abbrev-ref HEAD)
+
+  mkdir -p "$CONF_DIR"
+  cat > "$CONF_DIR/build" <<STAMP
+commit=$commit
+branch=$branch
+built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+STAMP
+  chmod 0644 "$CONF_DIR/build"
+  info "stamped $CONF_DIR/build with $commit"
 }
 
 # ── configuration ────────────────────────────────────────────────────────────
@@ -1212,6 +1238,25 @@ selftest() {
     note_failure "the API would be given the settlement key"; failures=$(( failures + 1 ))
   else
     line 'the API is kept away from it' 'yes'
+  fi
+
+  # The build stamp, generated from this checkout rather than from a clone the self-test has
+  # no network for. What is being checked is the shape: the API reads it with a pattern, and a
+  # stamp it cannot parse reports as no stamp at all — which is the failure that would leave
+  # somebody back to guessing which build is live.
+  APP_DIR=$REPO_ROOT write_build_stamp >/dev/null
+  local stamp="$CONF_DIR/build"
+  if grep -qE '^commit=[0-9a-f]{7,40}$' "$stamp"; then
+    line 'the build stamp names a commit' "$(sed -n 's/^commit=//p' "$stamp")"
+  else
+    line 'the build stamp names a commit' 'NO — /health could not report a build'
+    note_failure "the build stamp is not in the form the API parses"; failures=$(( failures + 1 ))
+  fi
+  if grep -qE '^built=[0-9]{4}-[0-9]{2}-[0-9]{2}T' "$stamp"; then
+    line 'and when it was built' "$(sed -n 's/^built=//p' "$stamp")"
+  else
+    line 'and when it was built' 'NO'
+    note_failure "the build stamp has no build time"; failures=$(( failures + 1 ))
   fi
 
   printf '\n'

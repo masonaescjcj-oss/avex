@@ -881,10 +881,13 @@
   const API = (document.querySelector('meta[name="avex-api"]')?.content ?? '').replace(/\/$/, '');
 
   class ApiError extends Error {
-    constructor(status, code, message) {
+    constructor(status, code, message, path, requestId) {
       super(message);
       this.status = status;
       this.code = code;
+      /** Which call failed, and the API's own reference for it. Only useful on a 500. */
+      this.path = path;
+      this.requestId = requestId;
     }
   }
 
@@ -903,7 +906,13 @@
     if (response.status === 204) return null;
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new ApiError(response.status, body.error ?? String(response.status), body.message ?? 'Request failed.');
+      throw new ApiError(
+        response.status,
+        body.error ?? String(response.status),
+        body.message ?? 'Request failed.',
+        path,
+        body.requestId ?? null,
+      );
     }
     return body;
   }
@@ -932,7 +941,25 @@
    * nothing to click.
    */
   function reportProblem(problem) {
-    flash(problem.message, 'error');
+    /**
+     * A 500 is the one refusal whose cause is deliberately not in the message, so the
+     * message alone is not a report anybody can act on: it named neither the call that
+     * failed nor anything to search a log for. A real one arrived that way — eight
+     * requests on the page, and "something went wrong" said nothing about which.
+     *
+     * So a server error is reported with the endpoint and the API's own request id, which
+     * is on the log line for it.
+     */
+    const reference =
+      problem.status >= 500
+        ? ' (' +
+          problem.status +
+          ' on ' +
+          problem.path +
+          (problem.requestId ? ' — reference ' + problem.requestId : '') +
+          ')'
+        : '';
+    flash(problem.message + reference, 'error');
     const code = problem && problem.code;
     if (code === 'two_factor_required' || code === 'elevation_required' || code === 'mfa_required') {
       show('security');
@@ -2403,17 +2430,18 @@
        * The one refusal worth explaining here: replacing an authenticator takes the
        * authenticator it replaces, and this session has not shown a code. The panel that
        * takes one is already on this page, so point at it rather than restating the error.
+       *
+       * Everything else goes through the common reporter, which is what puts a reference
+       * on a 500 — the failure that would otherwise be reported as "it says something
+       * went wrong" with nothing to look up.
        */
-      flash(
-        problem.code === 'mfa_required'
-          ? 'Enter a code from the app you have now, below, before setting up a new one.'
-          : problem.message,
-        'error',
-      );
       if (problem.code === 'mfa_required') {
+        flash('Enter a code from the app you have now, below, before setting up a new one.', 'error');
         cache.me = { ...(cache.me || {}), totpEnabled: true, mfaComplete: false };
         renderSecurity();
         el('elevate-code').focus();
+      } else {
+        reportProblem(problem);
       }
     } finally {
       button.disabled = false;

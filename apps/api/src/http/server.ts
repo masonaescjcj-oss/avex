@@ -9,6 +9,7 @@ import type { PayoutAddressService } from '../domain/payout-service.js';
 import type { InviteService } from '../domain/invite-service.js';
 import type { MembershipService } from '../domain/membership-service.js';
 import { assetErrorResponse } from './routes/assets.js';
+import { readBuildStamp } from '../build-stamp.js';
 import { timingSafeEqual } from 'node:crypto';
 
 import Fastify from 'fastify';
@@ -508,13 +509,38 @@ export function buildServer(context: AppContext): FastifyInstance {
       });
     }
 
+    /**
+     * The one error whose cause is only ever in the log — and the log is on a box the
+     * person reading the message may not have.
+     *
+     * So the reply carries the request id Fastify already puts on the log line. "Something
+     * went wrong" is then something an operator can act on: one `journalctl -u avex-api |
+     * grep <id>` and the stack is in front of them. It reveals nothing — an incrementing
+     * per-process counter — and it is the difference between a five-minute diagnosis and
+     * an afternoon of guessing which request failed.
+     */
     request.log.error({ err: error }, 'unhandled error');
-    return reply
-      .status(500)
-      .send({ error: 'internal_error', message: 'Something went wrong on our side.' });
+    return reply.status(500).send({
+      error: 'internal_error',
+      message: 'Something went wrong on our side.',
+      requestId: request.id,
+    });
   });
 
-  app.get('/health', async () => ({ status: 'ok' }));
+  /**
+   * Health, and which build is answering.
+   *
+   * The build is read once here rather than per request — it cannot change without the
+   * process restarting — and is absent rather than empty when there is no stamp, so a
+   * deployment that predates the installer writing one still answers `{ status: 'ok' }`
+   * exactly as before.
+   *
+   * It is on the public health check on purpose. Without it, two builds of this API are
+   * indistinguishable from outside: the surface does not change between most releases, so
+   * "did my update actually take" had no answer short of `git log` over SSH.
+   */
+  const build = readBuildStamp(context.env.BUILD_STAMP_FILE);
+  app.get('/health', async () => (build === null ? { status: 'ok' } : { status: 'ok', build }));
 
   /**
    * Run the background jobs, for a deployment that has no process to hold timers in.

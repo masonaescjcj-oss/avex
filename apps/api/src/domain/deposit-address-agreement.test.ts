@@ -31,6 +31,7 @@ const BASE: Env = {
   DATABASE_PREPARE: undefined,
   DIRECT_DATABASE_URL: undefined,
   CRON_SECRET: undefined,
+  BUILD_STAMP_FILE: '/nonexistent/avex/build',
   RUN_JOBS_IN_PROCESS: true,
   APP_URL: 'https://avexpay.net',
   SESSION_TTL_HOURS: 336,

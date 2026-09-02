@@ -1948,6 +1948,36 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
+  test('a server error is reported with something an operator can search for', async () => {
+    /**
+     * The failure this exists for: the API answers 500 with "Something went wrong on our
+     * side" — correctly saying nothing about the cause — and the page used to show that
+     * alone. Which of the calls on the page failed, and what to grep the journal for, were
+     * both missing, so the report that came back was unactionable.
+     */
+    const { page, context } = await open({
+      enroll: {
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: 'internal_error',
+          message: 'Something went wrong on our side.',
+          requestId: 'req-42',
+        }),
+      },
+    });
+    await openSecurity(page);
+    await page.click('#totp-begin');
+    await page.waitForTimeout(250);
+
+    const message = await text(page, '#flash');
+    assert.match(message, /Something went wrong on our side/);
+    assert.match(message, /500/);
+    assert.match(message, /totp\/enroll/, message);
+    assert.match(message, /req-42/, message);
+    await context.close();
+  });
+
   test('the checklist names two-factor, before the payout address it gates', async () => {
     const { page, context } = await open();
     const titles = await all(page, '#checklist .check-title');

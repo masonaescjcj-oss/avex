@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
 import type { FastifyInstance } from 'fastify';
@@ -180,6 +183,13 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     },
   });
 
+  /** A build stamp for this suite, so `/health` has a known one to report. */
+  const buildStampFile = join(mkdtempSync(join(tmpdir(), 'avex-stamp-')), 'build');
+  writeFileSync(
+    buildStampFile,
+    'commit=abcdef1234\nbranch=test-branch\nbuilt=2026-09-02T00:00:00Z\n',
+  );
+
   before(async () => {
     const env = loadEnv({
       ...process.env,
@@ -187,6 +197,9 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
       DATABASE_URL: databaseUrl!,
       // Room for the many requests this suite makes from one address.
       RATE_LIMIT_PER_MINUTE: '10000',
+      // A stamp of its own, so what `/health` reports does not depend on whether the
+      // machine running the tests happens to be a deployed one.
+      BUILD_STAMP_FILE: buildStampFile,
     });
 
     const database = createDatabase(env.DATABASE_URL);
@@ -257,10 +270,18 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
   let sessionToken: string;
   let totpSecret: string;
 
-  test('health is public', async () => {
+  test('health is public, and says which build is answering', async () => {
     const response = await app.inject({ method: 'GET', url: '/health' });
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { status: 'ok' });
+    /**
+     * The build, because two builds of this API are otherwise indistinguishable from
+     * outside — the surface does not change between most releases, so "did my update
+     * take" had no answer that did not need SSH.
+     */
+    assert.deepEqual(response.json(), {
+      status: 'ok',
+      build: { commit: 'abcdef1234', branch: 'test-branch', built: '2026-09-02T00:00:00Z' },
+    });
   });
 
   test('anonymous requests to protected routes are refused', async () => {

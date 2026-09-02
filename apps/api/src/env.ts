@@ -1,3 +1,4 @@
+import { DEFAULT_BUILD_STAMP_FILE } from './build-stamp.js';
 import { z } from 'zod';
 
 /**
@@ -184,6 +185,16 @@ const schema = z.object({
    * settlement startup says out loud.
    */
   OPERATOR_EMAIL: z.string().email().optional(),
+
+  /**
+   * Where the installer records which commit it built, for `/health` to report.
+   *
+   * A default rather than a required setting, so an existing deployment picks this up
+   * without its `api.env` being touched — that file holds secrets and is deliberately
+   * never rewritten by an update. A missing file is not an error: `/health` then answers
+   * exactly as it did before, without a build.
+   */
+  BUILD_STAMP_FILE: z.string().default(DEFAULT_BUILD_STAMP_FILE),
 
   /** One wallet per shared-address chain, as `chain=address`. TON today. */
   SHARED_DEPOSIT_WALLETS: z.string().default('').transform(parsePairs),
