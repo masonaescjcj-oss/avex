@@ -87,10 +87,28 @@ export function compose(options: ComposeOptions): Composed {
   const warn = options.warn ?? ((message: string) => console.warn(message));
 
   const audit = new AuditService(db);
-  const auth = new AuthService(db, audit, {
-    sessionTtlMs: env.SESSION_TTL_HOURS * 60 * 60 * 1000,
-    emailTokenTtlMs: env.EMAIL_TOKEN_TTL_MINUTES * 60 * 1000,
-  });
+  const auth = new AuthService(
+    db,
+    audit,
+    {
+      sessionTtlMs: env.SESSION_TTL_HOURS * 60 * 60 * 1000,
+      emailTokenTtlMs: env.EMAIL_TOKEN_TTL_MINUTES * 60 * 1000,
+    },
+    /**
+     * What a new organisation needs before it is usable: a fee plan.
+     *
+     * Without one a merchant cannot be quoted a rate, so cannot be given a deposit address, so
+     * cannot take a payment — and nothing created one, so that was every merchant who ever
+     * signed up. `ensureForOrganization` was called from thirty-four places and all of them
+     * were tests.
+     *
+     * A closure rather than a direct reference because `feePlans` is constructed further down.
+     * That is safe for the reason that matters: this runs when somebody signs up, long after
+     * `compose` has returned, so the binding is initialised by the time it is read. Moving the
+     * two lines together would work as well and would reorder a graph that has its own reasons.
+     */
+    (tx, organizationId) => feePlans.ensureForOrganization(organizationId, new Date(), tx).then(),
+  );
 
   const prices = new PriceService(
     createPriceSources(env.PRICE_SOURCES),

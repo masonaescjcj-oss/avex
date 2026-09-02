@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import { and, eq, isNull } from 'drizzle-orm';
 
-import type { Database } from '../db/client.js';
+import type { Database, Transaction } from '../db/client.js';
 import {
   emailTokens,
   memberships,
@@ -84,6 +84,25 @@ export class AuthService {
     private readonly db: Database,
     private readonly audit: AuditService,
     private readonly options: AuthServiceOptions,
+    /**
+     * Everything else a new organisation needs, run inside the transaction that creates it.
+     *
+     * A hook rather than a fee-plan dependency, because what belongs here is "the rest of what
+     * makes an organisation usable" and this file has no business knowing that a commission rate
+     * is one of those things.
+     *
+     * Required, with no default, and that is the whole point. The first version of this made it
+     * optional with a no-op default so a test could construct an `AuthService` alone — and the
+     * test that was written to prove the fix then failed, because the test's own graph silently
+     * got the no-op. An optional default that quietly does nothing is precisely the shape that
+     * produced the bug this closes: a capability that exists, compiles, and is wired nowhere.
+     * Required makes every construction site state its answer, and makes forgetting a type
+     * error rather than a merchant who cannot be paid.
+     */
+    private readonly onOrganizationCreated: (
+      tx: Transaction,
+      organizationId: string,
+    ) => Promise<void>,
   ) {}
 
   /**
@@ -134,6 +153,16 @@ export class AuthService {
         purpose: 'verify_email',
         expiresAt: new Date(Date.now() + this.options.emailTokenTtlMs),
       });
+
+      /**
+       * The organisation is not usable until this has run, so it runs here.
+       *
+       * A merchant with no fee plan cannot be quoted a rate, which means they cannot be given a
+       * deposit address, which means they cannot take a payment — and until this call existed
+       * that was every merchant who ever signed up. Inside the transaction so the two either
+       * both exist or neither does.
+       */
+      await this.onOrganizationCreated(tx, organization!.id);
 
       return { userId: user!.id, organizationId: organization!.id };
     });

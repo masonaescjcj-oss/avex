@@ -3,7 +3,7 @@ import type { ChainId } from '@avex/core';
 import type { FeePayer } from '@avex/core';
 import { and, count, eq, gte, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
 
-import type { Database } from '../db/client.js';
+import type { Database, Transaction } from '../db/client.js';
 import { feePlans, invoices, payments } from '../db/schema.js';
 import type { AuditService } from './audit.js';
 import { recoveryBpsFor } from './commission-ledger.js';
@@ -644,16 +644,33 @@ export class FeePlanService {
    * Idempotent, because signup can be retried and two plans for one merchant would mean
    * two answers to "what do they pay". The unique index enforces it; this returns the
    * existing row rather than surfacing a constraint error to a signup form.
+   *
+   * ## Takes a transaction, and that is the point
+   *
+   * For a long time this was called from thirty-four places, every one of them a test. Nothing
+   * in production created a plan at all — so every merchant who signed up had none, their
+   * "take a payment" page failed with `No fee plan for this merchant`, and `setFeeBps` could
+   * only *update* a row that was never inserted, which left no way to fix it through any
+   * interface. A gateway that could not take a payment on any chain, for any merchant.
+   *
+   * It is called from the signup transaction now, which is why `tx` exists: an organisation and
+   * its plan have to appear together or not at all. Committing the organisation and then failing
+   * to add the plan would recreate exactly the state above, and the second half would be the
+   * easiest thing in the world to lose to a restart.
    */
-  async ensureForOrganization(organizationId: string, now: Date = new Date()) {
-    const [existing] = await this.db
+  async ensureForOrganization(
+    organizationId: string,
+    now: Date = new Date(),
+    tx: Database | Transaction = this.db,
+  ) {
+    const [existing] = await tx
       .select()
       .from(feePlans)
       .where(eq(feePlans.organizationId, organizationId))
       .limit(1);
     if (existing) return existing;
 
-    const [created] = await this.db
+    const [created] = await tx
       .insert(feePlans)
       .values({
         organizationId,

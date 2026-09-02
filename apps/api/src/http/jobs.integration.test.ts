@@ -31,6 +31,17 @@ import { ConsoleMailer } from '../mailer.js';
 import { buildServer } from './server.js';
 
 /**
+ * The signup hook, for tests that are not about fee plans.
+ *
+ * Explicit rather than defaulted. `AuthService` requires this argument precisely because an
+ * optional no-op is how a merchant ended up with no fee plan, no rate, no deposit address and no
+ * way to be paid — a capability wired nowhere. Stating the answer is a decision; a default would
+ * be an oversight waiting to happen again.
+ */
+const noFeePlanNeeded = async (_tx: unknown, _organizationId: string): Promise<void> => {};
+
+
+/**
  * The hook a scheduler calls when there is no process to hold timers in.
  *
  * It exists so the background jobs can run on a deployment that scales to zero, and it is
@@ -122,7 +133,12 @@ function boot(
     payouts: new PayoutAddressService(db, audit, mailer),
     invites: new InviteService(db, audit),
     memberships: new MembershipService(db, audit, mailer),
-    auth: new AuthService(db, audit, { sessionTtlMs: 3_600_000, emailTokenTtlMs: 3_600_000 }),
+    auth: new AuthService(
+      db,
+      audit,
+      { sessionTtlMs: 3_600_000, emailTokenTtlMs: 3_600_000 },
+      noFeePlanNeeded,
+    ),
     staffAuth: new StaffAuthService(db, audit),
     settlements,
     reconciliation,

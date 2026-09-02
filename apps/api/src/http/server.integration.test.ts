@@ -46,6 +46,17 @@ import { ConsoleMailer } from '../mailer.js';
 import { buildServer } from './server.js';
 
 /**
+ * The signup hook, for tests that are not about fee plans.
+ *
+ * Explicit rather than defaulted. `AuthService` requires this argument precisely because an
+ * optional no-op is how a merchant ended up with no fee plan, no rate, no deposit address and no
+ * way to be paid — a capability wired nowhere. Stating the answer is a decision; a default would
+ * be an oversight waiting to happen again.
+ */
+const noFeePlanNeeded = async (_tx: unknown, _organizationId: string): Promise<void> => {};
+
+
+/**
  * End-to-end exercise of Phase 1 against a real Postgres.
  *
  * Skipped when DATABASE_URL is unset so the unit suite stays runnable anywhere.
@@ -184,6 +195,12 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     const audit = new AuditService(database.db);
     mailer = new ConsoleMailer(env.APP_URL, () => {});
 
+    /**
+     * Built before the server, so the signup hook can reach the same fee-plan service the rest
+     * of the graph uses. Spread in below, where it used to be constructed inline.
+     */
+    const invoicing = invoiceServices(database.db, audit, priceStub);
+
     app = buildServer({
       ledger: new CommissionLedger(database.db),
       walletPool: new WalletPoolService(database.db),
@@ -207,14 +224,21 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
         [fakeSource('fake-a'), fakeSource('fake-b')],
         { aggregation: DEFAULT_AGGREGATION, breaker: DEFAULT_BREAKER, cacheTtlMs: 10_000 },
       ),
-      auth: new AuthService(database.db, audit, {
-        sessionTtlMs: 60 * 60 * 1000,
-        emailTokenTtlMs: 60 * 60 * 1000,
-      }),
+      /**
+       * The real hook, not the no-op, because this block's tests assert that a merchant has a
+       * fee plan the moment they sign up.
+       */
+      auth: new AuthService(
+        database.db,
+        audit,
+        { sessionTtlMs: 60 * 60 * 1000, emailTokenTtlMs: 60 * 60 * 1000 },
+        (tx, organizationId) =>
+          invoicing.feePlans.ensureForOrganization(organizationId, new Date(), tx).then(),
+      ),
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
-      ...invoiceServices(database.db, audit, priceStub),
+      ...invoicing,
       // Deliveries go nowhere in these harnesses; the webhook suite has its own.
       webhooks: new WebhookService(
         database.db,
@@ -362,6 +386,39 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     const [organization] = orgs.json().data;
     assert.equal(organization.id, organizationId);
     assert.equal(organization.role, 'owner');
+  });
+
+  test('signup gave the organization a fee plan, in the same transaction', async () => {
+    /**
+     * The gap this closes was total. `ensureForOrganization` existed, was idempotent, and its
+     * own comment said it was for signup — and it was called from thirty-four places, every one
+     * of them a test. So every merchant who signed up had no fee plan, which means no rate,
+     * which means no deposit address, which means no payment on any chain. Their dashboard said
+     * `No fee plan for this merchant.`, and `POST /admin/commission/:orgId` could only *update*
+     * a row nothing ever inserted, so there was no way to repair it through any interface.
+     *
+     * Asserted through the HTTP surface a merchant actually reaches. What broke was the wiring,
+     * and a unit test of the service passed the whole time it was broken.
+     */
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${organizationId}/commission`,
+      headers: asOwner(),
+    });
+
+    assert.equal(
+      response.statusCode,
+      200,
+      `a merchant must have a fee plan the moment they exist: ${response.body}`,
+    );
+    const { commission } = response.json();
+    assert.equal(typeof commission.feeBps, 'number', 'the plan should carry a rate');
+    assert.ok(
+      commission.feeBps >= 0 && commission.feeBps <= 500,
+      `a rate the forwarder cannot deliver: ${commission.feeBps}bps`,
+    );
+    // Entry rate, not negotiated: nobody has touched it yet.
+    assert.equal(commission.negotiated, false);
   });
 
   test('a garbage bearer token is rejected', async () => {
@@ -686,7 +743,7 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
       auth: new AuthService(database.db, audit, {
         sessionTtlMs: 60 * 60 * 1000,
         emailTokenTtlMs: 60 * 60 * 1000,
-      }),
+      }, noFeePlanNeeded),
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
@@ -878,7 +935,7 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
       auth: new AuthService(database.db, audit, {
         sessionTtlMs: 60 * 60 * 1000,
         emailTokenTtlMs: 60 * 60 * 1000,
-      }),
+      }, noFeePlanNeeded),
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
@@ -1189,7 +1246,7 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
       auth: new AuthService(database.db, audit, {
         sessionTtlMs: 60 * 60 * 1000,
         emailTokenTtlMs: 60 * 60 * 1000,
-      }),
+      }, noFeePlanNeeded),
       staffAuth: new StaffAuthService(database.db, audit),
       ...adminServices(database.db, audit),
       merchant: new MerchantService(database.db),
