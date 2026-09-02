@@ -92,9 +92,38 @@ test('totpUri carries the parameters an authenticator app needs', () => {
   assert.ok(uri.startsWith('otpauth://totp/'));
   const params = new URL(uri).searchParams;
   assert.equal(params.get('secret'), secret);
-  assert.equal(params.get('algorithm'), 'SHA1');
-  assert.equal(params.get('digits'), '6');
-  assert.equal(params.get('period'), '30');
+  assert.equal(params.get('issuer'), 'AVEX Pay');
+  // The account address belongs in the label, or an authenticator lists two accounts
+  // under one name and the person enrolling cannot tell which is which.
+  assert.ok(uri.includes(encodeURIComponent('merchant@example.com')), uri);
+
+  /**
+   * And nothing else. Spelling out the defaults is 34 bytes, and this URI has to fit a
+   * QR: the encoder stops at version 6, so a longer URI means a merchant with no QR to
+   * scan. Anything added here has to be paid for out of that budget.
+   */
+  assert.deepEqual([...params.keys()].sort(), ['issuer', 'secret']);
+});
+
+test('an enrolment URI fits the QR encoder for a realistic address', () => {
+  /**
+   * The budget, pinned. 134 bytes is what QR version 6 holds at error correction level
+   * L, which is the largest symbol `@avex/qr` produces — past it the security page has
+   * no QR on it and a merchant is typing 32 base32 characters by hand.
+   *
+   * Checked here rather than in the page because this is where the length is decided.
+   */
+  const secret = generateTotpSecret();
+  for (const email of [
+    'admin@avexpay.net',
+    'merchant@a-fairly-long-shop-name.example.com',
+  ]) {
+    const uri = totpUri(secret, email);
+    assert.ok(
+      Buffer.byteLength(uri, 'utf8') <= 134,
+      `${email} produces ${Buffer.byteLength(uri, 'utf8')} bytes: ${uri}`,
+    );
+  }
 });
 
 test('recovery codes are distinct and consistently formatted', () => {

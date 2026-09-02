@@ -9,5 +9,7 @@
     "typecheck": "tsc -b --dry",
     "test": "npm run build && node --test \"dist/**/*.test.js\" \"test/*.test.mjs\""
   },
-  "dependencies": {}
+  "dependencies": {
+    "@avex/qr": "*"
+  }
 }

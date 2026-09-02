@@ -28,6 +28,14 @@ const MODULES = [
    * copy that would go stale.
    */
   join(here, '..', '..', 'packages', 'core', 'dist', 'chains', 'registry.js'),
+  /**
+   * The QR encoder, for the authenticator secret on the security tab.
+   *
+   * Named here for the same reason the two registries are: the page is one self-contained
+   * file, so what it uses has to be concatenated into it. It is the checkout's encoder —
+   * the one with the codeword tables under test — not a second copy.
+   */
+  join(here, '..', '..', 'packages', 'qr', 'dist', 'index.js'),
   join(here, 'dist', 'dashboard.js'),
   join(here, 'dist', 'preview.js'),
 ];

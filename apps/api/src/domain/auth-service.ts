@@ -326,13 +326,20 @@ export class AuthService {
     };
   }
 
-  /** Begin enrolment. The secret is not active until `confirmTotp` succeeds. */
+  /**
+   * Begin enrolment. The secret waits in `totpPendingSecret` until a code proves it.
+   *
+   * Kept apart from the live secret so that beginning an enrolment cannot break the
+   * authenticator somebody is already using. Writing straight to `totpSecret` — which is
+   * what this did — meant that anybody moving to a new phone lost the old one the instant
+   * they asked for a new secret, and lost the account too if they then closed the tab.
+   */
   async beginTotpEnrollment(
     userId: string,
     email: string,
   ): Promise<{ secret: string; uri: string }> {
     const secret = generateTotpSecret();
-    await this.db.update(users).set({ totpSecret: secret }).where(eq(users.id, userId));
+    await this.db.update(users).set({ totpPendingSecret: secret }).where(eq(users.id, userId));
     return { secret, uri: totpUri(secret, email) };
   }
 
@@ -346,14 +353,21 @@ export class AuthService {
     context: RequestContext = {},
   ): Promise<string[] | null> {
     const [user] = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
-    if (!user?.totpSecret) return null;
-    if (!verifyTotp(user.totpSecret, code)) return null;
+    // The pending secret, and only it: a code from the authenticator being replaced must
+    // not confirm the enrolment that replaces it.
+    if (!user?.totpPendingSecret) return null;
+    if (!verifyTotp(user.totpPendingSecret, code)) return null;
 
     const codes = generateRecoveryCodes();
     const now = new Date();
 
     await this.db.transaction(async (tx) => {
-      await tx.update(users).set({ totpEnabledAt: now }).where(eq(users.id, userId));
+      // Proven, so it becomes the live secret and stops being pending. Leaving it in both
+      // places would let a later abandoned enrolment be confirmed by this same phone.
+      await tx
+        .update(users)
+        .set({ totpSecret: user.totpPendingSecret, totpPendingSecret: null, totpEnabledAt: now })
+        .where(eq(users.id, userId));
       // Replace any codes from a previous enrolment.
       await tx.delete(recoveryCodes).where(eq(recoveryCodes.userId, userId));
       await tx

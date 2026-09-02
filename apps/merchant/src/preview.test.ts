@@ -33,11 +33,28 @@ describe('the preview router', () => {
       ['GET', '/v1/organizations/preview-org/api-keys'],
       ['GET', '/v1/organizations/preview-org/invoices?limit=50'],
       ['POST', '/v1/organizations/preview-org/checkouts'],
+      ['POST', '/v1/auth/totp/enroll'],
+      ['POST', '/v1/auth/totp/confirm'],
+      ['POST', '/v1/auth/mfa'],
+      ['POST', '/v1/auth/sessions/revoke-others'],
     ];
 
     for (const [method, path] of calls) {
       assert.ok(matchPreview(method, path, routes) !== null, `${method} ${path} is unanswered`);
     }
+  });
+
+  test('the enrolment fixture is a URI the page can draw', () => {
+    /**
+     * The preview's QR is drawn by the real encoder, which refuses anything over 134
+     * bytes — so a fixture longer than that would show an empty frame and read as a
+     * broken panel rather than as a fixture problem.
+     */
+    const route = matchPreview('POST', '/v1/auth/totp/enroll', routes);
+    const body = route!.body as { secret: string; uri: string };
+    assert.ok(body.uri.startsWith('otpauth://totp/'), body.uri);
+    assert.ok(body.uri.includes(body.secret), 'the URI must carry the secret beside it');
+    assert.ok(Buffer.byteLength(body.uri, 'utf8') <= 134, `${body.uri.length} bytes`);
   });
 
   test('a request nothing covers is a miss, not a wrong answer', () => {

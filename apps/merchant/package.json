@@ -10,7 +10,8 @@
     "test": "npm run build && node --test \"dist/**/*.test.js\" \"test/*.test.mjs\""
   },
   "dependencies": {
-    "@avex/ui-format": "*",
-    "@avex/core": "*"
+    "@avex/core": "*",
+    "@avex/qr": "*",
+    "@avex/ui-format": "*"
   }
 }

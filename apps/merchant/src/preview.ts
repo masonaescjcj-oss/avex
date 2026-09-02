@@ -279,7 +279,62 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
   const ok = (body: unknown): PreviewRoute => ({ status: 200, body });
 
   return new Map<string, PreviewRoute>([
-    ['GET /v1/auth/me', ok({ email: 'you@example.com', userId: 'preview-user' })],
+    /**
+     * With the two flags the security tab reads. A fixture that left them out would leave
+     * the panel guessing, and the guess it makes for a missing `totpEnabled` is "off" —
+     * which is the state worth previewing anyway: the tab exists to be walked through by
+     * somebody who has not set an authenticator up yet.
+     */
+    [
+      'GET /v1/auth/me',
+      ok({
+        email: 'you@example.com',
+        userId: 'preview-user',
+        emailVerified: true,
+        totpEnabled: false,
+        mfaComplete: true,
+      }),
+    ],
+
+    /**
+     * Enrolment, both halves.
+     *
+     * A real secret and a real `otpauth://` URI, because the page draws the URI as a QR
+     * with the same encoder the checkout uses — a placeholder that did not encode would
+     * show an empty frame in the preview and look like a bug in the panel. The recovery
+     * codes are formatted like real ones for the same reason.
+     */
+    [
+      'POST /v1/auth/totp/enroll',
+      ok({
+        secret: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
+        uri:
+          'otpauth://totp/AVEX%20Pay:you%40example.com' +
+          '?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=AVEX+Pay',
+        status: 'pending_confirmation',
+      }),
+    ],
+    [
+      'POST /v1/auth/totp/confirm',
+      ok({
+        status: 'enabled',
+        recoveryCodes: [
+          'K7QW-2M4D-9XZP-4R6T',
+          'B3VH-8YNC-5JQK-7WLD',
+          'M9XT-4KRB-2PGF-6HSN',
+          'T5CQ-7WMJ-3ZDV-9YKB',
+          'R2NF-6HPL-8XSW-4MQT',
+          'V8JD-3RKG-7CNZ-2PWH',
+          'H4WS-9LQB-6MTV-3XKF',
+          'P6ZK-2CVN-4JHT-8WRQ',
+          'D9MQ-5XPW-7KBS-2VHL',
+          'W3TF-8QNJ-6RCK-9ZMP',
+        ],
+      }),
+    ],
+    /** 204 in the real thing, and the page reads nothing from it. */
+    ['POST /v1/auth/mfa', ok({ status: 'ok' })],
+    ['POST /v1/auth/sessions/revoke-others', { status: 204, body: null }],
 
     /**
      * The two calls that get somebody *in*, rather than the ones the dashboard makes once it

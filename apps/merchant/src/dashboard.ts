@@ -110,6 +110,8 @@ export interface SetupInput {
   readonly assetChains: readonly string[];
   readonly webhookEndpoints: number;
   readonly liveKeys: number;
+  /** Whether this account has a confirmed authenticator. */
+  readonly twoFactorEnabled: boolean;
 }
 
 /**
@@ -142,6 +144,23 @@ export function setupSteps(input: SetupInput): readonly SetupStep[] {
           : 'Choose which coins you accept. Nothing can be invoiced until at least one is enabled and approved.',
     },
     {
+      /**
+       * Before the payout address, because it is what the payout address needs.
+       *
+       * Adding one is elevation-gated, so an account with no authenticator is refused —
+       * and the refusal used to be the first a merchant heard of it, on a page with
+       * nowhere to go and fix it. Listing it here in the order the API refuses in is what
+       * makes the sequence followable.
+       */
+      id: 'two-factor',
+      title: 'Turn on two-factor authentication',
+      done: input.twoFactorEnabled,
+      why: input.twoFactorEnabled
+        ? 'An authenticator app is enrolled on this account.'
+        : 'Payout addresses, live keys and team changes all need it — they are the ' +
+          'requests that move money or grant access. Set it up on the Security tab.',
+    },
+    {
       id: 'payouts',
       title: 'Add a payout address for every chain',
       done: input.assetChains.length > 0 && uncovered.length === 0,
@@ -164,6 +183,65 @@ export function setupSteps(input: SetupInput): readonly SetupStep[] {
       why: 'Test keys cannot take real money, by design. You need a live key to go live.',
     },
   ];
+}
+
+/** What the security panel shows, given what the session knows about itself. */
+export interface SecurityView {
+  /** One line naming the state, for the panel head. */
+  readonly headline: string;
+  readonly tone: 'good' | 'warn';
+  /** The label on the button that begins an enrolment. */
+  readonly enrollLabel: string;
+  /**
+   * Set when beginning an enrolment would replace one that already works, so the page
+   * can say what it costs before it is clicked. Null when there is nothing to lose.
+   */
+  readonly replaceWarning: string | null;
+  /** Whether this session has a factor outstanding that it could prove now. */
+  readonly needsElevation: boolean;
+  /** Whether signing other sessions out is available, and why not when it is not. */
+  readonly canRevokeOthers: boolean;
+  readonly revokeNote: string;
+}
+
+/**
+ * The security panel's states, decided here rather than in the page.
+ *
+ * Two booleans, and each pair means something different to the person reading it:
+ * nothing enrolled at all, enrolled and proven, and enrolled but not proven in this
+ * session — which is exactly where confirming a fresh enrolment leaves you, since it
+ * clears the proven factor from every session including this one. A panel that drew
+ * only "on" or "off" would say "on" there and offer a button that fails.
+ */
+export function securityView(input: {
+  readonly totpEnabled: boolean;
+  readonly mfaComplete: boolean;
+}): SecurityView {
+  if (!input.totpEnabled) {
+    return {
+      headline: 'Off',
+      tone: 'warn',
+      enrollLabel: 'Set up an authenticator app',
+      replaceWarning: null,
+      needsElevation: false,
+      canRevokeOthers: false,
+      revokeNote: 'Available once an authenticator is enrolled.',
+    };
+  }
+
+  return {
+    headline: input.mfaComplete ? 'On' : 'On — this session has not been unlocked',
+    tone: input.mfaComplete ? 'good' : 'warn',
+    enrollLabel: 'Move to a different authenticator app',
+    replaceWarning:
+      'The app you have now keeps working until you enter a code from the new one. ' +
+      'Nothing changes if you do not finish.',
+    needsElevation: !input.mfaComplete,
+    canRevokeOthers: input.mfaComplete,
+    revokeNote: input.mfaComplete
+      ? 'Signs out every other browser and device. This one stays signed in.'
+      : 'Enter a code from your authenticator app first.',
+  };
 }
 
 /**

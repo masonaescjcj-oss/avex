@@ -496,6 +496,23 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     assert.equal(response.json().error, 'mfa_required');
   });
 
+  test('replacing the authenticator takes the authenticator being replaced', async () => {
+    /**
+     * The session here is signed in with two-factor on and the factor not yet proven —
+     * exactly the state a stolen session token is in. Handing it a fresh secret would be
+     * handing over the account: the thief enrols their own phone and the owner's stops
+     * working. A first enrolment cannot ask for a code and does not; this one does.
+     */
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/totp/enroll',
+      headers: asOwner(),
+    });
+
+    assert.equal(response.statusCode, 401);
+    assert.equal(response.json().error, 'mfa_required');
+  });
+
   test('proving the factor restores the session', async () => {
     const bad = await app.inject({
       method: 'POST',
@@ -523,6 +540,72 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     assert.equal(member.email, ownerEmail);
     assert.equal(member.role, 'owner');
     assert.equal(member.twoFactorEnabled, true);
+  });
+
+  test('a second enrolment leaves the working authenticator working until it is confirmed', async () => {
+    /**
+     * The lost-phone case, which used to be a lockout.
+     *
+     * Asking for a new secret wrote it straight over the live one, so the authenticator
+     * still in the owner's hand stopped working the instant they opened the page — and if
+     * they closed it before scanning, the only way back was a recovery code. The new
+     * secret waits until a code proves it.
+     */
+    const enroll = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/totp/enroll',
+      headers: asOwner(),
+    });
+    assert.equal(enroll.statusCode, 200);
+    const replacement = enroll.json().secret;
+    assert.notEqual(replacement, totpSecret, 'a replacement must be a different secret');
+
+    // The phone already enrolled still works. This is the whole point.
+    const old = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/mfa',
+      headers: asOwner(),
+      payload: { code: totpCode(totpSecret) },
+    });
+    assert.equal(old.statusCode, 200);
+
+    // And the secret nobody has proven yet satisfies nothing.
+    const unproven = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/mfa',
+      headers: asOwner(),
+      payload: { code: totpCode(replacement) },
+    });
+    assert.equal(unproven.statusCode, 401);
+
+    // Confirming promotes it, and only then does the old one stop counting.
+    const confirm = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/totp/confirm',
+      headers: asOwner(),
+      payload: { code: totpCode(replacement) },
+    });
+    assert.equal(confirm.statusCode, 200);
+    assert.equal(confirm.json().recoveryCodes.length, 10, 'a new enrolment reissues the codes');
+
+    const retired = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/mfa',
+      headers: asOwner(),
+      payload: { code: totpCode(totpSecret) },
+    });
+    assert.equal(retired.statusCode, 401, 'the replaced secret must stop working');
+
+    // Confirming cleared the session's proven factor, so restore both it and the secret
+    // the tests after this one use.
+    totpSecret = replacement;
+    const again = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/mfa',
+      headers: asOwner(),
+      payload: { code: totpCode(totpSecret) },
+    });
+    assert.equal(again.statusCode, 200);
   });
 
   let apiKey: string;

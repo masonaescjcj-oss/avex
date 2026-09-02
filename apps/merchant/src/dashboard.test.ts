@@ -12,6 +12,7 @@ import {
   keyMode,
   ladderRows,
   ledgerRows,
+  securityView,
   setupSteps,
   statusView,
   tierProgressView,
@@ -81,6 +82,7 @@ describe('setup checklist', () => {
     assetChains: [],
     webhookEndpoints: 0,
     liveKeys: 0,
+    twoFactorEnabled: false,
   };
 
   const step = (input: Parameters<typeof setupSteps>[0], id: string) =>
@@ -89,8 +91,27 @@ describe('setup checklist', () => {
   test('a new account has nothing done', () => {
     assert.deepEqual(
       setupSteps(base).map((entry) => entry.done),
-      [false, false, false, false],
+      [false, false, false, false, false],
     );
+  });
+
+  test('two-factor is listed before the payout address it gates', () => {
+    /**
+     * Order is the point of this list. Adding a payout address is elevation-gated, so a
+     * merchant who follows the checklist top to bottom without two-factor on it reaches
+     * that step and is refused — which is how it went before this entry existed: the
+     * refusal named a Security tab and nothing pointed at it.
+     */
+    const ids = setupSteps(base).map((entry) => entry.id);
+    assert.ok(ids.indexOf('two-factor') < ids.indexOf('payouts'), ids.join(' → '));
+    assert.match(step(base, 'two-factor').why, /Security tab/);
+  });
+
+  test('an enrolled authenticator ticks it off', () => {
+    const entry = step({ ...base, twoFactorEnabled: true }, 'two-factor');
+    assert.equal(entry.done, true);
+    // And stops telling somebody who has done it what it is for.
+    assert.doesNotMatch(entry.why, /Security tab/);
   });
 
   test('an enabled asset still in review does not count, and says why', () => {
@@ -159,16 +180,72 @@ describe('setup checklist', () => {
       payoutChains: ['bsc'],
       webhookEndpoints: 1,
       liveKeys: 1,
+      twoFactorEnabled: true,
     });
     assert.ok(steps.every((entry) => entry.done));
   });
 
   test('the steps are in the order they block things', () => {
-    // Nothing to invoice, then nowhere to settle, then nobody told, then no live key.
+    // Nothing to invoice, then no second factor to authorise a payout address with,
+    // then nowhere to settle, then nobody told, then no live key.
     assert.deepEqual(
       setupSteps(base).map((entry) => entry.id),
-      ['assets', 'payouts', 'webhook', 'live-key'],
+      ['assets', 'two-factor', 'payouts', 'webhook', 'live-key'],
     );
+  });
+});
+
+describe('the security panel', () => {
+  test('an account with nothing enrolled is told so and offered the setup', () => {
+    const view = securityView({ totpEnabled: false, mfaComplete: true });
+    assert.equal(view.headline, 'Off');
+    assert.equal(view.tone, 'warn');
+    assert.match(view.enrollLabel, /Set up/);
+    // Nothing to lose, so no warning: a first enrolment cannot break an authenticator.
+    assert.equal(view.replaceWarning, null);
+    assert.equal(view.needsElevation, false);
+  });
+
+  test('an account with nothing enrolled cannot sign other sessions out, and is told why', () => {
+    /**
+     * The button would be refused by the API — revoking needs the second factor proven,
+     * and an account with no factor can never prove one. Offering it anyway is offering a
+     * button whose only outcome is an error.
+     */
+    const view = securityView({ totpEnabled: false, mfaComplete: true });
+    assert.equal(view.canRevokeOthers, false);
+    assert.match(view.revokeNote, /once an authenticator is enrolled/);
+  });
+
+  test('a proven session reads as on and can act', () => {
+    const view = securityView({ totpEnabled: true, mfaComplete: true });
+    assert.equal(view.headline, 'On');
+    assert.equal(view.tone, 'good');
+    assert.equal(view.needsElevation, false);
+    assert.equal(view.canRevokeOthers, true);
+  });
+
+  test('an unproven session says so rather than reading as on', () => {
+    /**
+     * Where confirming a fresh enrolment leaves you: the factor exists and no session
+     * has proven it, this one included. A panel that read plain "On" here would leave a
+     * merchant clicking through payout changes that are all refused with no explanation
+     * on the page.
+     */
+    const view = securityView({ totpEnabled: true, mfaComplete: false });
+    assert.match(view.headline, /not been unlocked/);
+    assert.equal(view.tone, 'warn');
+    assert.equal(view.needsElevation, true);
+    assert.equal(view.canRevokeOthers, false);
+    assert.match(view.revokeNote, /code from your authenticator/);
+  });
+
+  test('replacing an authenticator says what it costs before it is clicked', () => {
+    // Which is nothing, now that the new secret waits to be proven — and saying so is
+    // what stops somebody abandoning it half way for fear of locking themselves out.
+    const view = securityView({ totpEnabled: true, mfaComplete: true });
+    assert.match(view.enrollLabel, /different authenticator/);
+    assert.match(view.replaceWarning ?? '', /keeps working/);
   });
 });
 

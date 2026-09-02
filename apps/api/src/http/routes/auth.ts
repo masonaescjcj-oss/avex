@@ -156,6 +156,17 @@ export function registerAuthRoutes(app: FastifyInstance, context: AppContext): v
     const principal = request.principal;
     if (!principal || principal.kind !== 'session') throw new UnauthenticatedError();
 
+    /**
+     * Replacing an authenticator that already works takes the one it replaces.
+     *
+     * A first enrolment cannot ask for a code — there is nothing to prove yet — but a
+     * second one can, and must: without it a stolen session is one request away from
+     * moving the account's second factor onto the thief's own phone.
+     */
+    if (principal.session.totpEnabled && !principal.session.mfaComplete) {
+      throw new MfaIncompleteError();
+    }
+
     const { secret, uri } = await context.auth.beginTotpEnrollment(
       principal.session.userId,
       principal.session.email,

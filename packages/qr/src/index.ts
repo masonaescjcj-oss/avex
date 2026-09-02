@@ -1,26 +1,76 @@
 /**
- * QR encoder — byte mode, error correction level M, versions 1 to 6.
+ * QR encoder — byte mode, versions 1 to 6, error correction level M or L.
  *
  * Written in-tree because a checkout without a working QR is not a checkout, and
- * the CSP on the page forbids loading a library from a CDN. Scope is deliberately
- * narrow: version 6 holds 108 bytes, which covers any address or payment URI we
- * produce, and every version in that range uses equal-sized error-correction
- * blocks — the interleaving that makes higher versions fiddly never arises.
+ * the CSP on those pages forbids loading a library from a CDN. Scope is deliberately
+ * narrow: every version in this range uses equal-sized error-correction blocks, so
+ * the mixed-block interleaving that makes versions 7 and up fiddly never arises, and
+ * neither does the version-information area they carry.
  *
- * Level M corrects roughly 15% damage. That is the usual choice for a screen: a
- * phone camera reading a lit display needs less redundancy than a printed label,
- * and a lower level keeps the modules large enough to scan from a distance.
+ * Level M corrects roughly 15% damage and is the usual choice for a screen: a phone
+ * camera reading a lit display needs less redundancy than a printed label, and the
+ * higher a level, the smaller the modules for the same payload.
+ *
+ * Level L is the overflow. Level M tops out at 106 bytes of payload, which covers any
+ * address or payment URI we produce — but not an `otpauth://` enrolment URI, which is
+ * 84 bytes before the account's own address is in it. Rather than refuse to draw the
+ * one QR a merchant setting up an authenticator needs, those fall to level L and its
+ * 134. Nothing that fits at M is affected: the search tries M across every version
+ * first, so every code this has ever produced comes out byte for byte the same.
  */
 
-/** Data codewords, EC codewords per block, and block count, at level M. */
-const VERSIONS = [
+/** Data codewords, EC codewords per block, and block count, per version. */
+interface VersionSpec {
+  readonly version: number;
+  readonly dataCodewords: number;
+  readonly ecPerBlock: number;
+  readonly blocks: number;
+}
+
+/** Level M: the default. */
+const VERSIONS_M: readonly VersionSpec[] = [
   { version: 1, dataCodewords: 16, ecPerBlock: 10, blocks: 1 },
   { version: 2, dataCodewords: 28, ecPerBlock: 16, blocks: 1 },
   { version: 3, dataCodewords: 44, ecPerBlock: 26, blocks: 1 },
   { version: 4, dataCodewords: 64, ecPerBlock: 18, blocks: 2 },
   { version: 5, dataCodewords: 86, ecPerBlock: 24, blocks: 2 },
   { version: 6, dataCodewords: 108, ecPerBlock: 16, blocks: 4 },
-] as const;
+];
+
+/** Level L: more room, less redundancy. Only reached when nothing fits at M. */
+const VERSIONS_L: readonly VersionSpec[] = [
+  { version: 1, dataCodewords: 19, ecPerBlock: 7, blocks: 1 },
+  { version: 2, dataCodewords: 34, ecPerBlock: 10, blocks: 1 },
+  { version: 3, dataCodewords: 55, ecPerBlock: 15, blocks: 1 },
+  { version: 4, dataCodewords: 80, ecPerBlock: 20, blocks: 1 },
+  { version: 5, dataCodewords: 108, ecPerBlock: 26, blocks: 1 },
+  { version: 6, dataCodewords: 136, ecPerBlock: 18, blocks: 2 },
+];
+
+/** Error correction level. Only the two the encoder implements. */
+export type EcLevel = 'L' | 'M';
+
+/**
+ * The level's two bits, as the format information carries them.
+ *
+ * Not the same order as the levels read in: the standard numbers them L=01, M=00,
+ * Q=11, H=10, and writing 00 for L would produce a code every reader decodes with the
+ * wrong error correction — which is to say, does not decode at all.
+ */
+const LEVEL_BITS: Readonly<Record<EcLevel, number>> = { L: 0b01, M: 0b00 };
+
+const TABLES: readonly (readonly [EcLevel, readonly VersionSpec[]])[] = [
+  ['M', VERSIONS_M],
+  ['L', VERSIONS_L],
+];
+
+/** Total codewords per version, which the two tables above must each add up to. */
+export const TOTAL_CODEWORDS: readonly number[] = [26, 44, 70, 100, 134, 172];
+
+/** Every row of both tables, flattened, so the totals above can be checked against them. */
+export const CAPACITY: readonly (VersionSpec & { readonly level: EcLevel })[] = TABLES.flatMap(
+  ([level, table]) => table.map((entry) => ({ ...entry, level })),
+);
 
 export class QrError extends Error {
   constructor(message: string) {
@@ -113,16 +163,30 @@ class BitWriter {
   }
 }
 
-function chooseVersion(byteLength: number): (typeof VERSIONS)[number] {
+interface Chosen extends VersionSpec {
+  readonly level: EcLevel;
+}
+
+/**
+ * The smallest code that holds the payload, at the strongest level that holds it.
+ *
+ * M is searched across every version before L is considered at all. That ordering is
+ * deliberate: it keeps the redundancy up for everything that fits, and it means adding
+ * L changed no code that already worked.
+ */
+function chooseVersion(byteLength: number): Chosen {
   // Mode indicator (4 bits) + character count (8) + data + terminator (4).
   const needed = Math.ceil((4 + 8 + byteLength * 8 + 4) / 8);
-  const found = VERSIONS.find((entry) => entry.dataCodewords >= needed);
-  if (!found) {
-    throw new QrError(
-      `${byteLength} bytes exceeds version 6 capacity; a larger version is not implemented`,
-    );
+  for (const [level, table] of TABLES) {
+    const found = table.find((entry) => entry.dataCodewords >= needed);
+    if (found) return { ...found, level };
   }
-  return found;
+  /** Capacity in bytes, which is what a caller counts, less the header and terminator. */
+  const largest = VERSIONS_L[VERSIONS_L.length - 1]!.dataCodewords - 2;
+  throw new QrError(
+    `${byteLength} bytes exceeds the ${largest} bytes version 6 holds at level L; ` +
+      'a larger version is not implemented',
+  );
 }
 
 // ── Matrix construction ───────────────────────────────────────────────────────
@@ -194,9 +258,8 @@ const MASKS: readonly ((row: number, col: number) => boolean)[] = [
  * Format information: two bits of EC level, three of mask, ten of BCH, XORed
  * with the standard's mask pattern.
  */
-export function formatBits(maskIndex: number): number {
-  // Level M is 0b00.
-  const data = maskIndex;
+export function formatBits(level: EcLevel, maskIndex: number): number {
+  const data = (LEVEL_BITS[level] << 3) | maskIndex;
   let bch = data << 10;
   for (let i = 4; i >= 0; i--) {
     if ((bch >>> (i + 10)) & 1) bch ^= 0x537 << i;
@@ -252,6 +315,8 @@ function penalty(matrix: Matrix): number {
 export interface QrCode {
   readonly size: number;
   readonly version: number;
+  /** Which error correction level held the payload. */
+  readonly level: EcLevel;
   /** Row-major, true where dark. */
   readonly modules: readonly boolean[][];
 }
@@ -335,7 +400,7 @@ export function encodeQr(text: string): QrCode {
         if (MASKS[mask]!(r, c)) candidate[r]![c] = (candidate[r]![c] === 1 ? 0 : 1) as 0 | 1;
       }
     }
-    writeFormat(candidate, mask);
+    writeFormat(candidate, spec.level, mask);
 
     const score = penalty(candidate);
     if (!best || score < best.score) best = { matrix: candidate, score, mask };
@@ -345,13 +410,14 @@ export function encodeQr(text: string): QrCode {
   return {
     size,
     version: spec.version,
+    level: spec.level,
     modules: chosen.map((row) => Array.from(row, (value) => value === 1)),
   };
 }
 
-function writeFormat(matrix: Matrix, mask: number): void {
+function writeFormat(matrix: Matrix, level: EcLevel, mask: number): void {
   const size = matrix.length;
-  const bits = formatBits(mask);
+  const bits = formatBits(level, mask);
 
   for (let i = 0; i < 15; i++) {
     const bit = ((bits >>> i) & 1) as 0 | 1;

@@ -133,16 +133,26 @@ export function verifyTotp(
   return matched;
 }
 
-/** `otpauth://` URI for authenticator QR codes. */
+/**
+ * `otpauth://` URI for authenticator QR codes.
+ *
+ * Carries the secret and the issuer, and nothing else.
+ *
+ * `algorithm`, `digits` and `period` used to be here too, spelling out SHA-1, six digits
+ * and thirty seconds. Those are exactly the defaults every authenticator applies when the
+ * keys are absent — the Key Uri Format says so, and this implementation uses them — so all
+ * three said only what silence already said, at a cost of 34 bytes.
+ *
+ * 34 bytes decides whether the QR can be drawn at all. Our encoder covers QR versions 1
+ * to 6, which hold 134 bytes at the weakest error correction level; this URI is 84 bytes
+ * before the account's address is in it. With the three redundant parameters, an address
+ * longer than sixteen characters had no QR — `admin@avexpay.net` is seventeen. Without
+ * them there is room for a fifty-character address, and a smaller symbol scans from
+ * further away besides.
+ */
 export function totpUri(secretBase32: string, accountEmail: string, issuer = 'AVEX Pay'): string {
   const label = `${encodeURIComponent(issuer)}:${encodeURIComponent(accountEmail)}`;
-  const params = new URLSearchParams({
-    secret: secretBase32,
-    issuer,
-    algorithm: 'SHA1',
-    digits: String(DEFAULT_DIGITS),
-    period: String(DEFAULT_STEP),
-  });
+  const params = new URLSearchParams({ secret: secretBase32, issuer });
   return `otpauth://totp/${label}?${params}`;
 }
 

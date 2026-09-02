@@ -72,8 +72,21 @@ export const users = pgTable(
     email: text('email').notNull(),
     emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
     passwordHash: text('password_hash').notNull(),
-    /** Base32 shared secret. Present once enrolment starts, before confirmation. */
+    /** Base32 shared secret, the one codes are checked against. */
     totpSecret: text('totp_secret'),
+    /**
+     * A secret that has been issued but not yet proven, kept apart from the live one.
+     *
+     * Enrolment used to write straight to `totp_secret`, which was harmless for a first
+     * enrolment and a lockout for any other: the moment somebody replacing a lost phone
+     * asked for a new secret, the authenticator they still had stopped working, and the
+     * new secret existed only on the page they were looking at. Closing that tab cost
+     * them the account down to a recovery code.
+     *
+     * So the new secret waits here until a code proves it, and only then replaces the
+     * live one. An abandoned enrolment now costs nothing.
+     */
+    totpPendingSecret: text('totp_pending_secret'),
     /** Only a confirmed enrolment counts as two-factor being active. */
     totpEnabledAt: timestamp('totp_enabled_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -1,0 +1,17 @@
+{
+  "name": "@avex/qr",
+  "version": "0.0.1",
+  "private": true,
+  "description": "QR encoder shared by the pages that draw one",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --dry",
+    "test": "npm run build && node --test \"dist/**/*.test.js\""
+  }
+}

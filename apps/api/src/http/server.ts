@@ -452,7 +452,7 @@ export function buildServer(context: AppContext): FastifyInstance {
         error: 'two_factor_required',
         message:
           'Set up two-factor authentication before making this change. ' +
-          'Open security settings to enroll an authenticator app.',
+          'Open the Security tab to enroll an authenticator app.',
         permission: error.permission,
       });
     }

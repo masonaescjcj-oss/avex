@@ -21,6 +21,35 @@ const PAGE = 'https://dash.test/merchant.html';
 const pageFile = join(here, '..', 'public', 'merchant.html');
 const ORG = '7b2c1e40-1111-4222-8333-444444444444';
 
+/**
+ * A real secret and a real `otpauth://` URI.
+ *
+ * The page draws the URI as a QR with the encoder compiled into it, so a placeholder that
+ * did not encode would fail the way a broken panel fails — and this URI is deliberately
+ * one the encoder has to reach for level L to hold, which is the case that used to have
+ * no QR at all.
+ */
+const ENROLLMENT = {
+  secret: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
+  uri:
+    'otpauth://totp/AVEX%20Pay:owner%40example.test' +
+    '?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=AVEX+Pay',
+  status: 'pending_confirmation',
+};
+
+const RECOVERY_CODES = [
+  'K7QW-2M4D-9XZP-4R6T',
+  'B3VH-8YNC-5JQK-7WLD',
+  'M9XT-4KRB-2PGF-6HSN',
+  'T5CQ-7WMJ-3ZDV-9YKB',
+  'R2NF-6HPL-8XSW-4MQT',
+  'V8JD-3RKG-7CNZ-2PWH',
+  'H4WS-9LQB-6MTV-3XKF',
+  'P6ZK-2CVN-4JHT-8WRQ',
+  'D9MQ-5XPW-7KBS-2VHL',
+  'W3TF-8QNJ-6RCK-9ZMP',
+];
+
 const CANDIDATES = ['/opt/node22/lib/node_modules/playwright/index.mjs', 'playwright'];
 
 async function loadPlaywright() {
@@ -207,10 +236,41 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         return route.fulfill(json(overrides.signup ?? { emailVerificationRequired: true }, 201));
       }
       if (method === 'POST' && path.endsWith('/v1/auth/mfa')) {
+        // Recorded, because this endpoint is two things: the second half of a login, and
+        // the way the security tab elevates a session that has not shown a code yet.
+        posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
         return route.fulfill(json({ token: 'sess_abc' }));
       }
       if (method === 'POST' && path.endsWith('/v1/auth/logout')) return route.fulfill(json({}));
-      if (path.endsWith('/v1/auth/me')) return route.fulfill(json({ email: 'owner@example.test' }));
+      if (path.endsWith('/v1/auth/me')) {
+        // The two flags the security tab and the setup checklist read. `overrides.me`
+        // replaces them so a test can say "already enrolled" or "not unlocked" without
+        // restating the account.
+        return route.fulfill(
+          json({
+            email: 'owner@example.test',
+            emailVerified: true,
+            totpEnabled: false,
+            mfaComplete: true,
+            ...(overrides.me ?? {}),
+          }),
+        );
+      }
+      if (method === 'POST' && path.endsWith('/v1/auth/totp/enroll')) {
+        posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
+        return route.fulfill(overrides.enroll ?? json(ENROLLMENT));
+      }
+      if (method === 'POST' && path.endsWith('/v1/auth/totp/confirm')) {
+        posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
+        return route.fulfill(
+          overrides.confirm ??
+            json({ status: 'enabled', recoveryCodes: RECOVERY_CODES }),
+        );
+      }
+      if (method === 'POST' && path.endsWith('/v1/auth/sessions/revoke-others')) {
+        posts.push({ path, body: null });
+        return route.fulfill(overrides.revoke ?? { status: 204, body: '' });
+      }
       if (path.endsWith('/v1/organizations')) {
         // With a role: the team page draws differently for a viewer than for an owner, so a
         // fixture without one would exercise only the read-only half.
@@ -1167,8 +1227,8 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.ok(whys.some((why) => why.includes('ton')), whys.join(' | '));
 
     const done = await page.$$eval('#checklist .check', (nodes) => nodes.map((n) => n.dataset.done));
-    // Assets and payouts: one done, one not. Webhook and live key both missing.
-    assert.deepEqual(done, ['true', 'false', 'false', 'false']);
+    // Assets done; two-factor, payouts, webhook and live key all still missing.
+    assert.deepEqual(done, ['true', 'false', 'false', 'false', 'false']);
     await context.close();
   });
 
@@ -1178,6 +1238,8 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       assets: { assets: [{ id: 'a1', symbol: 'USDT', chain: 'bsc', decimals: 18, verdict: 'approved', enabled: true, pricingMode: 'fiat' }] },
       endpoints: { endpoints: [{ id: 'e1', url: 'https://x.test/h', events: ['*'], enabled: true, pending: 0, failed: 0, createdAt: '2026-08-01T00:00:00.000Z' }] },
       keys: { keys: [{ id: 'k1', name: 'live', displayPrefix: 'ak_live_zz', scopes: ['invoice:create'], createdAt: '2026-08-01T00:00:00.000Z', revokedAt: null }] },
+      // Including the authenticator, which is now one of the steps.
+      me: { totpEnabled: true, mfaComplete: true },
     });
     assert.equal(await shown(page, '#setup-panel'), false);
     await context.close();
@@ -1631,6 +1693,271 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
+  // ── security ──────────────────────────────────────────────────────────────
+
+  /** Open the tab and wait for it to have loaded. */
+  const openSecurity = async (page) => {
+    await page.click('nav.tabs button:has-text("Security")');
+    await page.waitForFunction(
+      () => document.getElementById('view-security')?.hidden === false,
+      { timeout: 5000 },
+    );
+    await page.waitForTimeout(150);
+  };
+
+  test('there is a Security tab to enrol an authenticator on', async () => {
+    /**
+     * The gap this whole panel closes. The API refused a payout change with "open the
+     * Security tab to enroll an authenticator app" and there was no such tab — the two
+     * enrolment endpoints existed and nothing in the dashboard called them, so the only
+     * way a merchant could turn two-factor on was curl.
+     */
+    const { page, context } = await open();
+    const tabs = await all(page, 'nav.tabs button');
+    assert.ok(tabs.includes('Security'), tabs.join(', '));
+    await openSecurity(page);
+    assert.equal(await shown(page, '#view-security'), true);
+    await context.close();
+  });
+
+  test('an account with no authenticator is told so and offered the setup', async () => {
+    const { page, context } = await open();
+    await openSecurity(page);
+
+    assert.equal(await text(page, '#totp-state'), 'Off');
+    assert.match(await text(page, '#totp-begin'), /Set up/);
+    // Nothing to lose on a first enrolment, so nothing warned about.
+    assert.equal(await shown(page, '#totp-replace-warning'), false);
+    // And no scan form until it is asked for.
+    assert.equal(await shown(page, '#totp-scan'), false);
+    await context.close();
+  });
+
+  test('enrolling draws the QR in the page and shows the key to type', async () => {
+    /**
+     * Drawn, not fetched: the secret must not leave this origin, and a QR from an image
+     * service is the secret sent to a third party. The symbol is also the case that had
+     * no QR before — an `otpauth://` URI is past what error correction level M holds, and
+     * the encoder used to stop there.
+     */
+    const { page, context, posts } = await open();
+    await openSecurity(page);
+    await page.click('#totp-begin');
+    await page.waitForFunction(
+      () => document.getElementById('totp-scan')?.hidden === false,
+      { timeout: 5000 },
+    );
+
+    assert.ok(
+      posts.some((post) => post.path.endsWith('/v1/auth/totp/enroll')),
+      'the page must ask the API for the secret',
+    );
+
+    const qr = await page.$eval('#totp-qr', (node) => ({
+      svgs: node.querySelectorAll('svg').length,
+      images: node.querySelectorAll('img').length,
+      modules: (node.querySelector('path')?.getAttribute('d') ?? '').split('M').length - 1,
+      width: Math.round(node.getBoundingClientRect().width),
+    }));
+    assert.equal(qr.svgs, 1, 'one drawn symbol');
+    assert.equal(qr.images, 0, 'nothing fetched');
+    assert.ok(qr.modules > 200, `only ${qr.modules} dark modules`);
+    assert.ok(qr.width >= 100, `the symbol rendered ${qr.width}px wide`);
+
+    // And the key in text, for a desktop authenticator or a password manager.
+    assert.equal(await text(page, '#totp-secret'), 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+    assert.equal(await shown(page, '#totp-qr-note'), false, 'no fallback note when it drew');
+    await context.close();
+  });
+
+  test('confirming sends the code and shows the recovery codes once', async () => {
+    const { page, context, posts } = await open();
+    await openSecurity(page);
+    await page.click('#totp-begin');
+    await page.waitForFunction(
+      () => document.getElementById('totp-scan')?.hidden === false,
+      { timeout: 5000 },
+    );
+
+    await page.fill('#totp-code', '123456');
+    await page.click('#totp-confirm');
+    await page.waitForFunction(
+      () => document.getElementById('totp-codes')?.hidden === false,
+      { timeout: 5000 },
+    );
+
+    const confirm = posts.find((post) => post.path.endsWith('/v1/auth/totp/confirm'));
+    assert.deepEqual(confirm?.body, { code: '123456' });
+
+    const codes = await text(page, '#totp-codes-value');
+    for (const code of RECOVERY_CODES) assert.ok(codes.includes(code), `${code} is missing`);
+
+    /**
+     * Once, and leaving the tab is the once.
+     *
+     * They are stored as hashes and cannot be shown again, so a panel that redrew them on
+     * every visit would be promising something it cannot keep.
+     */
+    await page.click('nav.tabs button:has-text("Overview")');
+    await page.waitForTimeout(150);
+    await openSecurity(page);
+    assert.equal(await shown(page, '#totp-codes'), false);
+    assert.equal(await text(page, '#totp-codes-value'), '');
+    await context.close();
+  });
+
+  test('a wrong code keeps the form open and says what the API said', async () => {
+    const { page, context } = await open({
+      confirm: {
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: 'invalid_code',
+          message: 'That code did not match. Scan the QR code again and enter a fresh code.',
+        }),
+      },
+    });
+    await openSecurity(page);
+    await page.click('#totp-begin');
+    await page.waitForFunction(
+      () => document.getElementById('totp-scan')?.hidden === false,
+      { timeout: 5000 },
+    );
+    await page.fill('#totp-code', '000000');
+    await page.click('#totp-confirm');
+    await page.waitForTimeout(250);
+
+    assert.match(await text(page, '#flash'), /did not match/);
+    // The QR is still there to try again with, and the field is empty rather than
+    // holding a code that has already been refused.
+    assert.equal(await shown(page, '#totp-scan'), true);
+    assert.equal(await page.$eval('#totp-code', (node) => node.value), '');
+    assert.equal(await shown(page, '#totp-codes'), false);
+    await context.close();
+  });
+
+  test('cancelling leaves nothing behind', async () => {
+    const { page, context } = await open();
+    await openSecurity(page);
+    await page.click('#totp-begin');
+    await page.waitForFunction(
+      () => document.getElementById('totp-scan')?.hidden === false,
+      { timeout: 5000 },
+    );
+    await page.click('#totp-cancel');
+    await page.waitForTimeout(150);
+
+    assert.equal(await shown(page, '#totp-scan'), false);
+    assert.equal(await text(page, '#totp-secret'), '');
+    assert.equal(await page.$eval('#totp-qr', (node) => node.innerHTML), '');
+    await context.close();
+  });
+
+  test('an enrolled account is offered a move rather than a setup, and warned', async () => {
+    const { page, context } = await open({ me: { totpEnabled: true, mfaComplete: true } });
+    await openSecurity(page);
+
+    assert.equal(await text(page, '#totp-state'), 'On');
+    assert.match(await text(page, '#totp-begin'), /different authenticator/);
+    assert.equal(await shown(page, '#totp-replace-warning'), true);
+    assert.match(await text(page, '#totp-replace-warning'), /keeps working/);
+    // Nothing outstanding, so nothing to unlock.
+    assert.equal(await shown(page, '#elevate-panel'), false);
+    await context.close();
+  });
+
+  test('a session that has not shown a code is offered the field that fixes it', async () => {
+    /**
+     * Where confirming an enrolment leaves you: the factor is on and no session has
+     * proven it, this one included. Without this panel the account looks configured and
+     * every payout change is refused.
+     */
+    const { page, context, posts } = await open({ me: { totpEnabled: true, mfaComplete: false } });
+    await openSecurity(page);
+
+    assert.match(await text(page, '#totp-state'), /not been unlocked/);
+    assert.equal(await shown(page, '#elevate-panel'), true);
+
+    await page.fill('#elevate-code', '654321');
+    await page.click('#elevate-form button[type="submit"]');
+    await page.waitForTimeout(250);
+
+    const proved = posts.find((post) => post.path.endsWith('/v1/auth/mfa'));
+    assert.deepEqual(proved?.body, { code: '654321' });
+    await context.close();
+  });
+
+  test('signing other sessions out is offered only when it would work', async () => {
+    // The API refuses it without the factor proven, so an account with no authenticator
+    // would get an error and nothing else from a button that looked available.
+    const { page, context } = await open();
+    await openSecurity(page);
+    assert.equal(await page.$eval('#revoke-others', (node) => node.disabled), true);
+    assert.match(await text(page, '#revoke-note'), /once an authenticator is enrolled/);
+
+    const ready = await open({ me: { totpEnabled: true, mfaComplete: true } });
+    await openSecurity(ready.page);
+    assert.equal(await ready.page.$eval('#revoke-others', (node) => node.disabled), false);
+    await ready.page.click('#revoke-others');
+    await ready.page.waitForTimeout(250);
+    assert.ok(
+      ready.posts.some((post) => post.path.endsWith('/v1/auth/sessions/revoke-others')),
+      'the button must reach the API',
+    );
+    assert.match(await text(ready.page, '#flash'), /signed out/);
+    await ready.context.close();
+    await context.close();
+  });
+
+  test('a refusal that needs two-factor lands on the tab that fixes it', async () => {
+    /**
+     * The merchant's actual path: they open Payouts, request an address change, and the
+     * API refuses because no authenticator is enrolled. The message names the Security
+     * tab, so the page goes there — reading a refusal on the page you cannot act on is
+     * how this went unnoticed for as long as it did.
+     */
+    const { page, context } = await open({
+      roleChange: undefined,
+    });
+    await page.route('**/payout-addresses', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      return route.fulfill({
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: 'two_factor_required',
+          message:
+            'Set up two-factor authentication before making this change. ' +
+            'Open the Security tab to enroll an authenticator app.',
+          permission: 'payout_address:write',
+        }),
+      });
+    });
+
+    await page.click('nav.tabs button:has-text("Payouts")');
+    await page.waitForTimeout(200);
+    await page.fill('#payout-address', '0x55d398326f99059fF775485246999027B3197955');
+    await page.click('#payout-form button[type="submit"]');
+    await page.waitForFunction(
+      () => document.getElementById('view-security')?.hidden === false,
+      { timeout: 5000 },
+    );
+
+    assert.match(await text(page, '#flash'), /Security tab/);
+    assert.equal(await shown(page, '#view-security'), true);
+    await context.close();
+  });
+
+  test('the checklist names two-factor, before the payout address it gates', async () => {
+    const { page, context } = await open();
+    const titles = await all(page, '#checklist .check-title');
+    const twoFactor = titles.findIndex((title) => /two-factor/i.test(title));
+    const payouts = titles.findIndex((title) => /payout address/i.test(title));
+    assert.ok(twoFactor >= 0, titles.join(' | '));
+    assert.ok(twoFactor < payouts, titles.join(' | '));
+    await context.close();
+  });
+
   // ── preview mode ──────────────────────────────────────────────────────────
 
   test('preview mode loads the whole dashboard with no API behind it', async () => {
@@ -1668,7 +1995,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.match(await text(page, '#preview-banner'), /made up|not an account/i);
 
     // Every tab renders rather than half of them.
-    for (const label of ['Take a payment', 'Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Commission', 'Overview']) {
+    for (const label of ['Take a payment', 'Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Team', 'Security', 'Commission', 'Overview']) {
       await page.click(`nav.tabs button:has-text("${label}")`);
       await page.waitForTimeout(120);
       assert.equal(await shown(page, '#flash'), false, `${label} flashed an error`);
@@ -1883,7 +2210,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   test('the dashboard ran without throwing', async () => {
     const { page, context, errors } = await open();
-    for (const label of ['Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Commission', 'Overview']) {
+    for (const label of ['Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Team', 'Security', 'Commission', 'Overview']) {
       await page.click(`nav.tabs button:has-text("${label}")`);
       await page.waitForTimeout(120);
     }

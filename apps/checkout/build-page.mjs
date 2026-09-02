@@ -3,8 +3,12 @@
  *
  * The page must be a single self-contained file — its content security policy
  * forbids fetching scripts — so the encoder is injected rather than imported. It is
- * injected from `dist/` rather than copied by hand so the page can never drift from
- * the module the tests actually exercise.
+ * injected from the encoder's own `dist/` rather than copied by hand so the page can
+ * never drift from the module the tests actually exercise.
+ *
+ * The encoder lives in `packages/qr` because the merchant dashboard needs one too, to
+ * hand an authenticator secret to a phone. Two copies of a QR encoder is two places for
+ * a wrong codeword table to live, and only one of them would have the tests.
  *
  * Usage: node build-page.mjs
  */
@@ -15,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-const compiled = readFileSync(join(here, 'dist', 'qr.js'), 'utf8');
+const compiled = readFileSync(join(here, '..', '..', 'packages', 'qr', 'dist', 'index.js'), 'utf8');
 const template = readFileSync(join(here, 'public', 'checkout.template.html'), 'utf8');
 
 const MARKER = '/* @inject:qr */';

@@ -293,6 +293,22 @@
   .choice[aria-pressed="true"] .choice-label { color: var(--lime); }
   .choice-detail { font-size: var(--s-1); color: var(--muted); }
 
+  /* ── QR ───────────────────────────────────────────────────────────────── */
+
+  /*
+    A white ground under the symbol, on a dark page. A QR drawn dark-on-dark is not a
+    QR — and the quiet zone is part of the symbol, so the padding here is not decoration.
+  */
+  .qr-frame { background: #fff; padding: 0.4rem; border-radius: var(--r-sm); line-height: 0; flex: none; }
+  .qr-frame svg { width: 10.5rem; height: 10.5rem; display: block; }
+
+  /*
+    Recovery codes, one per line. They are written down or pasted into a password
+    manager, and `code` collapses the newlines `textContent` carries — ten of them in a
+    paragraph is ten chances to transcribe one wrongly.
+  */
+  #totp-codes-value { white-space: pre-wrap; line-height: 1.75; }
+
   .copyable { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
   .copyable code {
     font-family: var(--mono); font-size: var(--s-1); word-break: break-all;
@@ -661,6 +677,103 @@
       </div>
     </section>
 
+    <!-- security -->
+    <section class="view" id="view-security" hidden>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>🔐 Two-factor authentication</h2>
+          <span class="pill" id="totp-state"></span>
+        </div>
+        <div class="panel-body">
+          <p class="note">
+            An authenticator app on your phone, and a six-digit code from it whenever
+            something on this account moves money or grants access — a payout address, a
+            live key, a new member. Your password alone cannot do those things, which is
+            what makes a stolen password survivable.
+          </p>
+
+          <div id="totp-start">
+            <p class="warn-note" id="totp-replace-warning" hidden></p>
+            <div class="row"><button class="primary" type="button" id="totp-begin"></button></div>
+          </div>
+
+          <!--
+            Scan, then prove. The secret is written out beside the QR rather than behind a
+            "show" link: a phone with no camera, a desktop authenticator and a password
+            manager all need the text, and hiding it helps nobody who has already been
+            handed it.
+          -->
+          <div id="totp-scan" hidden>
+            <div class="row" style="align-items: flex-start">
+              <div id="totp-qr" class="qr-frame"></div>
+              <div style="flex: 1 1 16rem; display: flex; flex-direction: column; gap: 0.5rem">
+                <p class="note">
+                  Scan this with Google Authenticator, Aegis, 1Password, or any app that
+                  takes a QR code. Or type the key in by hand:
+                </p>
+                <div class="copyable">
+                  <code id="totp-secret"></code>
+                  <button class="ghost" type="button" data-copy="totp-secret">Copy</button>
+                </div>
+                <p class="warn-note" id="totp-qr-note" hidden></p>
+              </div>
+            </div>
+            <form id="totp-confirm-form">
+              <div class="row">
+                <label style="flex: 0 1 11rem">Code from the app<input class="mono" id="totp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" required></label>
+                <button class="primary" type="submit" id="totp-confirm">Turn it on</button>
+                <button class="ghost" type="button" id="totp-cancel">Cancel</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="banner" id="totp-codes" data-kind="warn" hidden>
+            <p><strong>Save these recovery codes now — they are shown once.</strong></p>
+            <p class="note">
+              Each one works once, in place of a code from the app, and they are the only
+              way back in if you lose the phone. We store hashes, so we cannot show them
+              to you again.
+            </p>
+            <div class="copyable">
+              <code id="totp-codes-value"></code>
+              <button class="ghost" type="button" data-copy="totp-codes-value">Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!--
+        Confirming an enrolment clears the proven factor from every session, this one
+        included — so the panel that appears right after setting it up is this one.
+      -->
+      <div class="panel" id="elevate-panel" hidden>
+        <div class="panel-head"><h2>🔓 Unlock this session</h2></div>
+        <div class="panel-body">
+          <p class="note">
+            This browser has not shown a code yet, so anything that moves money is refused.
+            One code unlocks it until you sign out.
+          </p>
+          <form id="elevate-form">
+            <div class="row">
+              <label style="flex: 0 1 11rem">Code from the app<input class="mono" id="elevate-code" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" required></label>
+              <button class="primary" type="submit">Unlock</button>
+            </div>
+          </form>
+          <p class="note">A recovery code works here too, and is then spent.</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>💻 Other sessions</h2></div>
+        <div class="panel-body">
+          <p class="note" id="revoke-note"></p>
+          <div class="row">
+            <button class="ghost danger" type="button" id="revoke-others">Sign out everywhere else</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- commission -->
     <section class="view" id="view-commission" hidden>
       <div class="panel" id="balance-panel" hidden>
@@ -804,6 +917,25 @@
     // that lingers gets read as applying to whatever the merchant does next.
     if (kind !== 'error') {
       window.setTimeout(() => { banner.hidden = true; }, 6000);
+    }
+  }
+
+  /**
+   * A refused request, reported where it can be acted on.
+   *
+   * Nearly every one of these is "the server said no and said why", and the banner is the
+   * whole answer. Three are not: `two_factor_required` means the account has no
+   * authenticator, `elevation_required` and `mfa_required` mean this session has not
+   * shown a code — and all three are dealt with on the security tab. So the page goes
+   * there. The API's own copy already said to; before the tab existed it named a place
+   * that was not in the product, and a merchant reading it on the payouts page had
+   * nothing to click.
+   */
+  function reportProblem(problem) {
+    flash(problem.message, 'error');
+    const code = problem && problem.code;
+    if (code === 'two_factor_required' || code === 'elevation_required' || code === 'mfa_required') {
+      show('security');
     }
   }
 
@@ -1058,6 +1190,7 @@
     ['webhooks', 'Webhooks'],
     ['keys', 'API keys'],
     ['team', 'Team'],
+    ['security', 'Security'],
     ['commission', 'Commission'],
   ];
 
@@ -1176,6 +1309,7 @@
       payoutChains: [...new Set(payouts.filter((row) => !row.supersededAt).map((row) => row.chain))],
       webhookEndpoints: endpoints.length,
       liveKeys: keys.filter((key) => keyMode(key.displayPrefix) === 'live').length,
+      twoFactorEnabled: (cache.me || {}).totpEnabled === true,
     });
 
     // Hidden once everything is done: a checklist of ticks is furniture, and this panel
@@ -1290,7 +1424,7 @@
       el('new-result').hidden = false;
       flash('Payment link created. Send it to your customer.', 'ok');
     } catch (problem) {
-      flash(problem.message, 'error');
+      reportProblem(problem);
     } finally {
       button.disabled = false;
     }
@@ -1436,7 +1570,7 @@
       );
       await reloadAssets();
     } catch (problem) {
-      flash(problem.message, 'error');
+      reportProblem(problem);
     }
   }
 
@@ -1479,7 +1613,7 @@
         flash('Rate set for ' + asset.symbol + ', holding until ' + validUntil.toLocaleDateString() + '.', 'ok');
         await reloadAssets();
       } catch (problem) {
-        flash(problem.message, 'error');
+        reportProblem(problem);
       }
     })();
   }
@@ -1534,7 +1668,7 @@
       el('submit-result').hidden = false;
       await reloadAssets();
     } catch (problem) {
-      flash(problem.message, 'error');
+      reportProblem(problem);
     } finally {
       button.disabled = false;
     }
@@ -1662,7 +1796,7 @@
       flash('Retired. Payments to invoices already open on it are still credited.', 'ok');
       await refresh('payouts');
     } catch (problem) {
-      flash(problem.message, 'error');
+      reportProblem(problem);
     }
   }
 
@@ -1674,7 +1808,7 @@
       flash('Cancelled. That wallet will not be added.', 'ok');
       await refresh('payouts');
     } catch (problem) {
-      flash(problem.message, 'error');
+      reportProblem(problem);
     }
   }
 
@@ -1701,7 +1835,7 @@
       flash(body.message, body.status === 'pending' ? 'warn' : 'ok');
       await refresh('payouts');
     } catch (problem) {
-      flash(problem.message, 'error');
+      reportProblem(problem);
     }
   });
 
@@ -1716,7 +1850,7 @@
       flash('Change requested. Check your email — it takes effect after a delay.', 'warn');
       await refresh('payouts');
     } catch (problem) {
-      flash(problem.message, 'error');
+      reportProblem(problem);
     }
   });
 
@@ -1746,7 +1880,7 @@
                     await api('/v1/organizations/' + orgId + '/webhook-endpoints/' + endpoint.id + '/' + (endpoint.enabled ? 'disable' : 'enable'), { method: 'POST' });
                     await refresh('webhooks');
                   } catch (problem) {
-                    flash(problem.message, 'error');
+                    reportProblem(problem);
                   }
                 },
               }),
@@ -1788,7 +1922,7 @@
                   flash('Queued for another attempt.', 'ok');
                   await refresh('webhooks');
                 } catch (problem) {
-                  flash(problem.message, 'error');
+                  reportProblem(problem);
                 }
               },
             }),
@@ -1815,7 +1949,7 @@
       el('endpoint-secret').hidden = false;
       await refresh('webhooks');
     } catch (problem) {
-      flash(problem.message, 'error');
+      reportProblem(problem);
     }
   });
 
@@ -1846,7 +1980,7 @@
                         flash('Key revoked.', 'ok');
                         await refresh('keys');
                       } catch (problem) {
-                        flash(problem.message, 'error');
+                        reportProblem(problem);
                       }
                     },
                   }),
@@ -1932,7 +2066,7 @@
             // Put the visible value back: a picker showing a role the server refused is a
             // page telling somebody a change happened when it did not.
             event.target.value = member.role;
-            flash(problem.message, 'error');
+            reportProblem(problem);
           } finally {
             event.target.disabled = false;
             await refresh('team');
@@ -2003,7 +2137,7 @@
           );
           await refresh('team');
         } catch (problem) {
-          flash(problem.message, 'error');
+          reportProblem(problem);
         }
       },
     });
@@ -2081,7 +2215,7 @@
                           flash('Invitation withdrawn. The link no longer works.', 'ok');
                           await refresh('team');
                         } catch (problem) {
-                          flash(problem.message, 'error');
+                          reportProblem(problem);
                         }
                       },
                     })
@@ -2141,9 +2275,219 @@
       el('invite-email').value = '';
       await refresh('team');
     } catch (problem) {
-      flash(problem.message, 'error');
+      reportProblem(problem);
     } finally {
       button.disabled = false;
+    }
+  });
+
+  // ── security ──────────────────────────────────────────────────────────────
+
+  /**
+   * The secret being enrolled, for as long as the form is open.
+   *
+   * Held in the closure and dropped on cancel or on success, like the session token and
+   * for the same reason. It is also written into the page beside the QR, which is the
+   * point of it — but nothing puts it in storage, in the URL, or anywhere it outlives
+   * the tab.
+   */
+  let pendingTotpSecret = null;
+
+  function renderTotpQr(uri) {
+    const frame = el('totp-qr');
+    const note = el('totp-qr-note');
+    frame.textContent = '';
+
+    let code;
+    try {
+      code = encodeQr(uri);
+    } catch {
+      /**
+       * Too long for the versions the encoder covers, which for an enrolment URI means a
+       * very long email address. The key is written out beside this either way, so the
+       * honest thing is to say so and let them type it — a symbol that scans to the wrong
+       * secret would enrol an authenticator that never works.
+       */
+      frame.hidden = true;
+      note.textContent =
+        'This account’s address is too long to fit a QR code. Type the key into your ' +
+        'authenticator app instead — it works exactly the same.';
+      note.hidden = false;
+      return;
+    }
+
+    note.hidden = true;
+    frame.hidden = false;
+
+    const NS = 'http://www.w3.org/2000/svg';
+    // The quiet zone is part of the symbol: without it a reader cannot find the edges.
+    const quiet = 2;
+    const span = code.size + quiet * 2;
+
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + span + ' ' + span);
+    svg.setAttribute('shape-rendering', 'crispEdges');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Authenticator setup QR code');
+
+    const background = document.createElementNS(NS, 'rect');
+    background.setAttribute('width', String(span));
+    background.setAttribute('height', String(span));
+    background.setAttribute('fill', '#FFFFFF');
+    svg.append(background);
+
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute(
+      'd',
+      qrToSvgPath(code).replace(
+        /M(\d+) (\d+)/g,
+        (_match, x, y) => 'M' + (Number(x) + quiet) + ' ' + (Number(y) + quiet),
+      ),
+    );
+    path.setAttribute('fill', '#000000');
+    svg.append(path);
+
+    frame.append(svg);
+  }
+
+  /** Back to the state before an enrolment was begun, holding nothing. */
+  function resetTotpForm() {
+    pendingTotpSecret = null;
+    el('totp-scan').hidden = true;
+    el('totp-start').hidden = false;
+    el('totp-codes').hidden = true;
+    el('totp-code').value = '';
+    el('totp-secret').textContent = '';
+    el('totp-codes-value').textContent = '';
+    el('totp-qr').textContent = '';
+  }
+
+  function renderSecurity() {
+    const me = cache.me || {};
+    const view = securityView({
+      totpEnabled: me.totpEnabled === true,
+      // Absent means nothing is outstanding. An account with no second factor has
+      // nothing to prove, and the API reports it as complete for that reason.
+      mfaComplete: me.mfaComplete !== false,
+    });
+
+    const state = el('totp-state');
+    state.textContent = view.headline;
+    state.dataset.tone = view.tone;
+
+    el('totp-begin').textContent = view.enrollLabel;
+    el('totp-replace-warning').textContent = view.replaceWarning ?? '';
+    el('totp-replace-warning').hidden = view.replaceWarning === null;
+
+    el('elevate-panel').hidden = !view.needsElevation;
+
+    el('revoke-others').disabled = !view.canRevokeOthers;
+    el('revoke-note').textContent = view.revokeNote;
+  }
+
+  el('totp-begin').addEventListener('click', async () => {
+    const button = el('totp-begin');
+    button.disabled = true;
+    try {
+      const body = await api('/v1/auth/totp/enroll', { method: 'POST' });
+      pendingTotpSecret = body.secret;
+      el('totp-secret').textContent = body.secret;
+      renderTotpQr(body.uri);
+      el('totp-codes').hidden = true;
+      el('totp-start').hidden = true;
+      el('totp-scan').hidden = false;
+      el('totp-code').value = '';
+      el('totp-code').focus();
+    } catch (problem) {
+      /**
+       * The one refusal worth explaining here: replacing an authenticator takes the
+       * authenticator it replaces, and this session has not shown a code. The panel that
+       * takes one is already on this page, so point at it rather than restating the error.
+       */
+      flash(
+        problem.code === 'mfa_required'
+          ? 'Enter a code from the app you have now, below, before setting up a new one.'
+          : problem.message,
+        'error',
+      );
+      if (problem.code === 'mfa_required') {
+        cache.me = { ...(cache.me || {}), totpEnabled: true, mfaComplete: false };
+        renderSecurity();
+        el('elevate-code').focus();
+      }
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  el('totp-cancel').addEventListener('click', () => {
+    /**
+     * Abandoning an enrolment costs nothing — the new secret is kept apart from the live
+     * one until a code proves it — so this really is just closing the form.
+     */
+    resetTotpForm();
+  });
+
+  el('totp-confirm-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = el('totp-confirm');
+    button.disabled = true;
+    try {
+      const body = await api('/v1/auth/totp/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ code: el('totp-code').value.trim() }),
+      });
+
+      const codes = body.recoveryCodes || [];
+      /**
+       * The state first, then the codes.
+       *
+       * `refresh` resets this form, which includes clearing the recovery codes — they are
+       * shown once and leaving the tab is the once. So they are written in after it, or
+       * they would be wiped by the reload that put them there.
+       */
+      await refresh('security');
+      el('totp-codes-value').textContent = codes.join('\n');
+      el('totp-codes').hidden = codes.length === 0;
+      flash('Two-factor authentication is on. Save the recovery codes — they are shown once.', 'ok');
+    } catch (problem) {
+      reportProblem(problem);
+      el('totp-code').value = '';
+      el('totp-code').focus();
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  el('elevate-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      await api('/v1/auth/mfa', {
+        method: 'POST',
+        body: JSON.stringify({ code: el('elevate-code').value.trim() }),
+      });
+      el('elevate-code').value = '';
+      flash('Unlocked. This session can make changes until you sign out.', 'ok');
+      await refresh('security');
+    } catch (problem) {
+      reportProblem(problem);
+      el('elevate-code').value = '';
+      el('elevate-code').focus();
+    }
+  });
+
+  el('revoke-others').addEventListener('click', async () => {
+    const button = el('revoke-others');
+    button.disabled = true;
+    try {
+      await api('/v1/auth/sessions/revoke-others', { method: 'POST' });
+      flash('Every other browser and device is signed out.', 'ok');
+    } catch (problem) {
+      reportProblem(problem);
+    } finally {
+      // Re-render rather than simply re-enabling: whether it is available at all is a
+      // question about the session, and the answer may have just changed.
+      renderSecurity();
     }
   });
 
@@ -2345,7 +2689,10 @@
     const base = '/v1/organizations/' + orgId;
     try {
       if (view === 'overview') {
-        const [commission, report, assets, payouts, endpoints, keys, invoices] = await Promise.all([
+        const [me, commission, report, assets, payouts, endpoints, keys, invoices] = await Promise.all([
+          // For the checklist: whether an authenticator is enrolled is one of the things
+          // standing between this account and its first live payment.
+          api('/v1/auth/me'),
           api(base + '/commission'),
           api(base + '/reports/volume'),
           api(base + '/assets'),
@@ -2356,6 +2703,7 @@
         ]);
         cache = {
           ...cache,
+          me,
           commission,
           report,
           assets: assetList(assets),
@@ -2400,6 +2748,12 @@
         cache.members = members.data || members.members || [];
         cache.invites = invites.data || invites.invites || [];
         renderTeam();
+      } else if (view === 'security') {
+        // What this session is, asked again rather than remembered: enrolling clears the
+        // proven factor, and a second window may have enrolled or unlocked since.
+        cache.me = await api('/v1/auth/me');
+        resetTotpForm();
+        renderSecurity();
       } else if (view === 'commission') {
         /**
          * Both, together, because they are one question.
@@ -2489,6 +2843,9 @@
     orgName = first.name || '';
     myRole = first.role || null;
     el('whoami-org').textContent = orgName;
+    // Kept, not refetched: the overview and the security tab both ask what this session
+    // is, and it is the same answer the door already gave.
+    cache.me = me;
     myEmail = me.email || '';
     el('whoami-mode').textContent = myEmail;
     el('whoami').hidden = false;

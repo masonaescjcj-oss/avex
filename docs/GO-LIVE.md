@@ -130,6 +130,15 @@ challenge and no session, so enrolling it is not optional.
 
 ### 5. TRON deposit wallets — *needs the operator*
 
+**Turn on two-factor authentication first**, on the dashboard's Security tab. Registering a
+deposit wallet, setting a payout address and creating a live key all carry
+`payout_address:write` or another elevation-gated permission, so an account without an
+authenticator is refused all three. The tab hands over a QR and the key in text, takes a
+six-digit code, and then shows ten recovery codes once — only hashes are kept, so that once is
+the only time. Moving to a new phone later is safe: the replacement secret is held apart from
+the live one until a code proves it, so the app in hand keeps working and an abandoned
+enrolment costs nothing.
+
 Three to five TRON addresses, registered in the dashboard. **The keys stay with the merchant**;
 we only ever hold the addresses. A TRON endpoint goes in `EVM_RPC_URLS` as
 `tron=https://api.trongrid.io/jsonrpc` — TRON exposes an Ethereum-compatible JSON-RPC, which is

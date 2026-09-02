@@ -17,8 +17,9 @@ twelve-phase build plan.
 ```
 packages/core       chain adapters, fee policy, settlement, invoice domain
 packages/ui-format  money and time formatting, shared by every panel
+packages/qr         QR encoder, for the checkout's address and the dashboard's 2FA
 apps/api            platform: identity, organisations, credentials, audit
-apps/checkout       the payer-facing page and receipt, and the QR encoder
+apps/checkout       the payer-facing page and receipt
 apps/merchant       the merchant dashboard
 apps/admin          the staff panel
 apps/site           the public site and its documentation

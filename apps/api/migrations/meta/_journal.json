@@ -176,6 +176,13 @@
       "when": 1787385631807,
       "tag": "0024_payer_pays_network_fee",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788363085893,
+      "tag": "0025_totp_pending_secret",
+      "breakpoints": true
     }
   ]
 }
