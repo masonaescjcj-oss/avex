@@ -842,7 +842,15 @@ start_services() {
   # when the API starts and only read by the watcher, so a watcher started first on a fresh
   # database has an approved, listed nothing to look for. It refuses to start and says why, which
   # is correct and baffling if you do not know the order.
-  systemctl enable --now avex-api.service
+  # `enable` then `restart`, not `enable --now`.
+  #
+  # `--now` starts a stopped unit and leaves a running one exactly as it is — which is wrong
+  # for the case this script is run in most often. An update is a re-run: the code under the
+  # service has just been replaced and rebuilt, so a unit that was already up is still serving
+  # the old build, and the script would report success having changed nothing that runs.
+  # `restart` starts it either way.
+  systemctl enable avex-api.service
+  systemctl restart avex-api.service
   info "avex-api starting; waiting for it to answer"
 
   local healthy=0 _
@@ -862,7 +870,8 @@ start_services() {
   fi
 
   info "the API answers on 127.0.0.1:$API_PORT"
-  systemctl enable --now avex-watcher.service
+  systemctl enable avex-watcher.service
+  systemctl restart avex-watcher.service
   sleep 3
   if systemctl is-active --quiet avex-watcher.service; then
     info "the watcher is running"
