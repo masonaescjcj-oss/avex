@@ -12,6 +12,10 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design and the
 reasoning behind it, and [`docs/roadmap.html`](docs/roadmap.html) for the
 twelve-phase build plan.
 
+[`docs/LIVE-STATE-fa.md`](docs/LIVE-STATE-fa.md) records the running deployment as it
+actually is — ports, services, which database, where each secret lives and which of them
+cannot be recovered — so none of it depends on somebody remembering.
+
 ## Layout
 
 ```
