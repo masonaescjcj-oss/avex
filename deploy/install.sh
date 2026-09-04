@@ -134,6 +134,9 @@ usage() {
 usage: sudo bash deploy/install.sh [options]
 
   --check          Report what the host has and what would change. Changes nothing.
+  --report         Report what is deployed right now: the commit, the services, the
+                   database schema against this checkout, and the last errors logged.
+                   Read-only, and the output is safe to paste.
   --selftest       Generate the env file and the units into a temporary directory, validate
                    them, and delete them. Touches nothing real.
   --check-db       Ask for the two connection strings and test them: connect, authenticate,
@@ -1319,12 +1322,112 @@ check_db() {
   return "$status"
 }
 
+# ── what is actually running ─────────────────────────────────────────────────
+#
+# One command, whose output is safe to paste anywhere. Written because a live deployment
+# failed in a way nothing could see from outside: the API answered health checks, one
+# endpoint returned 500, and every question worth asking — which commit is running, did the
+# migrations apply, which database is it even pointed at, what did it log — needed a
+# different command and a person at a terminal to run it.
+#
+# Read-only throughout. It starts nothing, writes nothing and changes nothing.
+report() {
+  step "What is deployed"
+
+  if [[ -f $CONF_DIR/build ]]; then
+    line 'commit' "$(sed -n 's/^commit=//p' "$CONF_DIR/build")"
+    line 'branch' "$(sed -n 's/^branch=//p' "$CONF_DIR/build")"
+    line 'built' "$(sed -n 's/^built=//p' "$CONF_DIR/build")"
+  else
+    line 'commit' 'no build stamp — this predates the installer writing one'
+  fi
+
+  if [[ -d $APP_DIR/.git ]]; then
+    line 'checkout' "$(git -C "$APP_DIR" log --oneline -1 2>&1 | head -c 90)"
+    local dirty
+    dirty=$(git -C "$APP_DIR" status --porcelain 2>/dev/null | wc -l)
+    (( dirty == 0 )) || line 'uncommitted' "$dirty file(s) changed on the server"
+  else
+    line 'checkout' "$APP_DIR is not a git checkout"
+  fi
+
+  step "Services"
+  local unit
+  for unit in avex-api avex-watcher; do
+    local state since
+    state=$(systemctl is-active "$unit.service" 2>/dev/null || true)
+    since=$(systemctl show "$unit.service" -p ActiveEnterTimestamp --value 2>/dev/null || true)
+    line "$unit" "${state:-unknown}${since:+ — since $since}"
+  done
+
+  # The port it is configured with, not the default this script starts from: `pick_port`
+  # does not run in this mode, and asking the wrong port reports a healthy API as dead.
+  if [[ -f $ENV_FILE ]]; then
+    local configured
+    configured=$(sed -n "s/^PORT='\?\([0-9]\+\)'\?$/\1/p" "$ENV_FILE" | head -1)
+    [[ -z $configured ]] || API_PORT=$configured
+  fi
+
+  # Its own answer, from the loopback, so a reverse proxy cannot flatter it.
+  local health
+  health=$(curl -fsS --max-time 5 "http://127.0.0.1:$API_PORT/health" 2>/dev/null || true)
+  # curl's own diagnosis is noise here: on this port either the API answers or it does not.
+  [[ -n $health ]] || health='no answer — the API is not listening on this port'
+  line "health on :$API_PORT" "$(printf '%s' "$health" | head -c 200)"
+
+  step "Database"
+  if [[ ! -f $ENV_FILE ]]; then
+    warn "$ENV_FILE does not exist, so there is nothing to check against."
+  elif [[ ! -f $APP_DIR/deploy/report-db.mjs ]]; then
+    warn "this checkout has no deploy/report-db.mjs — update it and run this again."
+  else
+    # Through with_env, so the connection string comes from api.env and is never typed,
+    # printed or passed on a command line where `ps` would show it.
+    with_env node deploy/report-db.mjs || true
+  fi
+
+  step "Recent errors"
+  #
+  # Level 50 is pino's `error`, which is what the API logs an unhandled failure at — the
+  # one that becomes "Something went wrong on our side" with a request id beside it.
+  #
+  # Redacted on the way out: a connection error can carry the string it failed to connect
+  # with, and this output is meant to be pasteable.
+  #
+  # `|| true` on the assignment, and it is load-bearing: a command substitution takes the
+  # exit status of its pipeline, `grep` finding nothing is a failure, and under `set -e`
+  # this function ended silently at exactly the moment there was nothing wrong to report.
+  local errors
+  errors=$(journalctl -u avex-api.service -n 400 --no-pager 2>/dev/null |
+    grep '"level":50' | tail -5 | sed -E 's#://[^@ "]*@#://***:***@#g' | cut -c1-400) || true
+  if [[ -z $errors ]]; then
+    line 'avex-api' 'nothing at error level in the last 400 lines'
+  else
+    printf '%s\n' "$errors" | sed 's/^/      /'
+  fi
+
+  errors=$(journalctl -u avex-watcher.service -n 200 --no-pager 2>/dev/null |
+    grep -E '"level":(50|60)' | tail -3 | sed -E 's#://[^@ "]*@#://***:***@#g' | cut -c1-400) || true
+  [[ -z $errors ]] || printf '%s\n' "$errors" | sed 's/^/      /'
+
+  # Memory is already reported at the top of every run, so only the disk is left — and it
+  # is here because "no space left on device" during an update leaves exactly the state
+  # this report exists to explain: new code, old build, nothing saying why.
+  local where=$APP_DIR
+  [[ -d $where ]] || where=/
+  line 'disk' "$(df -h "$where" 2>/dev/null | awk 'NR==2 {print $4 " free of " $2}')"
+
+  printf '\n'
+  info "read-only: nothing was started, written or changed."
+}
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 main() {
   while [[ $# -gt 0 ]]; do
     case $1 in
       --check)       MODE=check; shift ;;
+      --report)      MODE=report; shift ;;
       --check-db)    MODE=check-db; shift ;;
       --selftest)    MODE=selftest; shift ;;
       --reconfigure) MODE=reconfigure; shift ;;
@@ -1355,6 +1458,11 @@ main() {
 
   if [[ $MODE == check ]]; then
     report_check
+    exit 0
+  fi
+
+  if [[ $MODE == report ]]; then
+    report
     exit 0
   fi
 

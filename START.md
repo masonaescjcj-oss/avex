@@ -167,12 +167,21 @@ systemctl status avex-api avex-watcher --no-pager | head -20
 
 ## اگر هر جا گیر کردی
 
-این را بزن و خروجی‌اش را بفرست:
+**یک دستور**، و خروجی‌اش را بفرست:
 
 ```bash
-cd /opt/avex && bash deploy/install.sh --check
-journalctl -u avex-api -n 30 --no-pager
-journalctl -u avex-watcher -n 30 --no-pager
+sudo bash /opt/avex/deploy/install.sh --report
+```
+
+می‌گوید چه کامیتی نصب است، سرویس‌ها زنده‌اند یا نه، دیتابیس با این بیلد جور است یا عقب
+است (یا کلاً دیتابیس دیگری است)، و آخرین خطاهایی که API لاگ کرده. هیچ چیزی را عوض
+نمی‌کند و خروجی‌اش رمز ندارد — می‌شود همان‌طور کپی کرد.
+
+اگر آن دستور هنوز روی سرورت نیست، اول کد را بگیر:
+
+```bash
+cd /opt/avex && git fetch origin claude/avex-pay-setup-cnlasi &&
+  git checkout -B claude/avex-pay-setup-cnlasi origin/claude/avex-pay-setup-cnlasi
 ```
 
 ## دستورهایی که بعداً لازم می‌شوند
@@ -183,6 +192,9 @@ sudo bash deploy/install.sh --reconfigure
 
 # کد جدید آمد؟
 sudo bash deploy/install.sh
+
+# چی الان واقعاً نصب و اجرا است؟ (چیزی را عوض نمی‌کند)
+sudo bash deploy/install.sh --report
 
 # لاگ زنده
 journalctl -u avex-watcher -f
