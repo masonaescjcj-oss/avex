@@ -26,6 +26,7 @@ import { WalletPoolChanges, WalletPoolService } from './domain/wallet-pool-servi
 import { paymentValueSource, paymentValueUsd } from './domain/payment-valuation.js';
 import { FeePlanService } from './domain/fee-plan-service.js';
 import { ChainMinimums } from './domain/chain-minimums.js';
+import { feePolicy } from './fee-policy.js';
 import { RpcGasOracle } from './domain/gas-oracle.js';
 import { InviteService } from './domain/invite-service.js';
 import { InvoiceCreationService } from './domain/invoice-creation.js';
@@ -201,13 +202,23 @@ export function compose(options: ComposeOptions): Composed {
    * figure it is charged against. Two probes could disagree by a block and produce an invoice
    * that was accepted at one gas price and priced at another.
    */
-  const minimums = new ChainMinimums(gas);
+  /**
+   * One policy for the whole process, from the environment.
+   *
+   * The minimum an invoice must clear and the commission it carries come out of the same
+   * numbers, so they cannot be allowed to come from two objects: a deployment that lowered
+   * its floor and left the commission service on the compiled-in default would accept an
+   * order at one policy and price it at another.
+   */
+  const policy = feePolicy(env);
+  const minimums = new ChainMinimums(gas, policy);
 
   const feePlans = new FeePlanService(db, audit, {
     feeCollectors: env.FEE_COLLECTORS,
     ledger,
     gas,
     warn,
+    feePolicy: policy,
   });
 
   /**

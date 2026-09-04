@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(here, '..', 'src', 'compose.ts'), 'utf8');
+const settlement = readFileSync(join(here, '..', 'src', 'settle', 'start.ts'), 'utf8');
 
 describe('the composed graph', () => {
   test('signup creates a fee plan for the new organization', () => {
@@ -47,6 +48,52 @@ describe('the composed graph', () => {
       source,
       /ensureForOrganization\(\s*organizationId\s*,\s*new Date\(\)\s*,\s*tx\s*\)/,
       'the fee plan must be created with the signup transaction, not the connection pool',
+    );
+  });
+
+  test('the deployment\'s fee policy reaches both services that read it', () => {
+    /**
+     * `ChainMinimums` and `FeePlanService` both take a policy and both fall back to the
+     * compiled defaults when given none — which is right for a class that has to be testable
+     * on its own, and silent when it is the real graph that forgot. The failure it produces:
+     * a deployment lowers its minimum invoice, the order is accepted at the new floor and
+     * priced by the old rule, and neither number appears anywhere near the other.
+     *
+     * So the wiring is asserted here. There is no behaviour test that could: every HTTP suite
+     * builds its own graph, and the defaults are correct in all of them.
+     */
+    assert.match(
+      source,
+      /const policy = feePolicy\(env\)/,
+      'compose.ts must build one policy from the environment',
+    );
+    assert.match(
+      source,
+      /new ChainMinimums\(gas, policy\)/,
+      'the minimum-invoice check must use the configured policy, not the compiled default',
+    );
+    assert.match(
+      source,
+      /new FeePlanService\([\s\S]*?feePolicy: policy[\s\S]*?\)/,
+      'the commission service must use the same policy the minimum check does',
+    );
+  });
+
+  test('the settlement runner reads the same configuration', () => {
+    /**
+     * It decides whether a settlement is worth its gas, from the same numbers that decided
+     * the invoice was worth taking. A runner on the compiled defaults would defer settlements
+     * a deployment had configured itself to make — in a process the API cannot see.
+     */
+    assert.match(
+      settlement,
+      /policyFromEnv\(env\)/,
+      "settle/start.ts must build its policy from the environment",
+    );
+    assert.doesNotMatch(
+      settlement,
+      /new FeePolicy\(DEFAULT_FEE_POLICY\)/,
+      'the settlement runner must not compile in its own policy',
     );
   });
 });

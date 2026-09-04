@@ -32,6 +32,8 @@ const BASE: Env = {
   DIRECT_DATABASE_URL: undefined,
   CRON_SECRET: undefined,
   BUILD_STAMP_FILE: '/nonexistent/avex/build',
+  MIN_INVOICE_USD: 0.5,
+  MIN_INVOICE_FEE_RATIO: 0.004,
   RUN_JOBS_IN_PROCESS: true,
   APP_URL: 'https://avexpay.net',
   SESSION_TTL_HOURS: 336,

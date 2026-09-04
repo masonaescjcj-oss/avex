@@ -1,9 +1,7 @@
 import {
-  DEFAULT_FEE_POLICY,
   DEFAULT_RUNNER,
   EVM_CHAIN_IDS,
   EvmChainSigner,
-  FeePolicy,
   SettlementRunner,
   evmChainId,
 } from '@avex/core';
@@ -11,6 +9,7 @@ import type { ChainAdapter, ChainId } from '@avex/core';
 
 import type { Database } from '../db/client.js';
 import { ChainMinimums } from '../domain/chain-minimums.js';
+import { feePolicy as policyFromEnv } from '../fee-policy.js';
 import { RpcGasOracle } from '../domain/gas-oracle.js';
 import { SettlementSource } from '../domain/settlement-source.js';
 import { SettlementStore } from '../domain/settlement-store.js';
@@ -103,7 +102,10 @@ export async function startSettlement(input: StartSettlementInput): Promise<read
 
   const store = new SettlementStore(db);
   const source = new SettlementSource(db);
-  const feePolicy = new FeePolicy(DEFAULT_FEE_POLICY);
+  // The same policy the API applies, from the same configuration: this is the object that
+  // decides whether a settlement is worth its gas, and it must not disagree with the one
+  // that decided the invoice was worth taking.
+  const feePolicy = policyFromEnv(env);
 
   /**
    * A line when critical alerts have nowhere to go.
@@ -190,7 +192,9 @@ export async function startSettlement(input: StartSettlementInput): Promise<read
       wallet: signer.address,
       nonce: started.nonce,
       orphansPending: started.orphans,
-      minimumInvoiceUsd: (await new ChainMinimums(oracle).minInvoiceUsdMicros(chain)) ?? null,
+      // The configured policy, so the line an operator reads is the floor actually applied.
+      minimumInvoiceUsd:
+        (await new ChainMinimums(oracle, feePolicy).minInvoiceUsdMicros(chain)) ?? null,
     });
 
     handles.push(

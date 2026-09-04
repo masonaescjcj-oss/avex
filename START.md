@@ -196,6 +196,12 @@ sudo bash deploy/install.sh
 # چی الان واقعاً نصب و اجرا است؟ (چیزی را عوض نمی‌کند)
 sudo bash deploy/install.sh --report
 
+# می‌خواهی با چند سنت تست کنی؟
+# روی TRON لازم نیست — حداقلی ندارد. این فقط برای زنجیره‌های EVM است:
+printf "MIN_INVOICE_FEE_RATIO='0.5'\nMIN_INVOICE_USD='0.05'\n" >> /etc/avex/api.env
+systemctl restart avex-api avex-watcher
+# بعد از تست هر دو خط را از api.env بردار.
+
 # لاگ زنده
 journalctl -u avex-watcher -f
 ```

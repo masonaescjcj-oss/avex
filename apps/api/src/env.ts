@@ -196,6 +196,25 @@ const schema = z.object({
    */
   BUILD_STAMP_FILE: z.string().default(DEFAULT_BUILD_STAMP_FILE),
 
+  /**
+   * The floor on invoice value, in dollars, where there is no settlement to pay for.
+   *
+   * The whole of the minimum on TRON and TON. Kept low on purpose — a fifty-cent order on a
+   * chain that settles directly costs us nothing to take — and configurable so a real
+   * payment can be tested for pennies without editing the fee library.
+   */
+  MIN_INVOICE_USD: z.coerce.number().nonnegative().default(0.5),
+
+  /**
+   * The floor on the chains we do pay to settle, as a ratio: minimum = cost ÷ this.
+   *
+   * 0.004 is the lowest published commission, which is what makes the floor hold for every
+   * merchant rather than only for a new one — the derivation is in `FeePolicyConfig`. Raise
+   * it to take small EVM invoices, understanding that it is the margin absorbing a chain
+   * that got dearer between pricing an invoice and settling it.
+   */
+  MIN_INVOICE_FEE_RATIO: z.coerce.number().positive().max(1).default(0.004),
+
   /** One wallet per shared-address chain, as `chain=address`. TON today. */
   SHARED_DEPOSIT_WALLETS: z.string().default('').transform(parsePairs),
 
