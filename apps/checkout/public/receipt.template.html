@@ -11,6 +11,7 @@
   would have sent every request to the static host.
 -->
 <meta name="avex-api" content="">
+<meta name="theme-color" content="#000000">
 <title>Receipt · AVEX Pay</title>
 <style>
   /**
@@ -25,16 +26,23 @@
    * and inverts for print, because a receipt printed as white-on-black wastes a
    * cartridge and comes out grey. The print rules at the bottom are not an
    * afterthought; a receipt that cannot be printed is not finished.
+   *
+   * The tokens are the checkout page's: the same 8px spacing scale, the same radii,
+   * the same 44px minimum for anything a thumb presses. A payer arrives here from
+   * that page and the two should read as one product.
    */
   :root {
     --void: #000000;
     --card: #121212;
     --card-2: #1A1A1A;
+    --card-3: #242424;
     --line: #262626;
+    --line-2: #333333;
 
     --ink: #FFFFFF;
-    --muted: #8B8B8B;
-    --faint: #5A5A5A;
+    /* Raised from #8B8B8B and #5A5A5A so secondary copy clears 4.5:1 on every card. */
+    --muted: #A3A3A3;
+    --faint: #8C8C8C;
 
     --lime: #C6F73F;
     --lime-ink: #0A0A0A;
@@ -43,17 +51,32 @@
 
     --teal: #2ED3A0;
     --teal-wash: rgba(46, 211, 160, 0.12);
+    --teal-edge: rgba(46, 211, 160, 0.35);
     --amber: #F5A623;
     --amber-wash: rgba(245, 166, 35, 0.14);
+    --amber-edge: rgba(245, 166, 35, 0.4);
     --coral: #FF5A4E;
     --coral-wash: rgba(255, 90, 78, 0.12);
+    --coral-edge: rgba(255, 90, 78, 0.5);
 
     --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif;
     --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 
     --r-lg: 20px;
     --r-md: 14px;
+    --r-sm: 10px;
     --pill: 999px;
+
+    --sp-1: 0.25rem;
+    --sp-2: 0.5rem;
+    --sp-3: 0.75rem;
+    --sp-4: 1rem;
+    --sp-5: 1.25rem;
+    --sp-6: 1.5rem;
+    --sp-8: 2rem;
+
+    --tap: 2.75rem;
+    --focus: 2px solid var(--lime);
 
     --s-2: 0.6875rem;
     --s-1: 0.8125rem;
@@ -64,22 +87,28 @@
   }
 
   *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+
+  html { -webkit-text-size-adjust: 100%; }
 
   body {
     margin: 0;
+    min-height: 100dvh;
     background: var(--void);
     color: var(--ink);
     font-family: var(--sans);
     font-size: var(--s0);
-    line-height: 1.6;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
   }
 
   .sheet {
-    max-width: 44rem;
+    max-width: 40rem;
     margin: 0 auto;
-    padding: clamp(1.25rem, 4vw, 2.5rem) clamp(1rem, 4vw, 2rem) 3rem;
+    padding: var(--sp-4) var(--sp-3) var(--sp-8);
   }
+
+  button:focus-visible, a:focus-visible { outline: var(--focus); outline-offset: 2px; }
 
   /* ── masthead ─────────────────────────────────────────────────────────── */
 
@@ -88,13 +117,13 @@
     flex-wrap: wrap;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 1rem;
-    padding-bottom: 1rem;
+    gap: var(--sp-3) var(--sp-4);
+    padding-bottom: var(--sp-4);
     border-bottom: 1px solid var(--line);
   }
   .brand {
     font-size: var(--s1); font-weight: 800; letter-spacing: -0.02em;
-    display: flex; align-items: center; gap: 0.45rem;
+    display: flex; align-items: center; gap: var(--sp-2);
   }
   /**
    * The mark, in the palette's own tokens rather than in hex.
@@ -104,65 +133,118 @@
    * printed receipt — a grey smear on a laser printer, and ink spent on decoration. Written
    * in tokens it inverts with everything else: black square, white arches.
    */
-  .brand-mark { width: 1.6rem; height: 1.6rem; flex: none; display: block; }
+  .brand-mark { width: 1.75rem; height: 1.75rem; flex: none; display: block; }
   .brand-pay { color: var(--lime); }
   .doc-label {
     font-family: var(--mono);
     font-size: var(--s-2);
-    letter-spacing: 0.14em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--faint);
   }
+  .top-right { text-align: end; min-width: 0; }
   .number {
     font-family: var(--mono);
     font-size: var(--s1);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  /* ── cards ────────────────────────────────────────────────────────────── */
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: var(--sp-4);
+    margin-top: var(--sp-3);
   }
 
   /* ── verdict ──────────────────────────────────────────────────────────── */
 
   .verdict {
-    margin: 1.5rem 0;
-    padding: 1.125rem 1.25rem;
+    margin-top: var(--sp-4);
+    padding: var(--sp-4);
     border-radius: var(--r-lg);
-    border: 1px solid var(--lime-edge);
-    background: var(--lime-wash);
+    border: 1px solid var(--teal-edge);
+    background: var(--teal-wash);
+    display: flex;
+    gap: var(--sp-3);
+    align-items: flex-start;
   }
-  .verdict[data-tone="warn"] { border-color: var(--amber); background: var(--amber-wash); }
-  .verdict-head { font-size: var(--s2); font-weight: 800; letter-spacing: -0.02em; color: var(--lime); }
+  .verdict[data-tone="warn"] { border-color: var(--amber-edge); background: var(--amber-wash); }
+  .verdict-mark {
+    flex: none;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 50%;
+    background: var(--teal);
+    display: grid;
+    place-items: center;
+    margin-top: 0.125rem;
+  }
+  .verdict-mark::after {
+    content: '';
+    width: 0.4375rem;
+    height: 0.75rem;
+    border-right: 2.5px solid var(--lime-ink);
+    border-bottom: 2.5px solid var(--lime-ink);
+    transform: translateY(-2px) rotate(45deg);
+  }
+  .verdict[data-tone="warn"] .verdict-mark { background: var(--amber); }
+  .verdict[data-tone="warn"] .verdict-mark::after {
+    content: '!';
+    width: auto; height: auto; border: none; transform: none;
+    color: var(--lime-ink); font-weight: 800; font-size: 1rem; line-height: 1;
+  }
+  .verdict-text { min-width: 0; }
+  .verdict-head { font-size: var(--s2); font-weight: 800; letter-spacing: -0.02em; color: var(--teal); line-height: 1.25; }
   .verdict[data-tone="warn"] .verdict-head { color: var(--amber); }
-  .verdict-note { font-size: var(--s-1); color: var(--ink); margin: 0.35rem 0 0; }
+  .verdict-note { font-size: var(--s-1); color: var(--ink); margin: var(--sp-2) 0 0; line-height: 1.5; }
 
   .rehearsal {
-    margin: 1.5rem 0;
-    padding: 1rem 1.125rem;
+    margin-top: var(--sp-4);
+    padding: var(--sp-4);
     border-radius: var(--r-md);
     border: 1px solid var(--coral);
     background: var(--coral-wash);
     font-size: var(--s-1);
+    line-height: 1.5;
   }
-  .rehearsal strong { color: var(--coral); }
+  .rehearsal strong { color: var(--coral); display: block; font-size: var(--s0); margin-bottom: var(--sp-1); }
 
   /* ── the amount ───────────────────────────────────────────────────────── */
 
+  .hero { background: var(--card-2); }
+  .hero-label {
+    font-size: var(--s-2);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    margin: 0 0 var(--sp-2);
+  }
   .headline {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 0.5rem;
-    margin: 1.5rem 0 0.25rem;
+    gap: var(--sp-2);
+    margin: 0;
   }
+  /* Sized so a full eighteen-decimal figure stays on one line at 360px — a receipt that
+     breaks its own amount across two lines is a receipt somebody misreads. */
   .headline-amount {
     font-family: var(--mono);
-    font-size: var(--s3);
+    font-size: clamp(1.25rem, 6vw, var(--s3));
     font-weight: 700;
     letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
+    line-height: 1.1;
   }
   .headline-unit { font-family: var(--mono); font-size: var(--s1); color: var(--muted); }
-  .headline-fiat { font-size: var(--s-1); color: var(--muted); margin: 0 0 1.5rem; }
+  .headline-fiat { font-size: var(--s-1); color: var(--muted); margin: var(--sp-2) 0 0; }
 
   /* ── rows ─────────────────────────────────────────────────────────────── */
 
@@ -170,67 +252,88 @@
     font-size: var(--s-2);
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
     font-weight: 700;
-    margin: 1.75rem 0 0.5rem;
+    margin: 0 0 var(--sp-2);
   }
+  .card h2 + p { margin-top: 0; }
 
   dl { margin: 0; }
   .row {
     display: grid;
-    grid-template-columns: minmax(7rem, 12rem) 1fr;
-    gap: 0.35rem 1rem;
-    padding: 0.55rem 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-1) var(--sp-4);
+    padding: var(--sp-2) 0;
     border-bottom: 1px solid var(--line);
     font-size: var(--s-1);
   }
-  .row:last-child { border-bottom: none; }
+  .row:last-child { border-bottom: none; padding-bottom: 0; }
   .row dt { color: var(--muted); margin: 0; }
   .row dd {
     margin: 0;
     font-family: var(--mono);
     font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
+    color: var(--ink);
   }
   .row dd.prose { font-family: var(--sans); }
-  .row dd a { color: var(--lime); text-decoration: underline; text-underline-offset: 2px; }
-
-  @media (max-width: 30rem) {
-    .row { grid-template-columns: 1fr; }
-    .row dt { font-size: var(--s-2); }
+  .row dd a {
+    color: var(--lime);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    /* A tap target the height of a thumb, even for a one-line hash. */
+    display: inline-block;
+    padding: var(--sp-1) 0;
   }
+
+  .proof-note { font-size: var(--s-1); color: var(--muted); margin: 0 0 var(--sp-2); line-height: 1.5; }
 
   /* ── actions ──────────────────────────────────────────────────────────── */
 
-  .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 2rem; }
+  .actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-5); }
   button {
     font: inherit;
     font-size: var(--s-1);
     font-weight: 700;
+    min-height: var(--tap);
     border-radius: var(--pill);
-    padding: 0.6rem 1.1rem;
-    border: 1px solid var(--line);
+    padding: 0 var(--sp-5);
+    border: 1px solid var(--line-2);
     background: var(--card-2);
     color: var(--ink);
     cursor: pointer;
+    flex: 1 1 12rem;
+    transition: filter 140ms ease, background 140ms ease;
   }
+  button:hover { filter: brightness(1.1); }
   button.primary { background: var(--lime); color: var(--lime-ink); border-color: var(--lime); }
-  button:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
 
-  .foot { margin-top: 2rem; font-size: var(--s-2); color: var(--faint); }
+  .foot { margin-top: var(--sp-5); font-size: var(--s-2); color: var(--faint); line-height: 1.5; }
 
   .fatal {
-    margin: 3rem 0;
-    padding: 1.5rem;
+    margin: var(--sp-8) 0;
+    padding: var(--sp-6);
     border-radius: var(--r-lg);
     border: 1px solid var(--line);
     background: var(--card);
     text-align: center;
   }
   .fatal-head { font-size: var(--s1); font-weight: 700; }
-  .fatal-note { font-size: var(--s-1); color: var(--muted); margin: 0.4rem 0 0; }
+  .fatal-note { font-size: var(--s-1); color: var(--muted); margin: var(--sp-2) 0 0; }
 
-  [hidden] { display: none !important; }
+  @media (min-width: 30rem) {
+    .row { grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr); }
+    button { flex: 0 1 auto; }
+  }
+
+  @media (min-width: 40rem) {
+    .sheet { padding: var(--sp-8) var(--sp-5) var(--sp-8); }
+    .card, .verdict { padding: var(--sp-5); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
 
   /**
    * Print.
@@ -245,15 +348,21 @@
       --void: #FFFFFF;
       --card: #FFFFFF;
       --card-2: #FFFFFF;
+      --card-3: #FFFFFF;
       --line: #CCCCCC;
+      --line-2: #CCCCCC;
       --ink: #000000;
       --muted: #444444;
       --faint: #666666;
       --lime: #000000;
       --lime-wash: transparent;
       --lime-edge: #000000;
+      --teal: #000000;
+      --teal-wash: transparent;
+      --teal-edge: #000000;
       --amber: #000000;
       --amber-wash: transparent;
+      --amber-edge: #000000;
       --coral: #000000;
       --coral-wash: transparent;
     }
@@ -261,8 +370,9 @@
     .sheet { max-width: none; padding: 0; }
     .actions, .no-print { display: none !important; }
     .verdict, .rehearsal { border-width: 2px; }
+    .verdict-mark::after { border-color: #FFFFFF; color: #FFFFFF; }
+    .card { border-color: #CCCCCC; }
     .row dd a::after { content: ' (' attr(href) ')'; font-size: 0.8em; color: #444444; }
-    h2 { margin-top: 1rem; }
   }
 </style>
 
@@ -273,7 +383,7 @@
         <div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--void)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>AVEX<span class="brand-pay">Pay</span></div>
         <div class="doc-label">Payment receipt</div>
       </div>
-      <div style="text-align:end">
+      <div class="top-right">
         <div class="number" id="number">—</div>
         <div class="doc-label" id="paid-at">—</div>
       </div>
@@ -295,39 +405,49 @@
     </div>
 
     <div class="verdict" id="verdict" data-tone="good">
-      <div class="verdict-head" id="verdict-head">Paid in full</div>
-      <p class="verdict-note" id="verdict-note" hidden></p>
+      <span class="verdict-mark" aria-hidden="true"></span>
+      <div class="verdict-text">
+        <div class="verdict-head" id="verdict-head">Paid in full</div>
+        <p class="verdict-note" id="verdict-note" hidden></p>
+      </div>
     </div>
 
-    <div class="headline">
-      <span class="headline-amount" id="amount">—</span>
-      <span class="headline-unit" id="unit"></span>
-    </div>
-    <p class="headline-fiat" id="fiat"></p>
+    <section class="card hero">
+      <p class="hero-label">Amount received</p>
+      <div class="headline">
+        <span class="headline-amount" id="amount">—</span>
+        <span class="headline-unit" id="unit"></span>
+      </div>
+      <p class="headline-fiat" id="fiat"></p>
+    </section>
 
-    <h2>Payment</h2>
-    <dl>
-      <div class="row"><dt>Paid to</dt><dd class="prose" id="merchant">—</dd></div>
-      <div class="row" id="row-description" hidden><dt>For</dt><dd class="prose" id="description"></dd></div>
-      <div class="row" id="row-reference" hidden><dt>Order reference</dt><dd id="reference"></dd></div>
-      <div class="row"><dt>Network</dt><dd id="chain">—</dd></div>
-      <div class="row"><dt>Amount due</dt><dd id="due">—</dd></div>
-      <div class="row"><dt>Amount received</dt><dd id="received">—</dd></div>
-      <!--
-        Shown only when the payer bore the commission. The same disclosure rule as the
-        payment page: you are told what you were charged, and not told what somebody
-        else was charged.
-      -->
-      <div class="row" id="row-fee" hidden><dt id="fee-label">Service fee</dt><dd id="fee"></dd></div>
-      <div class="row" id="row-network-fee" hidden><dt id="network-fee-label">Network fee</dt><dd id="network-fee"></dd></div>
-      <div class="row"><dt>Issued</dt><dd id="issued-at">—</dd></div>
-    </dl>
+    <section class="card">
+      <h2>Payment</h2>
+      <dl>
+        <div class="row"><dt>Paid to</dt><dd class="prose" id="merchant">—</dd></div>
+        <div class="row" id="row-description" hidden><dt>For</dt><dd class="prose" id="description"></dd></div>
+        <div class="row" id="row-reference" hidden><dt>Order reference</dt><dd id="reference"></dd></div>
+        <div class="row"><dt>Network</dt><dd id="chain">—</dd></div>
+        <div class="row"><dt>Amount due</dt><dd id="due">—</dd></div>
+        <div class="row"><dt>Amount received</dt><dd id="received">—</dd></div>
+        <!--
+          Shown only when the payer bore the commission. The same disclosure rule as the
+          payment page: you are told what you were charged, and not told what somebody
+          else was charged.
+        -->
+        <div class="row" id="row-fee" hidden><dt id="fee-label">Service fee</dt><dd id="fee"></dd></div>
+        <div class="row" id="row-network-fee" hidden><dt id="network-fee-label">Network fee</dt><dd id="network-fee"></dd></div>
+        <div class="row"><dt>Issued</dt><dd id="issued-at">—</dd></div>
+      </dl>
+    </section>
 
-    <h2>Proof on chain</h2>
-    <p class="doc-label no-print" style="letter-spacing:0;text-transform:none;margin:0 0 .5rem">
-      The only line here that does not depend on trusting us. Look it up yourself.
-    </p>
-    <dl id="transfers"></dl>
+    <section class="card">
+      <h2>Proof on chain</h2>
+      <p class="proof-note no-print">
+        The only line here that does not depend on trusting us. Look it up yourself.
+      </p>
+      <dl id="transfers"></dl>
+    </section>
 
     <div class="actions">
       <button class="primary" type="button" id="print">Print or save as PDF</button>
