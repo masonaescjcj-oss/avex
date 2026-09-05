@@ -20,9 +20,17 @@
    * acid lime spent on the one thing that matters per view, dark cards at a 14-20px
    * radius, and monospace for every number, address and identifier so figures line up
    * under each other and can be read digit by digit. Dark only, because AVEX has no
-   * light theme.
+   * light theme — so every colour is painted explicitly and `color-scheme: dark` tells
+   * the browser to draw its own widgets (selects, scrollbars) to match.
+   *
+   * Rhythm: every spacing value is a multiple of 4px and the panel padding sits on the
+   * 8px grid (16px on a phone, 24px from a tablet up). One radius scale — panels at
+   * `--r-lg`, tiles and rows at `--r-md`, inputs and banners at `--r-sm`, pills round.
+   * One type scale, `--s-2` to `--s3`. Anything that moves respects reduced motion.
    */
   :root {
+    color-scheme: dark;
+
     --void: #000000;
     --card: #121212;
     --card-2: #1A1A1A;
@@ -31,8 +39,10 @@
     --line-2: #333333;
 
     --ink: #FFFFFF;
-    --muted: #8B8B8B;
-    --faint: #5A5A5A;
+    /* 6.9:1 on --card-2, 5.4:1 on --card-3. The previous #8B8B8B fell to 4.6:1 on the tiles. */
+    --muted: #A3A3A3;
+    /* Labels and disabled controls only, never body copy: 4.6:1 on --card. */
+    --faint: #7D7D7D;
 
     --lime: #C6F73F;
     --lime-ink: #0A0A0A;
@@ -61,9 +71,38 @@
     --s1: 1.0625rem;
     --s2: 1.375rem;
     --s3: 1.875rem;
+
+    /* The 8px grid. */
+    --sp-1: 0.25rem;
+    --sp-2: 0.5rem;
+    --sp-3: 0.75rem;
+    --sp-4: 1rem;
+    --sp-5: 1.5rem;
+    --sp-6: 2rem;
+    --sp-8: 3rem;
+
+    /* Panel padding and the gap between panels, both stepped up once on a tablet. */
+    --pad: var(--sp-4);
+    --gap: var(--sp-3);
+
+    /* Control heights: 44px touch targets on a phone, 40px with a mouse. */
+    --control: 2.75rem;
+    --control-sm: 2.25rem;
+
+    --focus: 0 0 0 2px var(--void), 0 0 0 4px var(--lime);
+    --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px -16px rgba(0, 0, 0, 0.8);
+  }
+
+  @media (min-width: 48em) {
+    :root { --pad: var(--sp-5); --gap: var(--sp-4); }
+  }
+  @media (min-width: 48em) and (pointer: fine) {
+    :root { --control: 2.5rem; --control-sm: 2rem; }
   }
 
   *, *::before, *::after { box-sizing: border-box; }
+
+  html { background: var(--void); -webkit-text-size-adjust: 100%; }
 
   body {
     margin: 0;
@@ -71,11 +110,18 @@
     color: var(--ink);
     font-family: var(--sans);
     font-size: var(--s0);
-    line-height: 1.6;
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+    /* The page never scrolls sideways; anything wider than it scrolls inside its own `.scroll`. */
+    overflow-x: hidden;
   }
 
-  .page { max-width: 78rem; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
+  .page {
+    max-width: 78rem;
+    margin: 0 auto;
+    padding: var(--sp-3) var(--sp-4) var(--sp-8);
+  }
+  @media (min-width: 48em) { .page { padding: var(--sp-4) var(--sp-5) var(--sp-8); } }
 
   /* ── chrome ───────────────────────────────────────────────────────────── */
 
@@ -83,11 +129,17 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    gap: var(--sp-2) var(--sp-4);
     flex-wrap: wrap;
-    margin-bottom: 1.25rem;
+    min-height: 3.5rem;
+    margin-bottom: var(--sp-4);
+    padding-bottom: var(--sp-3);
+    border-bottom: 1px solid var(--line);
   }
-  .brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 800; font-size: var(--s1); }
+  .brand {
+    display: flex; align-items: center; gap: var(--sp-2);
+    font-weight: 800; font-size: var(--s1); letter-spacing: -0.01em; white-space: nowrap;
+  }
   /**
    * The mark, drawn rather than fetched.
    *
@@ -97,148 +149,297 @@
   .brand-mark { width: 1.75rem; height: 1.75rem; flex: none; display: block; }
   .brand-pay { color: var(--lime); }
 
-  .whoami { display: flex; align-items: center; gap: 0.625rem; font-size: var(--s-1); color: var(--muted); }
-  .whoami code { font-family: var(--mono); color: var(--ink); }
-
-  nav.tabs { display: flex; gap: 0.25rem; flex-wrap: wrap; margin-bottom: 1rem; }
-  nav.tabs button {
-    font: inherit; font-size: var(--s-1);
-    padding: 0.4rem 0.85rem; border-radius: var(--pill);
-    background: var(--card-2); color: var(--muted);
-    border: 1px solid var(--line); cursor: pointer;
+  /*
+    Who is signed in, as one compact group that fits beside the mark at 360px: the
+    organisation is allowed to wrap, the address truncates, the button never shrinks.
+  */
+  .whoami {
+    display: flex; align-items: center; gap: var(--sp-2) var(--sp-3);
+    font-size: var(--s-1); color: var(--muted);
+    min-width: 0; max-width: 100%;
   }
-  nav.tabs button:hover { color: var(--ink); }
+  .whoami > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .whoami code {
+    flex: 1 1 auto;
+    font-family: var(--mono); font-size: var(--s-2); color: var(--ink);
+    background: var(--card-2); border: 1px solid var(--line); border-radius: var(--pill);
+    padding: 0.2rem 0.6rem; line-height: 1.4;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Specific enough to beat `button.ghost` below: the one control in the header is a tap target. */
+  .whoami button.ghost { flex: none; min-height: var(--control); }
+
+  /*
+    One strip of tabs, never a stack of them.
+
+    Wrapped, ten tabs took four lines of a phone screen before any figure appeared. Now the
+    row scrolls sideways and the edges fade where there is more — `data-edge` is set by the
+    script from the scroll position, so the fade is only drawn on a side that has anything
+    behind it. The buttons stay `nav.tabs button` with their labels: that is how they are found.
+  */
+  nav.tabs {
+    display: flex; gap: var(--sp-1);
+    flex-wrap: nowrap;
+    /* So a button's `offsetLeft` is measured from the strip, which is what scrolls it into view. */
+    position: relative;
+    overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 calc(-1 * var(--sp-4)) var(--sp-4);
+    padding: var(--sp-1) var(--sp-4);
+    --fade-l: 0px; --fade-r: 0px;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent);
+  }
+  nav.tabs::-webkit-scrollbar { display: none; }
+  nav.tabs[data-edge="right"], nav.tabs[data-edge="both"] { --fade-r: 2.5rem; }
+  nav.tabs[data-edge="left"], nav.tabs[data-edge="both"] { --fade-l: 2.5rem; }
+  @media (min-width: 48em) { nav.tabs { margin-left: calc(-1 * var(--sp-5)); margin-right: calc(-1 * var(--sp-5)); padding-left: var(--sp-5); padding-right: var(--sp-5); } }
+  nav.tabs button {
+    font: inherit; font-size: var(--s-1); font-weight: 600; line-height: 1;
+    flex: none; scroll-snap-align: start;
+    min-height: var(--control-sm);
+    padding: 0 0.9rem; border-radius: var(--pill);
+    background: transparent; color: var(--muted);
+    border: 1px solid transparent; cursor: pointer;
+    white-space: nowrap;
+    transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+  }
+  nav.tabs button:hover { color: var(--ink); background: var(--card-2); }
   nav.tabs button[aria-current="page"] {
     background: var(--lime); color: var(--lime-ink); border-color: var(--lime); font-weight: 700;
   }
 
   /* ── panels ───────────────────────────────────────────────────────────── */
 
-  .panel { background: var(--card); border-radius: var(--r-lg); margin-bottom: 0.875rem; overflow: hidden; }
-  .panel-head {
-    padding: 1rem 1.125rem 0.625rem;
-    display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    margin-bottom: var(--gap);
+    overflow: hidden;
+    box-shadow: var(--shadow);
   }
-  .panel-head h2 { margin: 0; font-size: var(--s0); font-weight: 700; display: flex; align-items: center; gap: 0.4rem; }
-  .panel-body { padding: 0 1.125rem 1.125rem; display: flex; flex-direction: column; gap: 0.875rem; }
+  .panel-head {
+    padding: var(--pad) var(--pad) 0;
+    margin-bottom: var(--sp-3);
+    display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap;
+    min-width: 0;
+  }
+  .panel-head h2 {
+    margin: 0; font-size: var(--s1); font-weight: 700; letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 0.4rem; min-width: 0;
+  }
+  .panel-head > .note { flex: 0 1 auto; text-align: right; }
+  .panel-body { padding: 0 var(--pad) var(--pad); display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
 
-  h1 { font-size: var(--s2); font-weight: 800; margin: 0 0 0.25rem; letter-spacing: -0.015em; }
+  h1 { font-size: var(--s2); font-weight: 800; margin: 0; letter-spacing: -0.015em; line-height: 1.2; }
   p { margin: 0; }
-  .note { font-size: var(--s-1); color: var(--muted); }
-  .warn-note { font-size: var(--s-1); color: var(--amber); }
+  .note { font-size: var(--s-1); color: var(--muted); line-height: 1.6; }
+  .warn-note { font-size: var(--s-1); color: var(--amber); line-height: 1.6; }
 
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.875rem; }
+  /*
+    The sign-in card stands alone in the middle of the page rather than stretching across it:
+    a form three fields long has no business being 78rem wide.
+  */
+  #auth-panel { max-width: 30rem; margin: var(--sp-6) auto; }
+  #auth-panel .panel-head { align-items: center; }
+  #auth-panel .row > button.primary { flex: 1 1 auto; }
+  @media (min-width: 48em) { #auth-panel { margin-top: var(--sp-8); } }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--sp-3); }
 
   /* ── stats ────────────────────────────────────────────────────────────── */
 
-  .stat { background: var(--card-2); border-radius: var(--r-md); padding: 0.875rem 1rem; }
+  /*
+    A KPI row. Label above, figure large, qualifier beneath, and the same padding as every
+    other tile — four of these in one line on a desktop, two by two on a tablet, stacked on
+    a phone, always the same tile.
+  */
+  .stat {
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: var(--sp-4) var(--sp-4) var(--sp-3);
+    display: flex; flex-direction: column; gap: var(--sp-1);
+    min-width: 0;
+  }
   .stat-label { font-size: var(--s-2); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
   .stat-value {
-    font-family: var(--mono); font-size: var(--s3); font-weight: 700;
+    font-family: var(--mono); font-size: clamp(1.5rem, 1.1rem + 1.2vw, var(--s3)); font-weight: 700;
     font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1.15;
+    overflow-wrap: anywhere;
   }
   .stat-value.lime { color: var(--lime); }
   .stat-sub { font-size: var(--s-1); color: var(--muted); }
 
   /* ── free tier bar ────────────────────────────────────────────────────── */
 
-  .bar-track { height: 0.4rem; border-radius: var(--pill); background: var(--card-3); overflow: hidden; }
+  .bar-track { height: 0.375rem; border-radius: var(--pill); background: var(--card-3); overflow: hidden; margin-bottom: var(--sp-2); }
   .bar-fill { height: 100%; background: var(--lime); border-radius: var(--pill); transition: width 240ms ease; }
   /* Part-filled is dimmer than earned: reaching the rung is the good state. */
   .bar-fill[data-earned="false"] { background: var(--lime-dim); }
 
   /* ── checklist ────────────────────────────────────────────────────────── */
 
-  ol.checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-  .check { display: grid; grid-template-columns: 1.5rem 1fr; gap: 0.625rem; align-items: start; }
+  ol.checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .check {
+    display: grid; grid-template-columns: 1.5rem 1fr; gap: var(--sp-3); align-items: start;
+    padding: var(--sp-3) 0;
+    border-top: 1px solid var(--line);
+  }
+  .check:first-child { border-top: 0; padding-top: 0; }
+  .check:last-child { padding-bottom: 0; }
   .check-mark {
     width: 1.5rem; height: 1.5rem; border-radius: 50%;
     display: grid; place-items: center; flex: none;
     font-family: var(--mono); font-size: var(--s-2); font-weight: 700;
     background: var(--card-3); color: var(--muted);
+    border: 1px solid var(--line-2);
   }
-  .check[data-done="true"] .check-mark { background: var(--lime); color: var(--lime-ink); }
+  .check[data-done="true"] .check-mark { background: var(--lime); color: var(--lime-ink); border-color: var(--lime); }
   .check-title { font-weight: 600; }
   .check[data-done="true"] .check-title { color: var(--muted); text-decoration: line-through; }
-  .check-why { font-size: var(--s-1); color: var(--muted); }
+  .check-why { font-size: var(--s-1); color: var(--muted); line-height: 1.6; }
 
   /* ── tables ───────────────────────────────────────────────────────────── */
 
-  .scroll { overflow-x: auto; }
+  /*
+    A table wider than the panel scrolls here, never the page. The fade at an edge is drawn
+    only when there is content behind it, from the same `data-edge` the tab strip uses.
+  */
+  .scroll {
+    overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 calc(-1 * var(--pad));
+    padding: 0 var(--pad);
+    --fade-l: 0px; --fade-r: 0px;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent);
+  }
+  .scroll[data-edge="right"], .scroll[data-edge="both"] { --fade-r: 3rem; }
+  .scroll[data-edge="left"], .scroll[data-edge="both"] { --fade-l: 3rem; }
+  .scroll:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--r-sm); }
   table { width: 100%; border-collapse: collapse; font-size: var(--s-1); }
   th {
-    text-align: left; padding: 0.5rem 0.625rem;
+    text-align: left; padding: var(--sp-2) var(--sp-3);
     font-size: var(--s-2); letter-spacing: 0.06em; text-transform: uppercase;
     color: var(--muted); font-weight: 600; white-space: nowrap;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--line-2);
   }
-  td { padding: 0.55rem 0.625rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td { padding: var(--sp-3); border-bottom: 1px solid var(--line); vertical-align: middle; }
   tr:last-child td { border-bottom: 0; }
-  td.mono, th.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tbody tr { transition: background-color 120ms ease; }
+  tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+  /* Identifiers, addresses and amounts never break across lines: the row scrolls instead. */
+  td.mono, th.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.right, th.right { text-align: right; }
   tr[data-attention="true"] { background: var(--amber-wash); }
+  tr[data-attention="true"]:hover { background: var(--amber-wash); }
+  td:first-child, th:first-child { padding-left: 0; }
+  td:last-child, th:last-child { padding-right: 0; }
+  /* A sentence in a cell gets room to be read as one, rather than a sliver of wrapped words. */
+  td.prose { min-width: 18rem; white-space: normal; line-height: 1.5; }
+  td select, td input { width: auto; min-width: 9rem; min-height: var(--control-sm); padding-top: 0; padding-bottom: 0; font-size: var(--s-1); }
+  td button.ghost { min-height: var(--control-sm); }
 
   /* ── pills ────────────────────────────────────────────────────────────── */
 
   .pill {
-    display: inline-block; font-size: var(--s-2); font-weight: 700;
-    padding: 0.12rem 0.5rem; border-radius: var(--pill);
+    display: inline-flex; align-items: center; font-size: var(--s-2); font-weight: 700; line-height: 1;
+    padding: 0.3rem 0.55rem; border-radius: var(--pill);
     background: var(--card-3); color: var(--muted); white-space: nowrap;
+    vertical-align: middle;
   }
   .pill[data-tone="good"] { background: var(--teal-wash); color: var(--teal); }
   .pill[data-tone="wait"] { background: var(--card-3); color: var(--muted); }
   .pill[data-tone="warn"] { background: var(--amber-wash); color: var(--amber); }
   .pill[data-tone="bad"] { background: var(--coral-wash); color: var(--coral); }
-  .pill[data-tone="dead"] { background: var(--card-3); color: var(--faint); }
+  .pill[data-tone="dead"] { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-2); }
   .pill[data-mode="test"] { background: var(--amber-wash); color: var(--amber); }
   .pill[data-mode="live"] { background: var(--teal-wash); color: var(--teal); }
 
   /* ── forms ────────────────────────────────────────────────────────────── */
 
-  form { display: flex; flex-direction: column; gap: 0.75rem; }
-  .row { display: flex; gap: 0.625rem; flex-wrap: wrap; align-items: flex-end; }
-  label { display: flex; flex-direction: column; gap: 0.25rem; font-size: var(--s-1); color: var(--muted); flex: 1 1 12rem; }
+  form { display: flex; flex-direction: column; gap: var(--sp-3); }
+  .row { display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: flex-end; }
+  label {
+    display: flex; flex-direction: column; gap: var(--sp-1);
+    font-size: var(--s-1); font-weight: 500; color: var(--muted);
+    flex: 1 1 12rem; min-width: 0;
+  }
   input, select, textarea {
     font: inherit; font-size: var(--s0);
-    padding: 0.55rem 0.7rem; border-radius: var(--r-sm);
-    background: var(--card-2); color: var(--ink); border: 1px solid var(--line);
+    width: 100%; min-height: var(--control);
+    padding: 0 var(--sp-3); border-radius: var(--r-sm);
+    background: var(--card-2); color: var(--ink); border: 1px solid var(--line-2);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
   }
-  input:focus, select:focus, textarea:focus { outline: 2px solid var(--lime-edge); outline-offset: 1px; }
+  textarea { padding: var(--sp-2) var(--sp-3); }
+  input::placeholder, textarea::placeholder { color: var(--faint); }
+  input:hover, select:hover, textarea:hover { border-color: #444444; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--lime); box-shadow: 0 0 0 3px var(--lime-edge); }
   input.mono { font-family: var(--mono); }
+  select { padding-right: 2.25rem; appearance: none; -webkit-appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 1.05rem) 50%, calc(100% - 0.7rem) 50%;
+    background-size: 0.35rem 0.35rem, 0.35rem 0.35rem;
+    background-repeat: no-repeat;
+  }
+  /* A button standing in a row of fields sits on the same baseline and the same height. */
+  .row > button { flex: none; }
+  @media (max-width: 30em) {
+    .row > button.primary, .row > button.ghost { flex: 1 1 100%; }
+    label { flex-basis: 100%; }
+  }
 
   button.primary {
-    font: inherit; font-weight: 700; cursor: pointer;
-    padding: 0.6rem 1.1rem; border-radius: var(--pill);
-    background: var(--lime); color: var(--lime-ink); border: 0;
+    font: inherit; font-weight: 700; cursor: pointer; line-height: 1;
+    min-height: var(--control); padding: 0 1.25rem; border-radius: var(--pill);
+    background: var(--lime); color: var(--lime-ink); border: 1px solid var(--lime);
+    transition: filter 120ms ease, transform 120ms ease;
   }
-  button.primary:disabled { background: var(--card-3); color: var(--faint); cursor: default; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.06); }
+  button.primary:active:not(:disabled) { transform: translateY(1px); }
+  button.primary:disabled { background: var(--card-3); color: var(--faint); border-color: var(--card-3); cursor: default; }
   button.ghost {
-    font: inherit; font-size: var(--s-1); cursor: pointer;
-    padding: 0.35rem 0.75rem; border-radius: var(--pill);
-    background: var(--card-2); color: var(--muted); border: 1px solid var(--line);
+    font: inherit; font-size: var(--s-1); font-weight: 600; cursor: pointer; line-height: 1;
+    min-height: var(--control-sm); padding: 0 0.9rem; border-radius: var(--pill);
+    background: var(--card-2); color: var(--muted); border: 1px solid var(--line-2);
+    transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
   }
-  button.ghost:hover:not(:disabled) { color: var(--ink); }
+  .row > button.ghost, form button.ghost { min-height: var(--control); }
+  button.ghost:hover:not(:disabled) { color: var(--ink); border-color: #444444; }
   button.ghost:disabled { opacity: 0.45; cursor: default; }
-  button.danger { color: var(--coral); border-color: var(--coral-wash); }
+  button.danger { color: var(--coral); border-color: rgba(255, 90, 78, 0.35); }
+  button.danger:hover:not(:disabled) { color: var(--coral); background: var(--coral-wash); border-color: var(--coral); }
+
+  /* Every interactive thing shows the same ring when reached from the keyboard. */
+  button:focus-visible, .choice:focus-visible, a:focus-visible { outline: none; box-shadow: var(--focus); }
 
   .banner {
-    padding: 0.7rem 0.9rem; border-radius: var(--r-sm);
-    font-size: var(--s-1); border: 1px solid var(--line);
+    padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm);
+    font-size: var(--s-1); line-height: 1.6; border: 1px solid var(--line);
+    background: var(--card-2); color: var(--ink);
   }
   .banner[data-kind="error"] { background: var(--coral-wash); border-color: var(--coral); color: var(--ink); }
   .banner[data-kind="ok"] { background: var(--teal-wash); border-color: var(--teal); color: var(--ink); }
   .banner[data-kind="warn"] { background: var(--amber-wash); border-color: var(--amber); color: var(--ink); }
+  #preview-banner, #flash { margin-bottom: var(--sp-4); }
   #submit-result { white-space: pre-wrap; }
 
   .group-head {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    margin: 1.1rem 0 0.5rem;
+    gap: var(--sp-3);
+    margin: var(--sp-5) 0 var(--sp-2);
   }
+  .group-head:first-child { margin-top: 0; }
   .group-chain {
     font-family: var(--mono);
     font-size: var(--s-2);
+    font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--faint);
@@ -247,43 +448,47 @@
   .asset-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.75rem;
+    gap: var(--sp-3);
     align-items: flex-start;
     justify-content: space-between;
-    padding: 0.85rem 1rem;
+    padding: var(--sp-4);
     border: 1px solid var(--line);
     border-radius: var(--r-md);
     background: var(--card-2);
   }
-  .asset-row + .asset-row { margin-top: 0.4rem; }
+  .asset-row + .asset-row { margin-top: var(--sp-2); }
   /* Something on but refusing invoices is the only genuinely urgent row. */
   .asset-row[data-state="needs_payout"], .asset-row[data-state="needs_rate"] {
     border-color: var(--amber);
   }
   .asset-row[data-state="accepting"] { border-color: var(--lime-edge); }
   .asset-main { flex: 1 1 16rem; min-width: 0; }
-  .asset-title { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
-  .asset-symbol { font-weight: 700; }
-  .asset-hint { margin: 0.3rem 0 0; }
-  .asset-contract { margin: 0.2rem 0 0; overflow-wrap: anywhere; font-size: var(--s-2); }
-  .asset-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .asset-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+  .asset-symbol { font-weight: 700; font-size: var(--s0); }
+  .asset-hint { margin: var(--sp-1) 0 0; }
+  .asset-contract { margin: var(--sp-1) 0 0; overflow-wrap: anywhere; font-size: var(--s-2); color: var(--faint); }
+  .asset-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
+  .asset-actions button { min-height: var(--control-sm); }
+  @media (max-width: 30em) { .asset-actions { width: 100%; } .asset-actions button { flex: 1 1 auto; } }
 
   /* The who-pays pair. Two buttons rather than a toggle, so neither state is unstated. */
+  #fee-payer-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: var(--sp-3); }
   .choice {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: var(--sp-1);
     width: 100%;
     text-align: left;
     background: var(--card-2);
     border: 1px solid var(--line);
     border-radius: var(--r-md);
-    padding: 0.8rem 0.95rem;
+    padding: var(--sp-4);
     color: var(--ink);
     font: inherit;
     cursor: pointer;
+    transition: border-color 120ms ease, background-color 120ms ease;
   }
-  .choice + .choice { margin-top: 0.5rem; }
+  .choice:hover:not([aria-pressed="true"]) { border-color: var(--line-2); background: var(--card-3); }
   .choice[aria-pressed="true"] {
     border-color: var(--lime-edge);
     background: var(--lime-wash);
@@ -291,7 +496,7 @@
   }
   .choice-label { font-weight: 700; }
   .choice[aria-pressed="true"] .choice-label { color: var(--lime); }
-  .choice-detail { font-size: var(--s-1); color: var(--muted); }
+  .choice-detail { font-size: var(--s-1); color: var(--muted); line-height: 1.6; }
 
   /* ── QR ───────────────────────────────────────────────────────────────── */
 
@@ -299,7 +504,7 @@
     A white ground under the symbol, on a dark page. A QR drawn dark-on-dark is not a
     QR — and the quiet zone is part of the symbol, so the padding here is not decoration.
   */
-  .qr-frame { background: #fff; padding: 0.4rem; border-radius: var(--r-sm); line-height: 0; flex: none; }
+  .qr-frame { background: #fff; padding: var(--sp-2); border-radius: var(--r-sm); line-height: 0; flex: none; }
   .qr-frame svg { width: 10.5rem; height: 10.5rem; display: block; }
 
   /*
@@ -309,13 +514,44 @@
   */
   #totp-codes-value { white-space: pre-wrap; line-height: 1.75; }
 
-  .copyable { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .copyable { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
   .copyable code {
-    font-family: var(--mono); font-size: var(--s-1); word-break: break-all;
-    background: var(--card-2); padding: 0.35rem 0.6rem; border-radius: var(--r-sm); flex: 1 1 12rem;
+    font-family: var(--mono); font-size: var(--s-1); word-break: break-all; line-height: 1.5;
+    background: var(--card); border: 1px solid var(--line); color: var(--ink);
+    padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm); flex: 1 1 12rem; min-width: 0;
   }
+  .copyable button { min-height: var(--control-sm); }
 
-  .empty { color: var(--muted); font-size: var(--s-1); padding: 0.75rem 0; }
+  /*
+    An empty table is a designed state, not a missing one: the single cell every renderer
+    puts there is drawn as a centred notice on a dashed field, so "nothing yet" reads as a
+    fact about the account rather than as a table that failed to load.
+  */
+  .empty {
+    color: var(--muted); font-size: var(--s-1); padding: var(--sp-3) 0;
+  }
+  td.empty {
+    text-align: center;
+    padding: var(--sp-6) var(--sp-4);
+    border: 1px dashed var(--line-2);
+    border-radius: var(--r-md);
+    background: var(--card-2);
+    white-space: normal;
+    display: block;
+  }
+  /*
+    The cell has no `colspan`, so under a header row it would occupy the first column only.
+    A table holding nothing but that notice is laid out as blocks instead, and its header —
+    five column names over no rows — is not drawn: there is nothing for them to label.
+  */
+  table:has(td.empty), table:has(td.empty) tbody, table:has(td.empty) tr { display: block; width: 100%; }
+  table:has(td.empty) thead { display: none; }
+  table:has(td.empty) tbody tr:hover { background: transparent; }
+
+  /* Anything that moves stays still for people who asked it to. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  }
 
   /**
    * Author `display` beats the user-agent `[hidden]` rule, so a `hidden` attribute on
@@ -1224,8 +1460,9 @@
   let current = 'overview';
 
   function renderTabs() {
+    const nav = el('tabs');
     fill(
-      el('tabs'),
+      nav,
       VIEWS.map(([id, label]) =>
         h('button', {
           type: 'button',
@@ -1235,7 +1472,58 @@
         }),
       ),
     );
+    /**
+     * The open tab is brought into view in the strip, which scrolls sideways on a phone.
+     *
+     * The strip's own scroll position, not `scrollIntoView`: that would also scroll the page
+     * vertically to wherever the strip happens to be, and a tab opened from a link — `?tab=`
+     * — would land the reader halfway down the page. Instant rather than smooth, so nothing
+     * is moving under a finger that is about to tap the next tab.
+     */
+    const active = nav.querySelector('[aria-current="page"]');
+    if (active && nav.scrollWidth > nav.clientWidth) {
+      // Moved only when it is not already fully in view, and by the least that brings it in —
+      // clear of the strip's padding and of the fade drawn over an edge with more behind it,
+      // so the open tab is never the one half-faded.
+      const pad = (parseFloat(getComputedStyle(nav).paddingLeft) || 0) + 40;
+      const left = active.offsetLeft - pad;
+      const right = active.offsetLeft + active.offsetWidth + pad;
+      if (left < nav.scrollLeft) nav.scrollLeft = left;
+      else if (right > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = right - nav.clientWidth;
+    }
+    markEdges(nav);
   }
+
+  /**
+   * Which sides of a sideways scroller have more behind them.
+   *
+   * Written to `data-edge` as `left`, `right`, `both` or `none`, and the stylesheet fades
+   * only the side that has anything there — a fade on an edge with nothing behind it reads
+   * as a cut-off, which is the thing it is meant to prevent. Used by the tab strip and by
+   * every `.scroll` wrapper around a table, which is what keeps a wide table scrolling
+   * inside its panel rather than the page scrolling under it.
+   */
+  function markEdges(scroller) {
+    const more = scroller.scrollWidth - scroller.clientWidth;
+    const left = scroller.scrollLeft > 1;
+    const right = more - scroller.scrollLeft > 1;
+    scroller.dataset.edge = left && right ? 'both' : left ? 'left' : right ? 'right' : 'none';
+  }
+
+  for (const scroller of [el('tabs'), ...document.querySelectorAll('.scroll')]) {
+    scroller.addEventListener('scroll', () => markEdges(scroller), { passive: true });
+    // Content changes size when a table is (re)drawn and when the viewport does; both
+    // change which edges have more behind them.
+    if (typeof ResizeObserver === 'function') {
+      const observer = new ResizeObserver(() => markEdges(scroller));
+      observer.observe(scroller);
+      if (scroller.firstElementChild) observer.observe(scroller.firstElementChild);
+    }
+    markEdges(scroller);
+  }
+  window.addEventListener('resize', () => {
+    for (const scroller of [el('tabs'), ...document.querySelectorAll('.scroll')]) markEdges(scroller);
+  });
 
   /**
    * Which tab to open on, from the query.
@@ -1399,7 +1687,7 @@
       h('td', {}, [h('span', { class: 'pill', 'data-tone': view.tone, text: view.label })]),
       h('td', { class: 'mono right', text: formatUnits(invoice.amountPaid, invoice.assetDecimals ?? 0) }),
       h('td', { class: 'mono right', text: formatUnits(invoice.amountDue, invoice.assetDecimals ?? 0) + ' ' + (invoice.assetSymbol || '') }),
-      h('td', { text: view.hint }),
+      h('td', { class: 'prose', text: view.hint }),
     ]);
   }
 
