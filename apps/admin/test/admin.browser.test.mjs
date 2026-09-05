@@ -418,3 +418,210 @@ describe('staff panel', { skip: playwright ? false : 'playwright is not installe
     await context.close();
   });
 });
+
+/**
+ * The panel as a layout: the rail and the drawer, the tables at a phone's width, and the
+ * text against whatever is painted behind it, in both themes.
+ *
+ * Every colour comes from the shared tokens, which is what makes a regression here quiet: a
+ * rule that reaches for a colour only one palette defines leaves text that is still on the
+ * page and no longer readable. Measured, not read — a stylesheet that says `--ink` can
+ * still ship grey on grey when another rule wins.
+ */
+describe('staff panel, as a layout', { skip: playwright ? false : 'playwright is not installed' }, () => {
+  const PHONE = { width: 360, height: 780 };
+  let browser;
+
+  before(async () => {
+    browser = await playwright.chromium.launch();
+  });
+
+  after(async () => {
+    await browser?.close();
+  });
+
+  async function open({ width = 1280, theme = 'light' } = {}) {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(String(error)));
+    await page.route(`${PAGE}*`, (route) => route.fulfill({ path: pageFile, contentType: 'text/html' }));
+    await page.route('**/admin/**', (route) => route.abort());
+    await page.goto(`${PAGE}?preview=1`);
+    await page.waitForFunction(() => document.getElementById('panel')?.hidden === false, { timeout: 6000 });
+    return { page, context, errors };
+  }
+
+  /**
+   * The section labels, read from the text node between the marker and the count. The
+   * button's text runs marker, label and count together with no space, so a regex that
+   * strips "the first word" strips the lot.
+   */
+  const labels = (page) =>
+    page.$$eval('#nav .nav-btn', (nodes) =>
+      nodes.map((node) =>
+        [...node.childNodes].filter((child) => child.nodeType === 3).map((child) => child.textContent.trim()).join(''),
+      ),
+    );
+
+  const overflow = (page) =>
+    page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+
+  const shown = (page, selector) =>
+    page.$eval(selector, (node) => node.getBoundingClientRect().height > 0).catch(() => false);
+
+  /** Is the rail inside the viewport, horizontally? Off-canvas is a transform, not `hidden`. */
+  const railOnScreen = (page) =>
+    page.$eval('#side', (node) => node.getBoundingClientRect().right > 0);
+
+  test('every section fits at 360px, through the drawer', async () => {
+    /**
+     * The rail becomes a drawer on a phone, so each section is reached the way a phone
+     * reaches it: open the drawer, pick, and the drawer closes on its own. The widest
+     * tables — the watchers, the catalogue — scroll inside their card rather than
+     * widening the page.
+     */
+    const { page, context, errors } = await open({ width: PHONE.width });
+    assert.equal(await railOnScreen(page), false, 'the rail should start off screen on a phone');
+    assert.equal(await overflow(page), 0, 'on opening');
+
+    const names = await labels(page);
+    assert.ok(names.length >= 6, names.join(' | '));
+    for (const name of names) {
+      await page.click('#nav-toggle');
+      await page.waitForTimeout(250);
+      assert.equal(await railOnScreen(page), true, `the drawer did not open for ${name}`);
+      assert.equal(await shown(page, '#nav-scrim'), true);
+      await page.click(`#nav .nav-btn:has-text("${name}")`);
+      await page.waitForTimeout(350);
+      assert.equal(await railOnScreen(page), false, `the drawer stayed open after picking ${name}`);
+      assert.equal(await overflow(page), 0, `${name} is wider than the phone`);
+      // The bar stays a bar. A short section once arrived under one half the screen tall,
+      // because the shell's minimum height was shared out between its rows.
+      const bar = await page.$eval('.topbar', (node) => node.getBoundingClientRect().height);
+      assert.ok(bar <= 64, `the top bar is ${bar}px tall on ${name}`);
+    }
+
+    // The detail page, with its tables and its two blocks.
+    await page.click('#nav-toggle');
+    await page.click('#nav .nav-btn:has-text("Merchants")');
+    await page.waitForTimeout(300);
+    await page.click('#view tr.clickable');
+    await page.waitForTimeout(300);
+    assert.equal(await overflow(page), 0, 'the merchant page is wider than the phone');
+
+    // And a dialog.
+    await page.click('#view button:has-text("Suspend")');
+    await page.waitForTimeout(150);
+    assert.equal(await overflow(page), 0, 'the dialog is wider than the phone');
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('the rail is in view on a desktop and the drawer controls are not', async () => {
+    const { page, context } = await open();
+    assert.equal(await railOnScreen(page), true);
+    assert.equal(await shown(page, '#nav-toggle'), false, 'a desktop needs no menu button');
+    assert.equal(await overflow(page), 0);
+    // Table headers stay put: the rows scroll under them inside the card.
+    await page.click('#nav .nav-btn:has-text("Health")');
+    await page.waitForTimeout(200);
+    assert.equal(await page.$eval('#view th', (node) => getComputedStyle(node).position), 'sticky');
+    await context.close();
+  });
+
+  /** WCAG relative luminance and contrast, for a computed `rgb(...)` string. */
+  const luminance = (rgb) => {
+    const [r, g, b] = rgb.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number).map((channel) => {
+      const c = channel / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (fg, bg) => {
+    const [light, dark] = [luminance(fg), luminance(bg)].sort((a, b) => b - a);
+    return (light + 0.05) / (dark + 0.05);
+  };
+
+  /** Every visible element matching each selector, with its ink and the opaque ground behind it. */
+  const readable = (page, selectors) =>
+    page.evaluate((list) => {
+      const ground = (node) => {
+        for (let el = node; el; el = el.parentElement) {
+          const bg = getComputedStyle(el).backgroundColor;
+          const alpha = bg.startsWith('rgba') ? Number(bg.match(/[\d.]+(?=\))/)[0]) : 1;
+          if (alpha === 1 && bg !== 'rgba(0, 0, 0, 0)') return bg;
+          if (alpha > 0 && alpha < 1) return null;
+        }
+        return getComputedStyle(document.body).backgroundColor;
+      };
+      const out = [];
+      for (const selector of list) {
+        const nodes = [...document.querySelectorAll(selector)].filter((node) => node.getBoundingClientRect().height > 0);
+        if (nodes.length === 0) {
+          out.push({ selector, missing: true });
+          continue;
+        }
+        for (const node of nodes) {
+          const bg = ground(node);
+          if (bg !== null) out.push({ selector, fg: getComputedStyle(node).color, bg });
+        }
+      }
+      return out;
+    }, selectors);
+
+  const assertReadable = (items, where) => {
+    for (const item of items) {
+      assert.ok(!item.missing, `${item.selector} is not on the page (${where}); update the list`);
+      const ratio = contrast(item.fg, item.bg);
+      assert.ok(ratio >= 4.5, `${item.selector}: ${item.fg} on ${item.bg} is ${ratio.toFixed(2)}:1 (${where})`);
+    }
+  };
+
+  /** What an operator reads on the health section, which shows every tone at once. */
+  const HEALTH_TEXT = [
+    '#preview-banner', '#preview-banner strong', '.brand', '.brand-accent', '.brand-sub',
+    '.nav-btn', '.nav-btn[aria-current="true"]', '.nav-count', '.nav-count.alert',
+    '.role-pill', '.whoami-email', '#sign-out',
+    'h1', '.sub', 'h2', '.metric-label', '.metric-value', '.metric.bad .metric-value',
+    '.metric.warn .metric-value', '.metric.good .metric-value',
+    'th', 'td', 'td strong', 'td .faint', '.tag', '.tag.ok', '.tag.bad',
+    '.notice', '.notice strong', '.btn',
+  ];
+  /** And on a merchant's page: the destructive button, the primary one, and a dialog. */
+  const MERCHANT_TEXT = ['.btn.danger', '.btn.primary', '.btn.ghost', '.tag.lime', '.tag.warn', '.block h2', '.block p'];
+  const MODAL_TEXT = ['.modal h2', '.modal-note', '.field-label', '.modal .btn.danger', '.modal .btn.ghost', 'textarea'];
+
+  for (const theme of ['light', 'dark']) {
+    test(`text reaches 4.5:1 against its ground (${theme})`, async () => {
+      const { page, context } = await open({ theme });
+      assertReadable(await readable(page, HEALTH_TEXT), `${theme}, health`);
+
+      await page.click('#nav .nav-btn:has-text("Merchants")');
+      await page.waitForTimeout(250);
+      await page.click('#view tr.clickable');
+      await page.waitForTimeout(300);
+      assertReadable(await readable(page, MERCHANT_TEXT), `${theme}, merchant`);
+
+      await page.click('#view button:has-text("Suspend")');
+      await page.waitForTimeout(150);
+      assertReadable(await readable(page, MODAL_TEXT), `${theme}, dialog`);
+      await context.close();
+    });
+  }
+
+  test('light is the default and the attribute reaches the same dark palette as the system', async () => {
+    const { page, context } = await open({ theme: 'light' });
+    const daylight = await page.$eval('body', (node) => getComputedStyle(node).backgroundColor);
+    assert.ok(luminance(daylight) > 0.8, `the default ground is ${daylight}`);
+
+    const dark = await open({ theme: 'dark' });
+    const system = await dark.page.$eval('body', (node) => getComputedStyle(node).backgroundColor);
+    assert.ok(luminance(system) < 0.05, `the system-dark ground is ${system}`);
+
+    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+    assert.equal(await page.$eval('body', (node) => getComputedStyle(node).backgroundColor), system);
+    await dark.context.close();
+    await context.close();
+  });
+});

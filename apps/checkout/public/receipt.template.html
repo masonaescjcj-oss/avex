@@ -11,9 +11,12 @@
   would have sent every request to the static host.
 -->
 <meta name="avex-api" content="">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#f7f8f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c0e11" media="(prefers-color-scheme: dark)">
 <title>Receipt · AVEX Pay</title>
 <style>
+  /* @inject:tokens */
+
   /**
    * AVEX Pay receipt.
    *
@@ -22,69 +25,16 @@
    * nothing animates, nothing polls, nothing is a live figure, and the whole thing
    * fits on one sheet of paper.
    *
-   * The palette is AVEX's on screen — black ground, acid lime, monospace numerals —
-   * and inverts for print, because a receipt printed as white-on-black wastes a
-   * cartridge and comes out grey. The print rules at the bottom are not an
-   * afterthought; a receipt that cannot be printed is not finished.
+   * The palette, type and spacing are the shared tokens above; this page defines no
+   * colour of its own except in the print block, where the whole palette is forced to
+   * black on white — a receipt printed on a tinted ground wastes a cartridge and comes
+   * out grey. The print rules at the bottom are not an afterthought; a receipt that
+   * cannot be printed is not finished.
    *
-   * The tokens are the checkout page's: the same 8px spacing scale, the same radii,
-   * the same 44px minimum for anything a thumb presses. A payer arrives here from
-   * that page and the two should read as one product.
+   * A payer arrives here from the checkout and the two should read as one product: the
+   * same card, the same monospace figures, the same 44px minimum for anything a thumb
+   * presses.
    */
-  :root {
-    --void: #000000;
-    --card: #121212;
-    --card-2: #1A1A1A;
-    --card-3: #242424;
-    --line: #262626;
-    --line-2: #333333;
-
-    --ink: #FFFFFF;
-    /* Raised from #8B8B8B and #5A5A5A so secondary copy clears 4.5:1 on every card. */
-    --muted: #A3A3A3;
-    --faint: #8C8C8C;
-
-    --lime: #C6F73F;
-    --lime-ink: #0A0A0A;
-    --lime-wash: rgba(198, 247, 63, 0.10);
-    --lime-edge: rgba(198, 247, 63, 0.28);
-
-    --teal: #2ED3A0;
-    --teal-wash: rgba(46, 211, 160, 0.12);
-    --teal-edge: rgba(46, 211, 160, 0.35);
-    --amber: #F5A623;
-    --amber-wash: rgba(245, 166, 35, 0.14);
-    --amber-edge: rgba(245, 166, 35, 0.4);
-    --coral: #FF5A4E;
-    --coral-wash: rgba(255, 90, 78, 0.12);
-    --coral-edge: rgba(255, 90, 78, 0.5);
-
-    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif;
-    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-
-    --r-lg: 20px;
-    --r-md: 14px;
-    --r-sm: 10px;
-    --pill: 999px;
-
-    --sp-1: 0.25rem;
-    --sp-2: 0.5rem;
-    --sp-3: 0.75rem;
-    --sp-4: 1rem;
-    --sp-5: 1.25rem;
-    --sp-6: 1.5rem;
-    --sp-8: 2rem;
-
-    --tap: 2.75rem;
-    --focus: 2px solid var(--lime);
-
-    --s-2: 0.6875rem;
-    --s-1: 0.8125rem;
-    --s0: 0.9375rem;
-    --s1: 1.0625rem;
-    --s2: 1.375rem;
-    --s3: 1.875rem;
-  }
 
   *, *::before, *::after { box-sizing: border-box; }
   [hidden] { display: none !important; }
@@ -94,11 +44,11 @@
   body {
     margin: 0;
     min-height: 100dvh;
-    background: var(--void);
+    background: var(--bg);
     color: var(--ink);
-    font-family: var(--sans);
+    font-family: var(--font);
     font-size: var(--s0);
-    line-height: 1.55;
+    line-height: var(--lh);
     -webkit-font-smoothing: antialiased;
   }
 
@@ -108,7 +58,7 @@
     padding: var(--sp-4) var(--sp-3) var(--sp-8);
   }
 
-  button:focus-visible, a:focus-visible { outline: var(--focus); outline-offset: 2px; }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   /* ── masthead ─────────────────────────────────────────────────────────── */
 
@@ -118,68 +68,67 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: var(--sp-3) var(--sp-4);
-    padding-bottom: var(--sp-4);
-    border-bottom: 1px solid var(--line);
+    padding: 0 var(--sp-1) var(--sp-4);
   }
   .brand {
-    font-size: var(--s1); font-weight: 800; letter-spacing: -0.02em;
+    font-size: var(--s0); font-weight: 700; letter-spacing: -0.01em;
     display: flex; align-items: center; gap: var(--sp-2);
   }
   /**
    * The mark, in the palette's own tokens rather than in hex.
    *
    * This page prints, and printing swaps the whole palette: `--lime` becomes black and
-   * `--void` becomes white. A mark written in hex would put a lime block on a customer's
+   * `--lime-ink` becomes white. A mark written in hex would put a lime block on a customer's
    * printed receipt — a grey smear on a laser printer, and ink spent on decoration. Written
    * in tokens it inverts with everything else: black square, white arches.
    */
-  .brand-mark { width: 1.75rem; height: 1.75rem; flex: none; display: block; }
-  .brand-pay { color: var(--lime); }
+  .brand-mark { width: 1.5rem; height: 1.5rem; flex: none; display: block; }
+  .brand-pay { color: var(--accent); }
   .doc-label {
     font-family: var(--mono);
     font-size: var(--s-2);
-    letter-spacing: 0.12em;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
   }
   .top-right { text-align: end; min-width: 0; }
   .number {
     font-family: var(--mono);
     font-size: var(--s1);
-    font-weight: 700;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
   }
 
-  /* ── cards ────────────────────────────────────────────────────────────── */
+  /* ── the card ─────────────────────────────────────────────────────────── */
 
+  /* One card, like the checkout's; the sections inside are separated by rules rather
+     than nested boxes, so the sheet reads as one document. */
   .card {
-    background: var(--card);
+    background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: var(--r-lg);
-    padding: var(--sp-4);
-    margin-top: var(--sp-3);
+    border-radius: var(--r-xl);
+    box-shadow: var(--shadow-2);
+    overflow: hidden;
   }
+  .card > section, .card > .verdict, .card > .rehearsal { padding: var(--sp-4); }
+  .card > * + * { border-top: 1px solid var(--line); }
 
   /* ── verdict ──────────────────────────────────────────────────────────── */
 
   .verdict {
-    margin-top: var(--sp-4);
-    padding: var(--sp-4);
-    border-radius: var(--r-lg);
-    border: 1px solid var(--teal-edge);
-    background: var(--teal-wash);
+    background: var(--ok-soft);
     display: flex;
     gap: var(--sp-3);
     align-items: flex-start;
   }
-  .verdict[data-tone="warn"] { border-color: var(--amber-edge); background: var(--amber-wash); }
+  .verdict[data-tone="warn"] { background: var(--warn-soft); }
   .verdict-mark {
     flex: none;
     width: 1.75rem;
     height: 1.75rem;
     border-radius: 50%;
-    background: var(--teal);
+    background: var(--ok);
     display: grid;
     place-items: center;
     margin-top: 0.125rem;
@@ -188,38 +137,34 @@
     content: '';
     width: 0.4375rem;
     height: 0.75rem;
-    border-right: 2.5px solid var(--lime-ink);
-    border-bottom: 2.5px solid var(--lime-ink);
+    border-right: 2.5px solid var(--surface);
+    border-bottom: 2.5px solid var(--surface);
     transform: translateY(-2px) rotate(45deg);
   }
-  .verdict[data-tone="warn"] .verdict-mark { background: var(--amber); }
+  .verdict[data-tone="warn"] .verdict-mark { background: var(--warn); }
   .verdict[data-tone="warn"] .verdict-mark::after {
     content: '!';
     width: auto; height: auto; border: none; transform: none;
-    color: var(--lime-ink); font-weight: 800; font-size: 1rem; line-height: 1;
+    color: var(--surface); font-weight: 800; font-size: 1rem; line-height: 1;
   }
   .verdict-text { min-width: 0; }
-  .verdict-head { font-size: var(--s2); font-weight: 800; letter-spacing: -0.02em; color: var(--teal); line-height: 1.25; }
-  .verdict[data-tone="warn"] .verdict-head { color: var(--amber); }
-  .verdict-note { font-size: var(--s-1); color: var(--ink); margin: var(--sp-2) 0 0; line-height: 1.5; }
+  .verdict-head { font-size: var(--s2); font-weight: 700; letter-spacing: -0.015em; color: var(--ok); line-height: var(--lh-tight); }
+  .verdict[data-tone="warn"] .verdict-head { color: var(--warn); }
+  .verdict-note { font-size: var(--s-1); color: var(--ink); margin: var(--sp-2) 0 0; line-height: var(--lh); }
 
   .rehearsal {
-    margin-top: var(--sp-4);
-    padding: var(--sp-4);
-    border-radius: var(--r-md);
-    border: 1px solid var(--coral);
-    background: var(--coral-wash);
+    background: var(--danger-soft);
     font-size: var(--s-1);
-    line-height: 1.5;
+    line-height: var(--lh);
+    color: var(--ink);
   }
-  .rehearsal strong { color: var(--coral); display: block; font-size: var(--s0); margin-bottom: var(--sp-1); }
+  .rehearsal strong { color: var(--danger); display: block; font-size: var(--s0); margin-bottom: var(--sp-1); }
 
   /* ── the amount ───────────────────────────────────────────────────────── */
 
-  .hero { background: var(--card-2); }
   .hero-label {
     font-size: var(--s-2);
-    letter-spacing: 0.08em;
+    letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
     color: var(--muted);
     font-weight: 600;
@@ -236,12 +181,13 @@
      breaks its own amount across two lines is a receipt somebody misreads. */
   .headline-amount {
     font-family: var(--mono);
-    font-size: clamp(1.25rem, 6vw, var(--s3));
-    font-weight: 700;
+    font-size: clamp(1.25rem, 6vw, var(--s4));
+    font-weight: 600;
     letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
     line-height: 1.1;
+    color: var(--ink);
   }
   .headline-unit { font-family: var(--mono); font-size: var(--s1); color: var(--muted); }
   .headline-fiat { font-size: var(--s-1); color: var(--muted); margin: var(--sp-2) 0 0; }
@@ -250,13 +196,13 @@
 
   h2 {
     font-size: var(--s-2);
-    letter-spacing: 0.12em;
+    letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
     color: var(--muted);
-    font-weight: 700;
+    font-weight: 600;
     margin: 0 0 var(--sp-2);
   }
-  .card h2 + p { margin-top: 0; }
+  section h2 + p { margin-top: 0; }
 
   dl { margin: 0; }
   .row {
@@ -276,9 +222,9 @@
     overflow-wrap: anywhere;
     color: var(--ink);
   }
-  .row dd.prose { font-family: var(--sans); }
+  .row dd.prose { font-family: var(--font); }
   .row dd a {
-    color: var(--lime);
+    color: var(--accent);
     text-decoration: underline;
     text-underline-offset: 3px;
     /* A tap target the height of a thumb, even for a one-line hash. */
@@ -286,7 +232,7 @@
     padding: var(--sp-1) 0;
   }
 
-  .proof-note { font-size: var(--s-1); color: var(--muted); margin: 0 0 var(--sp-2); line-height: 1.5; }
+  .proof-note { font-size: var(--s-1); color: var(--muted); margin: 0 0 var(--sp-2); line-height: var(--lh); }
 
   /* ── actions ──────────────────────────────────────────────────────────── */
 
@@ -294,31 +240,33 @@
   button {
     font: inherit;
     font-size: var(--s-1);
-    font-weight: 700;
+    font-weight: 600;
     min-height: var(--tap);
-    border-radius: var(--pill);
+    border-radius: var(--r-md);
     padding: 0 var(--sp-5);
-    border: 1px solid var(--line-2);
-    background: var(--card-2);
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
     color: var(--ink);
     cursor: pointer;
     flex: 1 1 12rem;
-    transition: filter 140ms ease, background 140ms ease;
+    transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
   }
-  button:hover { filter: brightness(1.1); }
-  button.primary { background: var(--lime); color: var(--lime-ink); border-color: var(--lime); }
+  button:hover { background: var(--surface-2); }
+  button.primary { background: var(--lime); color: var(--lime-ink); border-color: var(--lime); font-weight: 700; box-shadow: var(--shadow-1); }
+  button.primary:hover { background: var(--lime); filter: brightness(1.04); }
 
-  .foot { margin-top: var(--sp-5); font-size: var(--s-2); color: var(--faint); line-height: 1.5; }
+  .foot { margin-top: var(--sp-5); font-size: var(--s-2); color: var(--muted); line-height: var(--lh); text-align: center; }
 
   .fatal {
     margin: var(--sp-8) 0;
     padding: var(--sp-6);
-    border-radius: var(--r-lg);
+    border-radius: var(--r-xl);
     border: 1px solid var(--line);
-    background: var(--card);
+    background: var(--surface);
+    box-shadow: var(--shadow-1);
     text-align: center;
   }
-  .fatal-head { font-size: var(--s1); font-weight: 700; }
+  .fatal-head { font-size: var(--s1); font-weight: 600; }
   .fatal-note { font-size: var(--s-1); color: var(--muted); margin: var(--sp-2) 0 0; }
 
   @media (min-width: 30rem) {
@@ -328,7 +276,7 @@
 
   @media (min-width: 40rem) {
     .sheet { padding: var(--sp-8) var(--sp-5) var(--sp-8); }
-    .card, .verdict { padding: var(--sp-5); }
+    .card > section, .card > .verdict, .card > .rehearsal { padding: var(--sp-5) var(--sp-6); }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -338,40 +286,46 @@
   /**
    * Print.
    *
-   * Inverted, because a receipt printed white-on-black wastes a cartridge and comes
-   * out grey. The buttons go — a printed "Print" button is a smudge — and the
-   * explorer links keep their URL beside them, because a link on paper that shows
-   * only its text is a dead end for the one thing on here a reader might check.
+   * Black on white whatever the screen theme was: a tinted ground wastes a cartridge and
+   * comes out grey. The buttons go — a printed "Print" button is a smudge — and the
+   * explorer links keep their URL beside them, because a link on paper that shows only
+   * its text is a dead end for the one thing on here a reader might check.
+   *
+   * The selector list is what beats the dark theme: the system-preference block selects
+   * `:root:not([data-theme="light"])`, so a plain `:root` here would lose to it, and a
+   * receipt printed from a dark screen would come out inverted.
    */
   @media print {
-    :root {
-      --void: #FFFFFF;
-      --card: #FFFFFF;
-      --card-2: #FFFFFF;
-      --card-3: #FFFFFF;
+    :root, :root:not([data-theme="light"]), :root[data-theme="dark"] {
+      --bg: #FFFFFF;
+      --surface: #FFFFFF;
+      --surface-2: #FFFFFF;
+      --surface-3: #FFFFFF;
       --line: #CCCCCC;
-      --line-2: #CCCCCC;
+      --line-strong: #CCCCCC;
       --ink: #000000;
+      --ink-2: #000000;
       --muted: #444444;
       --faint: #666666;
       --lime: #000000;
-      --lime-wash: transparent;
-      --lime-edge: #000000;
-      --teal: #000000;
-      --teal-wash: transparent;
-      --teal-edge: #000000;
-      --amber: #000000;
-      --amber-wash: transparent;
-      --amber-edge: #000000;
-      --coral: #000000;
-      --coral-wash: transparent;
+      --lime-ink: #FFFFFF;
+      --accent: #000000;
+      --accent-soft: transparent;
+      --ok: #000000;
+      --ok-soft: transparent;
+      --warn: #000000;
+      --warn-soft: transparent;
+      --danger: #000000;
+      --danger-soft: transparent;
+      --shadow-1: none;
+      --shadow-2: none;
     }
     body { background: #FFFFFF; color: #000000; }
     .sheet { max-width: none; padding: 0; }
     .actions, .no-print { display: none !important; }
-    .verdict, .rehearsal { border-width: 2px; }
+    .card { border-color: #CCCCCC; box-shadow: none; }
+    .verdict, .rehearsal { border: 2px solid #000000; border-radius: 0; margin: var(--sp-3); }
     .verdict-mark::after { border-color: #FFFFFF; color: #FFFFFF; }
-    .card { border-color: #CCCCCC; }
     .row dd a::after { content: ' (' attr(href) ')'; font-size: 0.8em; color: #444444; }
   }
 </style>
@@ -380,7 +334,7 @@
   <div id="content" hidden>
     <header class="top">
       <div>
-        <div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--void)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>AVEX<span class="brand-pay">Pay</span></div>
+        <div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>AVEX<span class="brand-pay">Pay</span></div>
         <div class="doc-label">Payment receipt</div>
       </div>
       <div class="top-right">
@@ -389,65 +343,67 @@
       </div>
     </header>
 
-    <!--
-      The rehearsal banner comes before the verdict on purpose. A test invoice's
-      addresses are valid on no chain, so nothing was ever sent — and a document
-      headed "Paid in full" is exactly the thing somebody files and later produces as
-      proof of a payment that never existed.
-    -->
-    <div class="rehearsal" id="rehearsal" hidden>
-      <strong>Test payment — no money moved.</strong>
-      <span>
-        This receipt is from a rehearsal. The address it was paid to is not valid on any
-        blockchain, so nothing was sent and nothing was received. Do not treat this as
-        proof of payment.
-      </span>
-    </div>
-
-    <div class="verdict" id="verdict" data-tone="good">
-      <span class="verdict-mark" aria-hidden="true"></span>
-      <div class="verdict-text">
-        <div class="verdict-head" id="verdict-head">Paid in full</div>
-        <p class="verdict-note" id="verdict-note" hidden></p>
+    <div class="card">
+      <!--
+        The rehearsal banner comes before the verdict on purpose. A test invoice's
+        addresses are valid on no chain, so nothing was ever sent — and a document
+        headed "Paid in full" is exactly the thing somebody files and later produces as
+        proof of a payment that never existed.
+      -->
+      <div class="rehearsal" id="rehearsal" hidden>
+        <strong>Test payment — no money moved.</strong>
+        <span>
+          This receipt is from a rehearsal. The address it was paid to is not valid on any
+          blockchain, so nothing was sent and nothing was received. Do not treat this as
+          proof of payment.
+        </span>
       </div>
-    </div>
 
-    <section class="card hero">
-      <p class="hero-label">Amount received</p>
-      <div class="headline">
-        <span class="headline-amount" id="amount">—</span>
-        <span class="headline-unit" id="unit"></span>
+      <div class="verdict" id="verdict" data-tone="good">
+        <span class="verdict-mark" aria-hidden="true"></span>
+        <div class="verdict-text">
+          <div class="verdict-head" id="verdict-head">Paid in full</div>
+          <p class="verdict-note" id="verdict-note" hidden></p>
+        </div>
       </div>
-      <p class="headline-fiat" id="fiat"></p>
-    </section>
 
-    <section class="card">
-      <h2>Payment</h2>
-      <dl>
-        <div class="row"><dt>Paid to</dt><dd class="prose" id="merchant">—</dd></div>
-        <div class="row" id="row-description" hidden><dt>For</dt><dd class="prose" id="description"></dd></div>
-        <div class="row" id="row-reference" hidden><dt>Order reference</dt><dd id="reference"></dd></div>
-        <div class="row"><dt>Network</dt><dd id="chain">—</dd></div>
-        <div class="row"><dt>Amount due</dt><dd id="due">—</dd></div>
-        <div class="row"><dt>Amount received</dt><dd id="received">—</dd></div>
-        <!--
-          Shown only when the payer bore the commission. The same disclosure rule as the
-          payment page: you are told what you were charged, and not told what somebody
-          else was charged.
-        -->
-        <div class="row" id="row-fee" hidden><dt id="fee-label">Service fee</dt><dd id="fee"></dd></div>
-        <div class="row" id="row-network-fee" hidden><dt id="network-fee-label">Network fee</dt><dd id="network-fee"></dd></div>
-        <div class="row"><dt>Issued</dt><dd id="issued-at">—</dd></div>
-      </dl>
-    </section>
+      <section class="hero">
+        <p class="hero-label">Amount received</p>
+        <div class="headline">
+          <span class="headline-amount" id="amount">—</span>
+          <span class="headline-unit" id="unit"></span>
+        </div>
+        <p class="headline-fiat" id="fiat"></p>
+      </section>
 
-    <section class="card">
-      <h2>Proof on chain</h2>
-      <p class="proof-note no-print">
-        The only line here that does not depend on trusting us. Look it up yourself.
-      </p>
-      <dl id="transfers"></dl>
-    </section>
+      <section>
+        <h2>Payment</h2>
+        <dl>
+          <div class="row"><dt>Paid to</dt><dd class="prose" id="merchant">—</dd></div>
+          <div class="row" id="row-description" hidden><dt>For</dt><dd class="prose" id="description"></dd></div>
+          <div class="row" id="row-reference" hidden><dt>Order reference</dt><dd id="reference"></dd></div>
+          <div class="row"><dt>Network</dt><dd id="chain">—</dd></div>
+          <div class="row"><dt>Amount due</dt><dd id="due">—</dd></div>
+          <div class="row"><dt>Amount received</dt><dd id="received">—</dd></div>
+          <!--
+            Shown only when the payer bore the commission. The same disclosure rule as the
+            payment page: you are told what you were charged, and not told what somebody
+            else was charged.
+          -->
+          <div class="row" id="row-fee" hidden><dt id="fee-label">Service fee</dt><dd id="fee"></dd></div>
+          <div class="row" id="row-network-fee" hidden><dt id="network-fee-label">Network fee</dt><dd id="network-fee"></dd></div>
+          <div class="row"><dt>Issued</dt><dd id="issued-at">—</dd></div>
+        </dl>
+      </section>
+
+      <section>
+        <h2>Proof on chain</h2>
+        <p class="proof-note no-print">
+          The only line here that does not depend on trusting us. Look it up yourself.
+        </p>
+        <dl id="transfers"></dl>
+      </section>
+    </div>
 
     <div class="actions">
       <button class="primary" type="button" id="print">Print or save as PDF</button>

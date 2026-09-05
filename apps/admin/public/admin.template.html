@@ -2,95 +2,95 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!--
   Where the API is.
-  
+
   Empty means same origin, which is right when one host serves both. A split deployment —
   static pages on one host, the API on another — fills this in at build time, and every
   request the page makes goes through it. See docs/DEPLOY.md.
 -->
 <meta name="avex-api" content="">
+<meta name="theme-color" content="#f7f8f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c0e11" media="(prefers-color-scheme: dark)">
 <title>AVEX Pay Admin</title>
 <style>
+  /* @inject:tokens */
+
   /**
    * AVEX Pay admin panel.
    *
-   * Same design language as the checkout and the planning documents: pure black
-   * ground, acid lime for the one thing that matters per view, dark cards at a
-   * 14-20px radius, monospace for every number and identifier.
+   * The palette, type scale, spacing and radii are the shared tokens above; this page
+   * extends them and defines no colour of its own. Light first — a panel somebody reads
+   * for hours — with dark following the system or `data-theme="dark"`.
    *
-   * One deliberate difference from the checkout. Lime is used far more sparingly
-   * here, because this panel is dense with numbers and an accent that appears on
-   * every second figure stops meaning anything. It is reserved for the primary
-   * action and for a value that is currently wrong.
+   * The shape is a dashboard's: a fixed navigation rail on the left that becomes a drawer
+   * on a phone, dense tables with headers that stay put while the rows scroll, filters as
+   * a toolbar under the page title, and detail pages laid out as cards. Lime is used
+   * sparingly, because this panel is dense with numbers and an accent that appears on
+   * every second figure stops meaning anything: it marks the current section, the primary
+   * action and nothing else. Anything destructive is in the danger colour, and stays behind
+   * the confirmation it already had.
    */
+
+  /* Page-level extensions of the tokens. Nothing here is a colour. */
   :root {
-    --void: #000000;
-    --card: #121212;
-    --card-2: #1A1A1A;
-    --card-3: #242424;
-    --line: #262626;
-    --line-2: #333333;
-
-    --ink: #FFFFFF;
-    --muted: #8B8B8B;
-    --faint: #5A5A5A;
-
-    --lime: #C6F73F;
-    --lime-ink: #0A0A0A;
-    --lime-wash: rgba(198, 247, 63, 0.10);
-    --lime-edge: rgba(198, 247, 63, 0.28);
-
-    --teal: #2ED3A0;
-    --teal-wash: rgba(46, 211, 160, 0.12);
-    --amber: #F5A623;
-    --amber-wash: rgba(245, 166, 35, 0.12);
-    --coral: #FF5A4E;
-    --coral-wash: rgba(255, 90, 78, 0.12);
-    --violet: #8B7CF6;
-
-    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif;
-    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-
-    --r-lg: 20px;
-    --r-md: 14px;
-    --r-sm: 10px;
-    --pill: 999px;
-
-    --s-2: 0.6875rem;
-    --s-1: 0.8125rem;
-    --s0: 0.9375rem;
-    --s1: 1.0625rem;
-    --s2: 1.375rem;
-    --s3: 1.875rem;
+    --rail: 15rem;
+    --control: 2.25rem;
+    --topbar: 3.25rem;
   }
 
   *, *::before, *::after { box-sizing: border-box; }
 
+  html { -webkit-text-size-adjust: 100%; }
+
   body {
     margin: 0;
-    background: var(--void);
+    background: var(--bg);
     color: var(--ink);
-    font-family: var(--sans);
+    font-family: var(--font);
     font-size: var(--s0);
-    line-height: 1.55;
+    line-height: var(--lh);
     -webkit-font-smoothing: antialiased;
   }
 
   [hidden] { display: none !important; }
 
-  /* ── shell ──────────────────────────────────────────────────────────── */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  .shell { display: grid; grid-template-columns: 13rem minmax(0, 1fr); min-height: 100vh; }
+  /* ── preview banner ─────────────────────────────────────────────────── */
 
-  .side {
-    background: var(--card);
-    border-inline-end: 1px solid var(--line);
-    padding: 1.25rem 0.875rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
+  /* A strip across the top rather than a floating card: it has to be read before the
+     figures beneath it, in whichever section the panel opens on. */
+  #preview-banner {
+    border-radius: 0;
+    border-inline-start: 0;
+    border-bottom: 1px solid var(--line);
+    justify-content: center;
+    padding-inline: var(--sp-4);
   }
 
-  .brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 800; }
+  /* ── shell ──────────────────────────────────────────────────────────── */
+
+  .shell {
+    display: grid;
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+    min-height: 100vh;
+  }
+
+  /* The rail: fixed to the left of the viewport on a desktop, scrolling its own contents
+     if the section list ever outgrows the window. */
+  .side {
+    background: var(--surface);
+    border-inline-end: 1px solid var(--line);
+    padding: var(--sp-5) var(--sp-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-5);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .brand { display: flex; align-items: center; gap: var(--sp-2); font-weight: 700; color: var(--ink); }
   /**
    * The mark, drawn rather than fetched.
    *
@@ -99,236 +99,347 @@
    * because a flex row squashes an image before it squashes the text beside it.
    */
   .brand-mark { width: 1.625rem; height: 1.625rem; flex: none; display: block; }
+  .brand-accent { color: var(--accent); }
   .brand-sub {
     font-family: var(--mono);
     font-size: var(--s-2);
-    letter-spacing: 0.14em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
   }
+  .side-brand { padding-inline: var(--sp-2); }
 
-  nav { display: flex; flex-direction: column; gap: 0.15rem; }
+  nav { display: flex; flex-direction: column; gap: 0.125rem; }
   .nav-btn {
-    display: flex; align-items: center; gap: 0.5rem;
-    width: 100%; padding: 0.5rem 0.625rem;
+    display: flex; align-items: center; gap: var(--sp-2);
+    width: 100%; min-height: 2.5rem; padding: 0 var(--sp-3);
     border: none; background: transparent;
-    border-radius: var(--r-sm);
-    color: var(--muted); font: inherit; font-size: var(--s-1);
+    border-radius: var(--r-md);
+    color: var(--ink-2); font: inherit; font-size: var(--s-1); font-weight: 500;
     text-align: left; cursor: pointer;
-    transition: background 120ms ease, color 120ms ease;
+    transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
   }
-  .nav-btn:hover { background: var(--card-2); color: var(--ink); }
-  .nav-btn[aria-current="true"] { background: var(--lime-wash); color: var(--lime); font-weight: 700; }
-  .nav-btn:focus-visible { outline: 2px solid var(--lime); outline-offset: 1px; }
+  .nav-btn:hover { background: var(--surface-2); color: var(--ink); }
+  .nav-btn[aria-current="true"] { background: var(--accent-soft); color: var(--ink); font-weight: 600; }
+  .nav-btn > span[aria-hidden] { width: 1.25rem; text-align: center; flex: none; font-size: var(--s0); }
   .nav-count {
     margin-inline-start: auto;
-    font-family: var(--mono); font-size: var(--s-2);
-    background: var(--card-3); color: var(--muted);
-    border-radius: var(--pill); padding: 0.05rem 0.4rem;
+    font-family: var(--mono); font-size: var(--s-2); font-weight: 600;
+    background: var(--surface-3); color: var(--ink-2);
+    border-radius: var(--pill); padding: 0.05rem 0.45rem;
+    font-variant-numeric: tabular-nums;
   }
-  .nav-count.alert { background: var(--coral-wash); color: var(--coral); }
+  .nav-count.alert { background: var(--danger-soft); color: var(--danger); }
 
   .whoami {
     margin-top: auto;
     border-top: 1px solid var(--line);
-    padding-top: 0.875rem;
-    display: flex; flex-direction: column; gap: 0.3rem;
+    padding: var(--sp-4) var(--sp-2) 0;
+    display: flex; flex-direction: column; gap: var(--sp-2);
     font-size: var(--s-2);
   }
   .whoami-email { font-family: var(--mono); color: var(--muted); overflow-wrap: anywhere; }
   .role-pill {
     align-self: flex-start;
-    font-family: var(--mono); font-size: var(--s-2);
-    text-transform: uppercase; letter-spacing: 0.08em;
+    font-family: var(--mono); font-size: var(--s-2); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
     padding: 0.1rem 0.5rem; border-radius: var(--pill);
-    background: var(--card-3); color: var(--muted);
+    background: var(--surface-3); color: var(--ink-2);
   }
-  .role-pill[data-role="operator"] { background: var(--teal-wash); color: var(--teal); }
-  .role-pill[data-role="superadmin"] { background: var(--lime-wash); color: var(--lime); }
+  .role-pill[data-role="operator"] { background: var(--info-soft); color: var(--info); }
+  /* Ink, not accent, on the tinted ground: the accent as text clears 4.5:1 on white and
+     falls just short on its own soft tint. */
+  .role-pill[data-role="superadmin"] { background: var(--accent-soft); color: var(--ink); }
+  .whoami .btn { align-self: flex-start; }
 
-  main { padding: clamp(1rem, 2.5vw, 1.75rem); min-width: 0; }
+  /* The bar a phone gets instead of the rail: the brand and the button that opens the
+     drawer. Absent on a desktop, where the rail is always in view. */
+  .topbar {
+    display: none;
+    grid-column: 1 / -1;
+    position: sticky;
+    top: 0;
+    z-index: 15;
+    min-height: var(--topbar);
+    align-items: center;
+    gap: var(--sp-3);
+    padding: 0 var(--sp-3);
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-toggle {
+    min-width: var(--tap); min-height: var(--tap);
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+    padding: 0 var(--sp-2);
+    border: 1px solid transparent; border-radius: var(--r-md);
+    background: transparent; color: var(--ink);
+    font: inherit; font-size: var(--s-1); font-weight: 600; cursor: pointer;
+  }
+  .nav-toggle:hover { background: var(--surface-2); }
+  .nav-toggle svg { width: 1.25rem; height: 1.25rem; }
+  .scrim {
+    position: fixed; inset: 0; z-index: 18;
+    background: rgba(15, 17, 20, 0.5);
+  }
+
+  main { padding: var(--sp-6) clamp(var(--sp-4), 3vw, var(--sp-10)); min-width: 0; }
+  main > * { max-width: 84rem; }
 
   .head {
-    display: flex; align-items: baseline; justify-content: space-between;
-    gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: var(--sp-3) var(--sp-4); flex-wrap: wrap; margin-bottom: var(--sp-5);
   }
-  h1 { font-size: var(--s2); font-weight: 800; margin: 0; letter-spacing: -0.015em; }
-  h2 { font-size: var(--s1); font-weight: 700; margin: 0; }
-  .sub { color: var(--muted); font-size: var(--s-1); margin: 0.15rem 0 0; }
+  h1 { font-size: var(--s3); font-weight: 600; margin: 0; letter-spacing: -0.015em; line-height: var(--lh-tight); }
+  h2 { font-size: var(--s1); font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: var(--s-1); margin: var(--sp-1) 0 0; }
+  /* Filters and actions beside the title read as one toolbar: every control the same
+     height, wrapping under the title when the page is narrow. */
+  .head .row { gap: var(--sp-2); }
+  .head .row > input, .head .row > select { min-height: var(--control); }
+  .head .row > input[type="search"], .head .row > input[type="text"] { width: 16rem; max-width: 100%; }
 
   /* ── cards, tables ──────────────────────────────────────────────────── */
 
   .card {
-    background: var(--card);
+    background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: var(--r-md);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-1);
     overflow: hidden;
   }
   .card-head {
-    padding: 0.75rem 1rem;
+    padding: var(--sp-3) var(--sp-4);
     border-bottom: 1px solid var(--line);
-    display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+    display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
   }
-  .card-body { padding: 1rem; }
+  .card-body { padding: var(--sp-4); }
 
-  .grid { display: grid; gap: 0.625rem; }
-  .grid.cols { grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
+  .grid { display: grid; gap: var(--sp-3); }
+  .grid.cols { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
 
+  /* A stat tile: the label above the figure, as a dashboard reads them. The markup puts
+     the figure first for a screen reader; the column is reversed for the eye. */
   .metric {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: var(--r-md); padding: 0.875rem 1rem;
-    display: flex; flex-direction: column; gap: 0.1rem;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--r-lg); padding: var(--sp-3) var(--sp-4);
+    box-shadow: var(--shadow-1);
+    display: flex; flex-direction: column-reverse; gap: var(--sp-1);
+    min-width: 0;
   }
   .metric-value {
-    font-family: var(--mono); font-size: var(--s3); font-weight: 700;
+    font-family: var(--mono); font-size: var(--s3); font-weight: 600;
     font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+    line-height: var(--lh-tight);
+    overflow-wrap: anywhere;
   }
-  .metric-label { font-size: var(--s-2); color: var(--muted); }
-  .metric.bad { border-color: rgba(255, 90, 78, 0.3); }
-  .metric.bad .metric-value { color: var(--coral); }
-  .metric.warn { border-color: rgba(245, 166, 35, 0.3); }
-  .metric.warn .metric-value { color: var(--amber); }
-  .metric.good .metric-value { color: var(--teal); }
+  .metric-label { font-size: var(--s-2); color: var(--muted); font-weight: 500; }
+  .metric.bad .metric-value { color: var(--danger); }
+  .metric.warn .metric-value { color: var(--warn); }
+  .metric.good .metric-value { color: var(--ok); }
 
-  .scroll { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: var(--s-1); }
+  /* Tables scroll inside their card, sideways when they are wide and downwards when they
+     are long, which is what lets the header stay in view over a long list. */
+  .scroll { overflow: auto; max-height: min(72vh, 48rem); }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--s-1); }
   th, td {
-    text-align: left; padding: 0.55rem 0.75rem;
+    text-align: left; padding: var(--sp-2) var(--sp-3);
     border-bottom: 1px solid var(--line); vertical-align: top;
   }
   th {
-    font-size: var(--s-2); text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--faint); font-weight: 600; white-space: nowrap;
-    position: sticky; top: 0; background: var(--card);
+    font-size: var(--s-2); text-transform: uppercase; letter-spacing: var(--tracking-caps);
+    color: var(--muted); font-weight: 600; white-space: nowrap;
+    position: sticky; top: 0; z-index: 1;
+    background: var(--surface-2);
   }
   tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--surface-2); }
   tbody tr.clickable { cursor: pointer; }
-  tbody tr.clickable:hover { background: var(--card-2); }
+  tbody tr.clickable:hover td { background: var(--accent-soft); }
   td.m, th.m {
     font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap;
   }
-  td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td strong { font-weight: 600; }
   .dim { color: var(--muted); }
-  .faint { color: var(--faint); }
+  .faint { color: var(--muted); }
 
   .tag {
     display: inline-block;
-    font-family: var(--mono); font-size: var(--s-2);
-    padding: 0.05rem 0.45rem; border-radius: var(--pill);
-    background: var(--card-3); color: var(--muted); white-space: nowrap;
+    font-family: var(--mono); font-size: var(--s-2); font-weight: 500;
+    padding: 0.05rem 0.5rem; border-radius: var(--pill);
+    background: var(--surface-3); color: var(--ink-2); white-space: nowrap;
+    line-height: 1.5;
   }
-  .tag.ok { background: var(--teal-wash); color: var(--teal); }
-  .tag.warn { background: var(--amber-wash); color: var(--amber); }
-  .tag.bad { background: var(--coral-wash); color: var(--coral); }
-  .tag.lime { background: var(--lime-wash); color: var(--lime); }
-  .tag.violet { background: rgba(139, 124, 246, 0.14); color: var(--violet); }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); }
+  .tag.bad { background: var(--danger-soft); color: var(--danger); }
+  .tag.lime { background: var(--accent-soft); color: var(--ink); }
+  .tag.violet { background: var(--info-soft); color: var(--info); }
 
   /* ── controls ───────────────────────────────────────────────────────── */
 
-  .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .row { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
 
   input[type="text"], input[type="password"], input[type="search"], select, textarea {
-    background: var(--card-2); color: var(--ink);
-    border: 1px solid var(--line-2); border-radius: var(--r-sm);
-    padding: 0.45rem 0.625rem; font: inherit; font-size: var(--s-1);
-    min-width: 0;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+    padding: 0.4rem var(--sp-3); font: inherit; font-size: var(--s-1);
+    min-width: 0; min-height: var(--control);
+    transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
   }
-  textarea { width: 100%; resize: vertical; min-height: 4.5rem; line-height: 1.5; }
+  select { padding-inline-end: var(--sp-2); }
+  textarea { width: 100%; resize: vertical; min-height: 4.5rem; line-height: var(--lh); }
   input:focus-visible, select:focus-visible, textarea:focus-visible {
-    outline: 2px solid var(--lime); outline-offset: 1px;
+    outline: none; border-color: var(--accent); box-shadow: var(--focus);
   }
   input::placeholder, textarea::placeholder { color: var(--faint); }
   .mono-input { font-family: var(--mono); }
 
   button {
     font: inherit; cursor: pointer;
-    border-radius: var(--pill);
-    transition: filter 120ms ease, background 120ms ease, color 120ms ease;
+    border-radius: var(--r-sm);
+    transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), filter var(--t-fast) var(--ease);
   }
   .btn {
-    padding: 0.4rem 0.9rem; font-size: var(--s-1); font-weight: 600;
-    background: var(--card-3); color: var(--ink); border: 1px solid var(--line-2);
+    min-height: var(--control); padding: 0 var(--sp-3);
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-1);
+    font-size: var(--s-1); font-weight: 600;
+    background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong);
+    box-shadow: var(--shadow-1);
+    white-space: nowrap;
   }
-  .btn:hover:not(:disabled) { background: var(--line-2); }
-  .btn:disabled { opacity: 0.45; cursor: default; }
-  .btn.primary { background: var(--lime); color: var(--lime-ink); border-color: var(--lime); font-weight: 700; }
-  .btn.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--lime); }
-  .btn.danger { background: transparent; color: var(--coral); border-color: rgba(255, 90, 78, 0.4); }
-  .btn.danger:hover:not(:disabled) { background: var(--coral-wash); }
-  .btn.ghost { background: transparent; color: var(--muted); }
-  .btn.ghost:hover:not(:disabled) { color: var(--ink); background: var(--card-2); }
-  .btn:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
-  .btn.sm { padding: 0.2rem 0.6rem; font-size: var(--s-2); }
+  .btn:hover:not(:disabled) { background: var(--surface-2); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .btn.primary { background: var(--lime); color: var(--lime-ink); border-color: var(--lime); }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.04); background: var(--lime); }
+  .btn.danger { color: var(--danger); }
+  .btn.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+  .btn.ghost { background: transparent; color: var(--ink-2); border-color: transparent; box-shadow: none; }
+  .btn.ghost:hover:not(:disabled) { color: var(--ink); background: var(--surface-2); }
+  .btn.sm { min-height: 1.75rem; padding: 0 var(--sp-2); font-size: var(--s-2); }
+  td .btn.ghost { margin: -0.25rem 0; font-family: var(--mono); font-weight: 500; }
 
   /* ── notices ────────────────────────────────────────────────────────── */
 
+  /* Tone is carried by the ground and a rule on the leading edge; the text itself stays
+     in the ink so it reads at any length. */
   .notice {
-    padding: 0.7rem 0.875rem; border-radius: var(--r-sm);
-    font-size: var(--s-1); line-height: 1.5;
-    display: flex; gap: 0.5rem; align-items: flex-start;
+    padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md);
+    font-size: var(--s-1); line-height: var(--lh);
+    display: flex; gap: var(--sp-2); align-items: flex-start;
+    color: var(--ink);
+    border-inline-start: 3px solid var(--line-strong);
+    background: var(--surface-2);
   }
-  .notice.info { background: var(--card-2); color: var(--muted); }
-  .notice.ok { background: var(--teal-wash); color: var(--teal); }
-  .notice.warn { background: var(--amber-wash); color: var(--amber); }
-  .notice.bad { background: var(--coral-wash); color: var(--coral); }
-  .notice strong { color: var(--ink); }
+  .notice.info { background: var(--surface-2); border-color: var(--line-strong); color: var(--ink-2); }
+  .notice.ok { background: var(--ok-soft); border-color: var(--ok); }
+  .notice.warn { background: var(--warn-soft); border-color: var(--warn); }
+  .notice.bad { background: var(--danger-soft); border-color: var(--danger); }
+  .notice strong { color: var(--ink); font-weight: 600; }
+  .notice.ok strong { color: var(--ok); }
+  .notice.warn strong { color: var(--warn); }
+  .notice.bad strong { color: var(--danger); }
+  main > .notice { margin-bottom: var(--sp-4); }
 
-  .empty { padding: 2rem 1rem; text-align: center; color: var(--faint); font-size: var(--s-1); }
-  .empty-mark { font-size: 1.5rem; display: block; margin-bottom: 0.4rem; }
+  .empty { padding: var(--sp-8) var(--sp-4); text-align: center; color: var(--muted); font-size: var(--s-1); }
+  .empty-mark { font-size: 1.5rem; display: block; margin-bottom: var(--sp-2); }
+
+  /* ── detail pages ───────────────────────────────────────────────────── */
+
+  /* Two blocks side by side once there is room, each its own card. */
+  .two-col { display: grid; gap: var(--sp-4); margin-bottom: var(--sp-2); }
+  .block {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+    box-shadow: var(--shadow-1); padding: var(--sp-4); min-width: 0;
+  }
+  .block > h2 { margin: 0 0 var(--sp-3) !important; }
+  .block .metric { box-shadow: none; background: var(--surface-2); }
+  .block .card { box-shadow: none; }
+
+  .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--sp-1) var(--sp-4); font-size: var(--s-1); }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
 
   /* ── modal ──────────────────────────────────────────────────────────── */
 
   .veil {
-    position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72);
-    display: grid; place-items: center; padding: 1rem; z-index: 20;
+    position: fixed; inset: 0; background: rgba(15, 17, 20, 0.5);
+    display: grid; place-items: center; padding: var(--sp-4); z-index: 20;
   }
   .modal {
-    background: var(--card); border: 1px solid var(--line-2);
-    border-radius: var(--r-lg); padding: 1.25rem;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--r-xl); padding: var(--sp-6);
+    box-shadow: var(--shadow-3);
     width: min(34rem, 100%);
-    display: flex; flex-direction: column; gap: 0.75rem;
+    display: flex; flex-direction: column; gap: var(--sp-3);
     max-height: 90vh; overflow-y: auto;
   }
-  .modal h2 { font-size: var(--s1); }
+  .modal h2 { font-size: var(--s2); }
+  .modal input, .modal textarea { width: 100%; }
   .modal-note { font-size: var(--s-1); color: var(--muted); margin: 0; }
-  .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.25rem; }
+  .modal-actions { display: flex; gap: var(--sp-2); justify-content: flex-end; margin-top: var(--sp-2); flex-wrap: wrap; }
+  /* The confirming button of a destructive dialog is filled: the act is the one thing
+     on the screen, and it should look like exactly what it is. */
+  .modal .btn.danger { background: var(--danger); color: var(--surface); border-color: var(--danger); }
+  .modal .btn.danger:hover:not(:disabled) { filter: brightness(1.06); background: var(--danger); }
   .field-label {
-    font-size: var(--s-2); text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--muted); font-weight: 600; display: block; margin-bottom: 0.25rem;
+    font-size: var(--s-2); text-transform: uppercase; letter-spacing: var(--tracking-caps);
+    color: var(--muted); font-weight: 600; display: block; margin-bottom: var(--sp-1);
   }
 
   /* ── sign in ────────────────────────────────────────────────────────── */
 
-  .signin-wrap { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
+  .signin-wrap { min-height: 100vh; display: grid; place-items: center; padding: var(--sp-4); }
   .signin {
     width: min(24rem, 100%);
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: var(--r-lg); padding: 1.5rem;
-    display: flex; flex-direction: column; gap: 0.875rem;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--r-xl); padding: var(--sp-6);
+    box-shadow: var(--shadow-2);
+    display: flex; flex-direction: column; gap: var(--sp-4);
   }
-  .signin input { width: 100%; }
-  .signin .btn { width: 100%; text-align: center; justify-content: center; }
+  .signin input { width: 100%; min-height: var(--tap); }
+  .signin .btn { width: 100%; min-height: var(--tap); }
+  .signin-gap { height: var(--sp-3); }
 
-  .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.3rem 0.875rem; font-size: var(--s-1); }
-  .kv dt { color: var(--muted); }
-  .kv dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+  /* ── wider screens ──────────────────────────────────────────────────── */
+
+  @media (min-width: 64rem) {
+    .two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  /* ── a phone: the rail becomes a drawer ─────────────────────────────── */
 
   @media (max-width: 52rem) {
-    .shell { grid-template-columns: minmax(0, 1fr); }
-    .side { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
-    nav { flex-direction: row; flex-wrap: wrap; }
-    .whoami { margin: 0 0 0 auto; border: none; padding: 0; align-items: flex-end; }
+    /* Rows named, or the shell's minimum height is shared out between the bar and the
+       page, and a short section arrives under a bar half the screen tall. */
+    .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    .topbar { display: flex; }
+    .side {
+      position: fixed; inset: 0 auto 0 0; z-index: 19;
+      width: min(17rem, 85vw); height: 100vh;
+      box-shadow: var(--shadow-3);
+      transform: translateX(-100%);
+      transition: transform var(--t-base) var(--ease);
+    }
+    .shell[data-nav="open"] .side { transform: none; }
+    .side-brand { display: none; }
+    main { padding: var(--sp-4) var(--sp-4) var(--sp-8); }
+    .head .row { width: 100%; }
+    .head .row > input, .head .row > select { flex: 1 1 10rem; }
+    .head .row > input[type="search"], .head .row > input[type="text"] { width: auto; }
+    .scroll { max-height: none; }
+    .modal { padding: var(--sp-4); }
   }
 
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
-<!-- ══ sign in ══════════════════════════════════════════════════════════ -->
+<!-- ══ preview banner ═══════════════════════════════════════════════════ -->
 <!--
   Said before anything else, and not dismissible. A panel full of plausible figures that
   somebody takes for their real system is worse than no preview.
 -->
-<div class="notice bad" id="preview-banner" hidden style="margin:1rem;border-radius:14px">
+<div class="notice bad" id="preview-banner" hidden>
   <span>
     <strong>Preview. </strong>
     Every figure here is made up and nothing can be changed. It is the real staff panel
@@ -337,18 +448,19 @@
   </span>
 </div>
 
+<!-- ══ sign in ══════════════════════════════════════════════════════════ -->
 <div class="signin-wrap" id="signin-screen">
   <form class="signin" id="signin-form">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--void)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>
-      <span>AVEX <span style="color:var(--lime)">Admin</span></span>
+      <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>
+      <span>AVEX <span class="brand-accent">Admin</span></span>
     </div>
     <p class="modal-note">Staff access. Every action here is recorded.</p>
 
     <div id="signin-step-password">
       <label class="field-label" for="signin-email">Email</label>
       <input type="text" id="signin-email" autocomplete="username" spellcheck="false" />
-      <div style="height:.5rem"></div>
+      <div class="signin-gap"></div>
       <label class="field-label" for="signin-password">Password</label>
       <input type="password" id="signin-password" autocomplete="current-password" />
     </div>
@@ -366,12 +478,24 @@
 </div>
 
 <!-- ══ panel ════════════════════════════════════════════════════════════ -->
-<div class="shell" id="panel" hidden>
-  <aside class="side">
-    <div>
+<div class="shell" id="panel" hidden data-nav="closed">
+  <!-- On a phone: the brand and the button that opens the drawer. Hidden on a desktop. -->
+  <header class="topbar">
+    <button class="nav-toggle" type="button" id="nav-toggle" aria-controls="side" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+      Sections
+    </button>
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>
+      <span>AVEX <span class="brand-accent">Admin</span></span>
+    </div>
+  </header>
+
+  <aside class="side" id="side">
+    <div class="side-brand">
       <div class="brand">
-        <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--void)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>
-        <span>AVEX <span style="color:var(--lime)">Admin</span></span>
+        <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>
+        <span>AVEX <span class="brand-accent">Admin</span></span>
       </div>
       <div class="brand-sub" style="margin-top:.35rem">staff panel</div>
     </div>
@@ -384,6 +508,7 @@
       <button class="btn ghost sm" type="button" id="sign-out">Sign out</button>
     </div>
   </aside>
+  <div class="scrim" id="nav-scrim" hidden></div>
 
   <main>
     <div class="notice bad" id="global-error" hidden></div>
@@ -393,6 +518,32 @@
 </div>
 
 <div id="modal-root"></div>
+
+<!--
+  The drawer. Its own script, apart from the panel's: it touches nothing the panel
+  renders or requests, only whether the rail is on screen. Closing on a section click is
+  what makes the drawer usable — a payer of attention should not have to dismiss it twice.
+-->
+<script>
+  (() => {
+    const panel = document.getElementById('panel');
+    const toggle = document.getElementById('nav-toggle');
+    const scrim = document.getElementById('nav-scrim');
+    const set = (open) => {
+      panel.dataset.nav = open ? 'open' : 'closed';
+      toggle.setAttribute('aria-expanded', String(open));
+      scrim.hidden = !open;
+    };
+    toggle.addEventListener('click', () => set(panel.dataset.nav !== 'open'));
+    scrim.addEventListener('click', () => set(false));
+    document.getElementById('nav').addEventListener('click', (event) => {
+      if (event.target.closest('.nav-btn')) set(false);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && panel.dataset.nav === 'open') set(false);
+    });
+  })();
+</script>
 
 <script>
 /* @inject:modules */
@@ -1627,11 +1778,18 @@
               metric(status, String(value), status === 'underpaid' || status === 'overpaid' ? 'warn' : null)),
       ),
 
-      h('h2', { text: 'Commission', style: 'margin:1.25rem 0 .5rem' }),
-      commissionBlock(org, data),
-
-      h('h2', { text: 'Balance', style: 'margin:1.25rem 0 .5rem' }),
-      balanceBlock(org, balance),
+      // Side by side once there is room: the two are read together, because a support
+      // call about a raised fee is answered by the rate and the statement in one look.
+      h('div', { class: 'two-col' }, [
+        h('section', { class: 'block' }, [
+          h('h2', { text: 'Commission', style: 'margin:1.25rem 0 .5rem' }),
+          commissionBlock(org, data),
+        ]),
+        h('section', { class: 'block' }, [
+          h('h2', { text: 'Balance', style: 'margin:1.25rem 0 .5rem' }),
+          balanceBlock(org, balance),
+        ]),
+      ]),
 
       h('h2', { text: 'Members', style: 'margin:1.25rem 0 .5rem' }),
       table(['Email', 'Role', 'Verified', 'Two-factor', 'Joined'], data.members.map((member) =>

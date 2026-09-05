@@ -361,3 +361,210 @@ describe('the receipt on a phone', { skip: playwright ? false : 'playwright is n
     await context.close();
   });
 });
+
+/**
+ * The same pages in both themes.
+ *
+ * Light is the default and dark follows the system, and every colour comes from the shared
+ * tokens — which is exactly what makes a regression here quiet: a token renamed, or a
+ * rule that reaches for a colour only one palette defines, leaves text that is still on
+ * the page and no longer readable. So the readable text is measured against whatever is
+ * actually painted behind it, in each theme, at the WCAG threshold for body copy.
+ *
+ * And the QR frame: a scanner needs dark modules on white, and the dark theme is the one
+ * place a frame that inherited its ground would silently stop scanning.
+ */
+describe('the checkout and the receipt in both themes', { skip: playwright ? false : 'playwright is not installed' }, () => {
+  let browser;
+
+  before(async () => {
+    browser = await playwright.chromium.launch();
+  });
+
+  after(async () => {
+    await browser?.close();
+  });
+
+  /** WCAG relative luminance and contrast, for a computed `rgb(...)` string. */
+  const luminance = (rgb) => {
+    const [r, g, b] = rgb.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number).map((channel) => {
+      const c = channel / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (fg, bg) => {
+    const [light, dark] = [luminance(fg), luminance(bg)].sort((a, b) => b - a);
+    return (light + 0.05) / (dark + 0.05);
+  };
+
+  /**
+   * Every visible element matching each selector, with its ink and the first opaque ground
+   * behind it. Text over a translucent ground is skipped: its composite is unknown from here.
+   */
+  const readable = (page, selectors) =>
+    page.evaluate((list) => {
+      const ground = (node) => {
+        for (let el = node; el; el = el.parentElement) {
+          const bg = getComputedStyle(el).backgroundColor;
+          const alpha = bg.startsWith('rgba') ? Number(bg.match(/[\d.]+(?=\))/)[0]) : 1;
+          if (alpha === 1 && bg !== 'rgba(0, 0, 0, 0)') return bg;
+          if (alpha > 0 && alpha < 1) return null;
+        }
+        return getComputedStyle(document.body).backgroundColor;
+      };
+      const out = [];
+      for (const selector of list) {
+        const nodes = [...document.querySelectorAll(selector)].filter((node) => node.getBoundingClientRect().height > 0);
+        if (nodes.length === 0) {
+          out.push({ selector, missing: true });
+          continue;
+        }
+        for (const node of nodes) {
+          const bg = ground(node);
+          if (bg !== null) out.push({ selector, fg: getComputedStyle(node).color, bg });
+        }
+      }
+      return out;
+    }, selectors);
+
+  const assertReadable = (items, where) => {
+    for (const item of items) {
+      assert.ok(!item.missing, `${item.selector} is not on the page (${where}); update the list`);
+      const ratio = contrast(item.fg, item.bg);
+      assert.ok(ratio >= 4.5, `${item.selector}: ${item.fg} on ${item.bg} is ${ratio.toFixed(2)}:1 (${where})`);
+    }
+  };
+
+  /** The text a payer reads as text, on the pay screen, with a memo showing. */
+  const CHECKOUT_TEXT = [
+    '.brand', '.brand-pay', '.invoice-ref', '.invoice-ref code', 'h1', '.eyebrow', '.step-title',
+    '#status-text', '#amount', '.amount-unit', '.amount-exact', '.amount-exact strong', '.amount-fiat',
+    '.lock-left', '.lock-time', '.chosen-label', '.chosen-net', '.chosen-time', '.link-btn',
+    '.field-label', '.copyable code', '.copy-btn', '.memo-warning', '.memo-warning strong',
+    'h2', '.summary-row dt', '.summary-row dd', '.fine', '.fine strong', '.foot', '.demo-bar', '.demo-bar strong', '.demo-btn',
+  ];
+  /** And on the first screen, where the choices are. */
+  const CHOOSER_TEXT = [
+    '.section-label', '.chooser-note', '.coin-sym', '.coin-name', '.coin-mark',
+    '.coin[aria-checked="true"] .coin-sym', '.coin[aria-checked="true"] .coin-mark',
+    '.net-name', '.net-time', '.net-cost', '.net-cost.free',
+    '.net-row[aria-checked="true"] .net-name',
+  ];
+  const RECEIPT_TEXT = [
+    '.brand', '.brand-pay', '.doc-label', '.number', '.rehearsal strong', '.rehearsal span',
+    '.verdict-head', '.hero-label', '#amount', '.headline-unit', '.headline-fiat', 'h2',
+    '.row dt', '.row dd', '.proof-note', 'button', 'button.primary', '.foot',
+  ];
+
+  for (const theme of ['light', 'dark']) {
+    test(`checkout text reaches 4.5:1 against its ground (${theme})`, async () => {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme });
+      const page = await context.newPage();
+      await page.goto(checkoutUrl);
+
+      await page.click('#currencies .coin:has-text("Tether")');
+      // The hint is on screen while a choice is still owed, and gone once it is made.
+      assertReadable(await readable(page, ['.hint']), theme);
+      await page.click('#networks .net-row:has-text("TON")');
+      assertReadable(await readable(page, CHOOSER_TEXT), theme);
+
+      await page.click('#to-pay');
+      assertReadable(await readable(page, CHECKOUT_TEXT), theme);
+
+      // The status line, in every colour it can take.
+      for (const state of ['confirming', 'paid', 'underpaid', 'expired']) {
+        await page.click(`[data-demo="${state}"]`);
+        await page.waitForTimeout(120);
+        // The rate lock goes once the payment is final, so its figure is only read before that.
+        assertReadable(await readable(page, state === 'paid' ? ['#status-text'] : ['#status-text', '.lock-time']), `${theme}, ${state}`);
+      }
+      // The primary button, dark ink on lime in both themes.
+      await page.click('[data-demo="awaiting"]');
+      await page.click('#currencies .coin:has-text("Toncoin")');
+      assertReadable(await readable(page, ['#to-pay']), theme);
+      await context.close();
+    });
+
+    test(`receipt text reaches 4.5:1 against its ground (${theme})`, async () => {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme });
+      const page = await context.newPage();
+      await page.goto('file://' + receiptFile + '?preview=1');
+      await page.waitForFunction(() => document.getElementById('content')?.hidden === false, { timeout: 5000 });
+      assertReadable(await readable(page, RECEIPT_TEXT), theme);
+      await context.close();
+    });
+  }
+
+  test('light is the default, and the attribute reaches the same dark palette as the system', async () => {
+    const dark = await browser.newContext({ viewport: PHONE, colorScheme: 'dark' });
+    const darkPage = await dark.newPage();
+    await darkPage.goto(checkoutUrl);
+    const system = await darkPage.$eval('body', (node) => getComputedStyle(node).backgroundColor);
+
+    const light = await browser.newContext({ viewport: PHONE, colorScheme: 'light' });
+    const lightPage = await light.newPage();
+    await lightPage.goto(checkoutUrl);
+    const daylight = await lightPage.$eval('body', (node) => getComputedStyle(node).backgroundColor);
+    assert.ok(luminance(daylight) > 0.8, `the default ground is ${daylight}; light is the default`);
+    assert.ok(luminance(system) < 0.05, `the system-dark ground is ${system}`);
+
+    // The attribute reaches the same palette, so a host that sets it gets the same page.
+    await lightPage.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+    assert.equal(await lightPage.$eval('body', (node) => getComputedStyle(node).backgroundColor), system);
+    await light.close();
+    await dark.close();
+  });
+
+  test('the QR keeps its white frame in the dark theme too', async () => {
+    /**
+     * The one place the dark theme could do real harm. The frame is written in hex rather
+     * than a token so that no palette can reach it; this is the test that notices if
+     * somebody tidies that away.
+     */
+    for (const how of ['system', 'attribute']) {
+      const context = await browser.newContext({ viewport: PHONE, colorScheme: how === 'system' ? 'dark' : 'light' });
+      const page = await context.newPage();
+      await page.goto(checkoutUrl);
+      if (how === 'attribute') await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+      await page.click('#currencies .coin:has-text("Tether")');
+      await page.click('#networks .net-row:has-text("BNB Chain")');
+      await page.click('#to-pay');
+
+      const frame = await page.$eval('#qr', (node) => {
+        const style = getComputedStyle(node);
+        return { background: style.backgroundColor, padding: parseFloat(style.paddingLeft) };
+      });
+      assert.equal(frame.background, 'rgb(255, 255, 255)', `dark by ${how}`);
+      assert.ok(frame.padding >= 8, `the quiet zone is ${frame.padding}px (dark by ${how})`);
+      assert.equal((await page.$eval('#qr svg rect', (node) => node.getAttribute('fill'))).toUpperCase(), '#FFFFFF');
+      await context.close();
+    }
+  });
+
+  test('no screen state scrolls sideways at 360px in the dark theme either', async () => {
+    const context = await browser.newContext({ viewport: PHONE, colorScheme: 'dark' });
+    const page = await context.newPage();
+    await page.goto(checkoutUrl);
+    assert.equal(await overflow(page), 0, 'before choosing anything');
+    await page.click('#currencies .coin:has-text("Tether")');
+    assert.equal(await overflow(page), 0, 'with the network list open');
+    await page.click('#networks .net-row:has-text("TON")');
+    await page.click('#to-pay');
+    assert.equal(await overflow(page), 0, 'on the pay screen with a memo');
+    for (const state of ['confirming', 'paid', 'underpaid', 'expired']) {
+      await page.click(`[data-demo="${state}"]`);
+      await page.waitForTimeout(120);
+      assert.equal(await overflow(page), 0, `while ${state}`);
+    }
+    // The selectable rows keep their height whatever the palette.
+    await page.click('[data-demo="awaiting"]');
+    await page.click('#currencies .coin:has-text("Tether")');
+    const rows = await page.$$eval('#currencies .coin, #networks .net-row', (nodes) =>
+      nodes.map((node) => node.getBoundingClientRect().height),
+    );
+    assert.ok(rows.length >= 8);
+    for (const height of rows) assert.ok(height >= TAP, `a selectable row is ${height}px tall`);
+    await context.close();
+  });
+});

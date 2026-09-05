@@ -20,7 +20,37 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 
 const compiled = readFileSync(join(here, '..', '..', 'packages', 'qr', 'dist', 'index.js'), 'utf8');
-const template = readFileSync(join(here, 'public', 'checkout.template.html'), 'utf8');
+
+/**
+ * The design tokens, inlined into every page's stylesheet.
+ *
+ * One file in `packages/design` decides the palette, the type scale and the spacing for
+ * the site, the dashboard, the checkout and the admin panel, so the four surfaces are one
+ * system by construction. A page that copied the values would drift the first time a
+ * token changed; a page that fetched them would break the rule that these files reach no
+ * host. So they are pasted in at build time, in place of a marker at the top of the
+ * page's own `<style>`, and a template without the marker is refused rather than shipped
+ * unstyled.
+ */
+const tokens = readFileSync(join(here, '..', '..', 'packages', 'design', 'tokens.css'), 'utf8').trim();
+const TOKENS_MARKER = '/* @inject:tokens */';
+const withTokens = (source, name) => {
+  if (!source.includes(TOKENS_MARKER)) {
+    console.error(`${name} is missing the ${TOKENS_MARKER} marker`);
+    process.exit(1);
+  }
+  const output = source.replace(TOKENS_MARKER, () => tokens);
+  if (!output.includes(tokens)) {
+    console.error(`inlining altered the design tokens in ${name}; refusing to write a corrupt page`);
+    process.exit(1);
+  }
+  return output;
+};
+
+const template = withTokens(
+  readFileSync(join(here, 'public', 'checkout.template.html'), 'utf8'),
+  'checkout template',
+);
 
 const MARKER = '/* @inject:qr */';
 if (!template.includes(MARKER)) {
@@ -71,7 +101,10 @@ console.log(
  * largest thing here.
  */
 const receiptModule = strip(readFileSync(join(here, 'dist', 'receipt.js'), 'utf8'));
-const receiptTemplate = readFileSync(join(here, 'public', 'receipt.template.html'), 'utf8');
+const receiptTemplate = withTokens(
+  readFileSync(join(here, 'public', 'receipt.template.html'), 'utf8'),
+  'receipt template',
+);
 
 const RECEIPT_MARKER = '/* @inject:receipt */';
 if (!receiptTemplate.includes(RECEIPT_MARKER)) {
