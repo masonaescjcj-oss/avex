@@ -19,3 +19,7 @@ deploy/out/
 
 # The Supabase CLI scratch directory. Per-machine state, not repository content.
 supabase/.temp/
+
+# Isolated worktrees for parallel agents. Their work lives on their own branches; the
+# checkouts themselves are scratch and must never be committed into the tree they mirror.
+.claude/worktrees/
