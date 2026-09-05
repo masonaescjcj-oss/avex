@@ -11,99 +11,41 @@
   would have sent every request to the static host.
 -->
 <meta name="avex-api" content="">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#f7f8f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c0e11" media="(prefers-color-scheme: dark)">
 <title>AVEX Pay</title>
 <style>
+  /* @inject:tokens */
+
   /**
    * AVEX Pay checkout.
    *
-   * The palette is the AVEX product's, not this page's own: pure black ground,
-   * acid lime spent sparingly on the one thing that matters per view, dark cards
-   * at a 14-20px radius, and monospace for every number and identifier so an
-   * address, an amount and a fee all line up under each other and can be read
-   * digit by digit. There is no light theme because AVEX has none — the tokens
-   * are painted explicitly rather than inherited from the host.
+   * The palette, type scale, spacing and radii are the shared tokens above — this page
+   * extends them and defines no colour of its own. Light first, because the reference this
+   * is measured against is a hosted checkout read in daylight; dark follows the system or
+   * `data-theme="dark"`, and everything is painted explicitly in both.
    *
-   * The layout is written for a phone first. A payer on a 360px screen has to pick a
-   * currency, read the exact amount, copy the address or scan the code, and see the
-   * status — in that order, one column, nothing narrower than a thumb. Wider screens
-   * gain a second column for the summary; nothing else changes shape.
+   * The shape is a hosted checkout's: one card on a soft ground, the merchant and the
+   * order at the top, the amount as the display element, and a short stepper so a payer
+   * always knows where they are. Wider screens gain a second column for the summary;
+   * nothing else changes shape. On a phone the card runs edge to edge.
    *
-   * Three rules hold everything together: spacing is an 8px scale (`--sp-*`), every
-   * control is at least 44px tall (`--tap`), and there is one radius scale. The amount
-   * is the display size because on a chain where the merchant's own wallet receives
-   * the money, the exact figure is what identifies the payment — so it is the most
-   * prominent and most copyable thing on the page.
+   * Three rules hold everything together: spacing is the 8px scale, every control is at
+   * least 44px tall (`--tap`), and there is one radius scale. Monospace is used for every
+   * number and identifier so an address, an amount and a fee line up under each other and
+   * can be read digit by digit. The amount is the display size because on a chain where
+   * the merchant's own wallet receives the money, the exact figure is what identifies the
+   * payment — so it is the most prominent and most copyable thing on the page.
    *
-   * Copy is English and the layout is left-to-right. Nothing here is direction
-   * -locked: the box model uses logical properties, so adding a right-to-left
-   * locale later is a string table and a `dir` attribute, not a re-layout.
+   * Copy is English and the layout is left-to-right. Nothing here is direction-locked: the
+   * box model uses logical properties, so adding a right-to-left locale later is a string
+   * table and a `dir` attribute, not a re-layout.
    */
+
+  /* Page-level extensions of the tokens. Nothing here is a colour. */
   :root {
-    --void: #000000;
-    --card: #121212;
-    --card-2: #1A1A1A;
-    --card-3: #242424;
-    --line: #262626;
-    --line-2: #333333;
-
-    --ink: #FFFFFF;
-    /* Raised from #8B8B8B and #5A5A5A: secondary copy sits on --card-2 and --card-3, and
-       the old values measured 5.1:1 and 2.9:1 there. These clear 4.5:1 on every ground
-       they are painted on. */
-    --muted: #A3A3A3;
-    --faint: #8C8C8C;
-
-    --lime: #C6F73F;
-    --lime-ink: #0A0A0A;
-    --lime-wash: rgba(198, 247, 63, 0.10);
-    --lime-edge: rgba(198, 247, 63, 0.28);
-
-    --teal: #2ED3A0;
-    --teal-wash: rgba(46, 211, 160, 0.12);
-    --teal-edge: rgba(46, 211, 160, 0.35);
-    --amber: #F5A623;
-    --amber-wash: rgba(245, 166, 35, 0.12);
-    --amber-edge: rgba(245, 166, 35, 0.35);
-    --coral: #FF5A4E;
-    --coral-wash: rgba(255, 90, 78, 0.12);
-    --coral-edge: rgba(255, 90, 78, 0.35);
-    --error-ink: #FF6B6B;
-
-    /* Older names, kept so nothing that reaches for them paints in the default colour. */
-    --text: var(--ink);
-    --lime-dim: var(--lime-wash);
-
-    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif;
-    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-
-    /* One radius scale. */
-    --r-lg: 20px;
-    --r-md: 14px;
-    --r-sm: 10px;
-    --pill: 999px;
-
-    /* An 8px spacing scale. */
-    --sp-1: 0.25rem;
-    --sp-2: 0.5rem;
-    --sp-3: 0.75rem;
-    --sp-4: 1rem;
-    --sp-5: 1.25rem;
-    --sp-6: 1.5rem;
-    --sp-8: 2rem;
-
-    /* The smallest thing a thumb is asked to hit. */
-    --tap: 2.75rem;
-    --focus: 2px solid var(--lime);
-
-    /* Type scale. The amount alone uses the display size. */
-    --s-2: 0.6875rem;
-    --s-1: 0.8125rem;
-    --s0: 0.9375rem;
-    --s1: 1.0625rem;
-    --s2: 1.375rem;
-    --s3: 1.875rem;
-    --s5: 3.25rem;
+    --display: clamp(2rem, 9vw, 2.75rem);
+    --card-pad: var(--sp-4);
   }
 
   *, *::before, *::after { box-sizing: border-box; }
@@ -117,24 +59,24 @@
   body {
     margin: 0;
     min-height: 100dvh;
-    background: var(--void);
+    background: var(--bg);
     color: var(--ink);
-    font-family: var(--sans);
+    font-family: var(--font);
     font-size: var(--s0);
-    line-height: 1.55;
+    line-height: var(--lh);
     -webkit-font-smoothing: antialiased;
   }
 
   .page {
-    max-width: 64rem;
+    max-width: 66rem;
     margin: 0 auto;
-    padding: var(--sp-4) var(--sp-3) var(--sp-8);
+    padding: 0 0 var(--sp-8);
   }
 
   /* Every control shares one focus ring, drawn outside the element so it is never
      swallowed by a coloured background. */
   button:focus-visible, a:focus-visible {
-    outline: var(--focus);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
 
@@ -146,17 +88,18 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--sp-2) var(--sp-3);
-    margin-bottom: var(--sp-4);
     min-height: var(--tap);
+    padding: var(--sp-3) var(--sp-4);
   }
 
   .brand {
     display: flex;
     align-items: center;
     gap: var(--sp-2);
-    font-weight: 800;
-    font-size: var(--s1);
+    font-weight: 700;
+    font-size: var(--s0);
     letter-spacing: -0.01em;
+    color: var(--ink);
   }
   /**
    * The mark, drawn rather than fetched.
@@ -165,8 +108,8 @@
    * less markup than the base64 of a picture of two arches. It is also the one page a customer
    * sees, which is the page where a logo that failed to load would matter most.
    */
-  .brand-mark { width: 1.75rem; height: 1.75rem; flex: none; display: block; }
-  .brand-pay { color: var(--lime); }
+  .brand-mark { width: 1.5rem; height: 1.5rem; flex: none; display: block; }
+  .brand-pay { color: var(--accent); }
 
   .invoice-ref {
     display: flex;
@@ -179,11 +122,11 @@
   .invoice-ref code {
     font-family: var(--mono);
     font-size: var(--s-1);
-    color: var(--ink);
-    background: var(--card-2);
+    color: var(--ink-2);
+    background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: var(--pill);
-    padding: 0.125rem var(--sp-3);
+    border-radius: var(--r-sm);
+    padding: 0.125rem var(--sp-2);
     overflow-wrap: anywhere;
   }
 
@@ -192,19 +135,27 @@
   .split {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--sp-3);
+    gap: var(--sp-4);
     align-items: start;
   }
 
+  /* On a phone the card runs edge to edge: a border and a radius at 360px are 2px of
+     address space spent on decoration. */
   .panel {
-    background: var(--card);
+    background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: var(--r-lg);
-    overflow: hidden;
+    border-inline-width: 0;
+    border-radius: 0;
+    box-shadow: var(--shadow-1);
   }
 
   .panel-head {
-    padding: var(--sp-4) var(--sp-4) var(--sp-3);
+    padding: var(--card-pad) var(--card-pad) 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-4);
+  }
+  .head-row {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
@@ -212,17 +163,17 @@
   }
 
   h1 {
-    font-size: clamp(1.25rem, 5vw, var(--s2));
-    font-weight: 800;
+    font-size: var(--s2);
+    font-weight: 700;
     margin: 0;
     letter-spacing: -0.015em;
-    line-height: 1.25;
+    line-height: var(--lh-tight);
     min-width: 0;
     overflow-wrap: anywhere;
   }
   h2 {
     font-size: var(--s0);
-    font-weight: 700;
+    font-weight: 600;
     margin: 0;
     display: flex;
     align-items: center;
@@ -231,7 +182,7 @@
 
   .eyebrow {
     font-size: var(--s-2);
-    letter-spacing: 0.08em;
+    letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
     color: var(--muted);
     margin: 0;
@@ -241,7 +192,7 @@
   .eyebrow-mono { font-family: var(--mono); }
 
   .body {
-    padding: 0 var(--sp-4) var(--sp-4);
+    padding: var(--card-pad);
     display: flex;
     flex-direction: column;
     gap: var(--sp-4);
@@ -249,21 +200,94 @@
 
   .section-label {
     font-size: var(--s0);
-    font-weight: 700;
+    font-weight: 600;
     color: var(--ink);
     margin: 0;
+  }
+
+  /* ── steps: choose → pay → confirmed ────────────────────────────────── */
+
+  /**
+   * Three steps in a row, the current one emphasised. The state is written by the
+   * script (`data-state` of done / active / nothing), so this is presentation only: a
+   * done step is a tick in the success colour, the active step is the brand fill, and
+   * what is still to come is outlined. The connecting rule after each step fills in as
+   * the payer moves right.
+   */
+  .steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--sp-2);
+  }
+  .step {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    min-width: 0;
+    font-size: var(--s-1);
+    color: var(--muted);
+    line-height: 1.35;
+    position: relative;
+  }
+  .step-num {
+    font-family: var(--mono);
+    font-size: var(--s-2);
+    width: 1.5rem; height: 1.5rem;
+    display: grid; place-items: center;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 50%;
+    font-variant-numeric: tabular-nums;
+    flex: none;
+    background: var(--surface);
+    color: var(--muted);
+    position: relative;
+    z-index: 1;
+  }
+  /* The rule from this step's circle to the next one's: it starts just after the circle
+     and runs to the column's edge, and the grid gap is what stops it short of the next
+     circle. A done step's rule is in the success colour; what is still to come is grey. */
+  .step:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    top: 0.75rem;
+    inset-inline: 2rem 0;
+    height: 1.5px;
+    background: var(--line);
+    transform: translateY(-50%);
+  }
+  .step[data-state="done"]:not(:last-child)::before { background: var(--ok); }
+  .step-text { display: flex; flex-direction: column; gap: 0.125rem; min-width: 0; }
+  .step-title { font-weight: 600; color: var(--muted); }
+  .step-desc { display: none; color: var(--muted); }
+  .step[data-state="done"] .step-title { color: var(--ink-2); }
+  .step[data-state="done"] .step-num {
+    background: var(--ok); border-color: var(--ok); color: var(--surface); font-weight: 700;
+  }
+  .step[data-state="done"] .step-num::after {
+    content: '';
+    width: 0.3rem;
+    height: 0.55rem;
+    border-right: 2px solid var(--surface);
+    border-bottom: 2px solid var(--surface);
+    transform: translateY(-1px) rotate(45deg);
+  }
+  .step[data-state="done"] .step-num span { display: none; }
+  .step[data-state="active"] .step-title { color: var(--ink); }
+  .step[data-state="active"] .step-num {
+    background: var(--lime); border-color: var(--lime); color: var(--lime-ink); font-weight: 700;
   }
 
   /* ── the amount, the page's hero ────────────────────────────────────── */
 
   .amount-card {
-    background: var(--card-2);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: var(--sp-4);
     display: flex;
     flex-direction: column;
     gap: var(--sp-2);
+    padding-bottom: var(--sp-4);
+    border-bottom: 1px solid var(--line);
   }
 
   .amount-row {
@@ -284,12 +308,12 @@
   }
   .amount-value {
     font-family: var(--mono);
-    font-size: clamp(2.25rem, 10vw, var(--s5));
-    font-weight: 700;
+    font-size: var(--display);
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.03em;
     line-height: 1;
-    color: var(--lime);
+    color: var(--ink);
     overflow-wrap: anywhere;
   }
   /**
@@ -310,7 +334,7 @@
   .amount-unit {
     font-family: var(--mono);
     font-size: var(--s1);
-    font-weight: 600;
+    font-weight: 500;
     color: var(--muted);
   }
   .amount-fiat {
@@ -323,36 +347,38 @@
   .amount-exact {
     margin: 0;
     font-size: var(--s-1);
-    color: var(--ink);
-    line-height: 1.5;
+    color: var(--muted);
+    line-height: var(--lh);
   }
-  .amount-exact strong { color: var(--lime); font-weight: 700; }
+  .amount-exact strong { color: var(--ink); font-weight: 600; }
 
   /* ── shared button primitives ───────────────────────────────────────── */
 
-  /* Lime, pill, 44px tall: the same button copies an amount, an address and a memo. */
+  /* A quiet secondary button, 44px tall: the same one copies an amount, an address and a
+     memo. It turns to the success colour for a moment once it has. */
   .copy-btn {
     flex: none;
     min-height: var(--tap);
+    min-width: var(--tap);
     padding: 0 var(--sp-4);
-    border: none;
-    border-radius: var(--pill);
-    background: var(--lime);
-    color: var(--lime-ink);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-md);
+    background: var(--surface);
+    color: var(--ink);
     font: inherit;
     font-size: var(--s-1);
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: var(--sp-1);
-    transition: filter 140ms ease, background 140ms ease;
+    transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
   }
-  .copy-btn:hover { filter: brightness(1.08); }
-  .copy-btn:active { filter: brightness(0.94); }
-  .copy-btn[data-copied="true"] { background: var(--teal); }
+  .copy-btn:hover { background: var(--surface-2); border-color: var(--n400); }
+  .copy-btn:active { background: var(--surface-3); }
+  .copy-btn[data-copied="true"] { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
 
   /* ── network chooser: the distinctive part ──────────────────────────── */
 
@@ -362,7 +388,7 @@
     font-size: var(--s-1);
     color: var(--muted);
     margin: 0;
-    line-height: 1.5;
+    line-height: var(--lh);
   }
 
   /* ── the currency step ────────────────────────────────────────────────
@@ -374,6 +400,8 @@
     gap: var(--sp-2);
   }
 
+  /* Selectable cards with radio semantics: an outlined card, and a two-pixel ring in
+     the accent when chosen, drawn inside so the grid never shifts. */
   .coin {
     display: flex;
     align-items: center;
@@ -382,19 +410,19 @@
     padding: var(--sp-2) var(--sp-3);
     border: 1px solid var(--line);
     border-radius: var(--r-md);
-    background: var(--card-2);
-    color: var(--text);
+    background: var(--surface);
+    color: var(--ink);
     cursor: pointer;
     text-align: left;
     font: inherit;
-    transition: background 140ms ease, border-color 140ms ease;
+    transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
   }
 
-  .coin:hover { background: var(--card-3); }
+  .coin:hover { background: var(--surface-2); border-color: var(--line-strong); }
   .coin[aria-checked="true"] {
-    border-color: var(--lime);
-    background: var(--lime-dim);
-    box-shadow: inset 0 0 0 1px var(--lime);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .coin-mark {
@@ -407,14 +435,14 @@
     font-family: var(--mono);
     font-size: 0.6875rem;
     font-weight: 700;
-    background: var(--card-3);
-    color: var(--muted);
+    background: var(--surface-3);
+    color: var(--ink-2);
   }
 
   .coin[aria-checked="true"] .coin-mark { background: var(--lime); color: var(--lime-ink); }
 
   .coin-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
-  .coin-sym { font-weight: 700; font-size: var(--s0); font-family: var(--mono); }
+  .coin-sym { font-weight: 600; font-size: var(--s0); font-family: var(--mono); }
   .coin-name {
     font-size: var(--s-2);
     color: var(--muted);
@@ -434,41 +462,43 @@
     width: 100%;
     min-height: var(--tap);
     padding: var(--sp-3) var(--sp-4);
-    background: var(--card-2);
+    background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r-md);
     font: inherit;
     color: inherit;
     text-align: left;
     cursor: pointer;
-    transition: background 140ms ease, border-color 140ms ease;
+    transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
   }
-  .net-row:hover:not(:disabled) { background: var(--card-3); }
-  .net-row:disabled { opacity: 0.5; cursor: default; }
+  .net-row:hover:not(:disabled) { background: var(--surface-2); border-color: var(--line-strong); }
+  .net-row:disabled { opacity: 0.55; cursor: default; }
   .net-row[aria-checked="true"] {
-    background: var(--lime-wash);
-    border-color: var(--lime);
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .dot {
     width: 1.125rem;
     height: 1.125rem;
-    border: 1.5px solid var(--line-2);
+    border: 1.5px solid var(--line-strong);
     border-radius: 50%;
     position: relative;
     flex: none;
     grid-row: 1 / span 2;
+    background: var(--surface);
   }
-  .net-row[aria-checked="true"] .dot { border-color: var(--lime); }
+  .net-row[aria-checked="true"] .dot { border-color: var(--accent); }
   .net-row[aria-checked="true"] .dot::after {
     content: '';
     position: absolute;
     inset: 3px;
-    background: var(--lime);
+    background: var(--accent);
     border-radius: 50%;
   }
 
-  .net-name { font-weight: 700; font-size: var(--s0); line-height: 1.3; }
+  .net-name { font-weight: 600; font-size: var(--s0); line-height: 1.3; }
   .net-time {
     grid-column: 2;
     font-family: var(--mono);
@@ -488,11 +518,11 @@
     white-space: nowrap;
     padding: 0.1875rem var(--sp-2);
     border-radius: var(--pill);
-    background: var(--card-3);
-    color: var(--muted);
+    background: var(--surface-3);
+    color: var(--ink-2);
   }
   .net-cost:empty { display: none; }
-  .net-cost.free { background: var(--teal-wash); color: var(--teal); }
+  .net-cost.free { background: var(--ok-soft); color: var(--ok); }
 
   /* ── primary action ─────────────────────────────────────────────────── */
 
@@ -501,27 +531,27 @@
     min-height: 3rem;
     padding: 0 var(--sp-6);
     border: none;
-    border-radius: var(--pill);
+    border-radius: var(--r-md);
     background: var(--lime);
     color: var(--lime-ink);
     font: inherit;
     font-size: var(--s1);
     font-weight: 700;
     cursor: pointer;
-    transition: filter 140ms ease;
+    box-shadow: var(--shadow-1);
+    transition: filter var(--t-fast) var(--ease);
   }
-  .primary:hover:not(:disabled) { filter: brightness(1.08); }
-  .primary:active:not(:disabled) { filter: brightness(0.94); }
-  .primary:disabled { background: var(--card-3); color: var(--faint); cursor: default; }
+  .primary:hover:not(:disabled) { filter: brightness(1.04); }
+  .primary:active:not(:disabled) { filter: brightness(0.96); }
+  .primary:disabled { background: var(--surface-3); color: var(--faint); cursor: default; box-shadow: none; }
 
   .hint { font-size: var(--s-1); color: var(--muted); margin: 0; text-align: center; }
   .hint[data-error="true"] {
-    color: var(--error-ink);
+    color: var(--danger);
     text-align: start;
     padding: var(--sp-3) var(--sp-4);
-    border-radius: var(--r-sm);
-    background: var(--coral-wash);
-    border: 1px solid var(--coral-edge);
+    border-radius: var(--r-md);
+    background: var(--danger-soft);
   }
 
   /* ── the chosen network, carried onto the second screen ─────────────── */
@@ -533,8 +563,8 @@
     align-items: center;
     gap: var(--sp-2) var(--sp-3);
     flex-wrap: wrap;
-    background: var(--lime-wash);
-    border: 1px solid var(--lime-edge);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
     border-radius: var(--r-md);
     padding: var(--sp-1) var(--sp-1) var(--sp-1) var(--sp-4);
     min-height: calc(var(--tap) + var(--sp-2));
@@ -547,8 +577,8 @@
     padding: var(--sp-2) 0;
     line-height: 1.3;
   }
-  .chosen-label { color: var(--muted); font-size: var(--s-2); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
-  .chosen-net { font-weight: 700; font-size: var(--s0); overflow-wrap: anywhere; }
+  .chosen-label { color: var(--muted); font-size: var(--s-2); text-transform: uppercase; letter-spacing: var(--tracking-caps); font-weight: 600; }
+  .chosen-net { font-weight: 600; font-size: var(--s0); overflow-wrap: anywhere; }
   .chosen-time {
     font-family: var(--mono);
     font-size: var(--s-2);
@@ -559,18 +589,18 @@
     margin-inline-start: auto;
     min-height: var(--tap);
     padding: 0 var(--sp-4);
-    border: 1px solid var(--lime-edge);
-    border-radius: var(--pill);
-    background: transparent;
-    color: var(--lime);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-md);
+    background: var(--surface);
+    color: var(--accent);
     font: inherit;
     font-size: var(--s-1);
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
-    transition: background 140ms ease;
+    transition: background var(--t-fast) var(--ease);
   }
-  .link-btn:hover:not(:disabled) { background: var(--lime-wash); }
-  .link-btn:disabled { border-color: var(--line-2); color: var(--faint); cursor: default; }
+  .link-btn:hover:not(:disabled) { background: var(--accent-soft); }
+  .link-btn:disabled { border-color: var(--line); color: var(--faint); cursor: default; background: transparent; }
 
   .screen { display: flex; flex-direction: column; gap: var(--sp-4); }
 
@@ -582,12 +612,14 @@
     gap: var(--sp-4);
   }
 
-  /* The module area stays pure white on pure black: a tinted QR is a QR that
+  /* The module area stays pure white in both themes: a tinted QR is a QR that
      sometimes does not scan, and no styling is worth that. The padding is part of
-     the quiet zone a scanner needs, so it stays white as well. */
+     the quiet zone a scanner needs, so it stays white as well — and the frame is
+     written in hex on purpose, so no palette can reach it. */
   .qr-frame {
     background: #FFFFFF;
     padding: var(--sp-3);
+    border: 1px solid var(--line);
     border-radius: var(--r-md);
     line-height: 0;
     justify-self: center;
@@ -599,7 +631,7 @@
   .field { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
   .field-label {
     font-size: var(--s-2);
-    letter-spacing: 0.06em;
+    letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
     color: var(--muted);
     font-weight: 600;
@@ -611,7 +643,7 @@
     gap: var(--sp-2);
     min-height: calc(var(--tap) + var(--sp-2));
     padding: var(--sp-1) var(--sp-1) var(--sp-1) var(--sp-3);
-    background: var(--card-2);
+    background: var(--surface-2);
     border: 1px solid var(--line);
     border-radius: var(--r-md);
   }
@@ -622,7 +654,7 @@
     font-family: var(--mono);
     font-size: var(--s-1);
     overflow-wrap: anywhere;
-    line-height: 1.5;
+    line-height: var(--lh);
     color: var(--ink);
   }
 
@@ -631,15 +663,14 @@
     gap: var(--sp-2);
     align-items: flex-start;
     padding: var(--sp-3) var(--sp-4);
-    background: var(--amber-wash);
-    border: 1px solid var(--amber-edge);
-    border-radius: var(--r-sm);
+    background: var(--warn-soft);
+    border-radius: var(--r-md);
     font-size: var(--s-1);
-    line-height: 1.5;
+    line-height: var(--lh);
     color: var(--ink);
   }
-  .memo-warning strong { color: var(--amber); }
-  .memo-warning svg { flex: none; width: 1.125rem; height: 1.125rem; margin-top: 0.0625rem; color: var(--amber); }
+  .memo-warning strong { color: var(--warn); }
+  .memo-warning svg { flex: none; width: 1.125rem; height: 1.125rem; margin-top: 0.0625rem; color: var(--warn); }
 
   /* ── rate lock: a depleting rule, not a clock ───────────────────────── */
 
@@ -651,18 +682,18 @@
     gap: var(--sp-1);
     padding: var(--sp-3) var(--sp-4);
     border-radius: var(--r-md);
-    border: 1px solid var(--teal-edge);
-    background: var(--teal-wash);
+    background: var(--ok-soft);
   }
   .receipt-link {
     display: inline-flex;
     align-items: center;
     min-height: var(--tap);
-    color: var(--lime);
-    font-weight: 700;
-    text-decoration: none;
+    color: var(--ok);
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
-  .receipt-link:hover { text-decoration: underline; }
+  .receipt-link:hover { text-decoration-thickness: 2px; }
   .receipt-note { font-size: var(--s-2); color: var(--muted); }
   .lock-line {
     display: flex;
@@ -675,28 +706,29 @@
   .lock-time {
     font-family: var(--mono);
     font-variant-numeric: tabular-nums;
-    color: var(--lime);
-    font-weight: 700;
+    color: var(--ink);
+    font-weight: 600;
   }
-  .lock-track { height: 4px; background: var(--card-3); border-radius: var(--pill); overflow: hidden; }
+  .lock-track { height: 4px; background: var(--surface-3); border-radius: var(--pill); overflow: hidden; }
   .lock-fill {
     height: 100%;
     width: 100%;
-    background: var(--lime);
+    background: var(--accent);
     border-radius: var(--pill);
     transform-origin: left center;
     transition: transform 1s linear;
   }
-  .is-expired .lock-fill { background: var(--coral); }
-  .is-expired .lock-time { color: var(--coral); }
+  .is-expired .lock-fill { background: var(--danger); }
+  .is-expired .lock-time { color: var(--danger); }
 
   /* ── status ─────────────────────────────────────────────────────────── */
 
   /**
-   * Six states, each its own colour and its own mark, none of them loud. Waiting is a
-   * pulse, confirming is a ring turning, paid is a tick, a short payment is an
-   * exclamation, an overpayment (should the API ever hand one straight through) is
-   * amber, and an expired rate is a grey cross. A payer glancing at a phone should know
+   * Six states, each its own colour from the semantic tokens and its own mark, none of
+   * them loud. Waiting is an amber pulse (the payer is the one who has to act), confirming
+   * is a blue ring turning, paid is a tick in the success colour, a short payment is a red
+   * exclamation, an overpayment (should the API ever hand one straight through) is an amber
+   * one, and an expired rate is a grey cross. A payer glancing at a phone should know
    * which one they are in before reading a word.
    */
   .status {
@@ -706,18 +738,17 @@
     min-height: var(--tap);
     padding: var(--sp-2) var(--sp-4);
     border-radius: var(--r-md);
-    border: 1px solid var(--amber-edge);
     font-size: var(--s0);
     font-weight: 600;
-    background: var(--amber-wash);
+    background: var(--warn-soft);
     color: var(--ink);
     flex-wrap: wrap;
   }
-  .status[data-state="confirming"] { background: var(--lime-wash); border-color: var(--lime-edge); }
-  .status[data-state="paid"] { background: var(--teal-wash); border-color: var(--teal-edge); }
-  .status[data-state="underpaid"] { background: var(--coral-wash); border-color: var(--coral-edge); }
-  .status[data-state="overpaid"] { background: var(--amber-wash); border-color: var(--amber-edge); }
-  .status[data-state="expired"] { background: var(--card-3); border-color: var(--line-2); color: var(--muted); }
+  .status[data-state="confirming"] { background: var(--info-soft); }
+  .status[data-state="paid"] { background: var(--ok-soft); }
+  .status[data-state="underpaid"] { background: var(--danger-soft); }
+  .status[data-state="overpaid"] { background: var(--warn-soft); }
+  .status[data-state="expired"] { background: var(--surface-3); color: var(--ink-2); }
 
   .status-dot {
     width: 1.25rem;
@@ -735,8 +766,8 @@
     width: 0.625rem;
     height: 0.625rem;
     border-radius: 50%;
-    background: var(--amber);
-    box-shadow: 0 0 0 3px var(--amber-wash);
+    background: var(--warn);
+    box-shadow: 0 0 0 3px var(--warn-soft);
     animation: pulse 1.8s ease-in-out infinite;
   }
   /* Confirming: a ring, turning. */
@@ -745,36 +776,36 @@
     width: 1rem;
     height: 1rem;
     border-radius: 50%;
-    border: 2px solid var(--lime-edge);
-    border-top-color: var(--lime);
+    border: 2px solid var(--line-strong);
+    border-top-color: var(--info);
     animation: spin 1s linear infinite;
   }
-  /* Paid: a tick on teal. */
-  .status[data-state="paid"] .status-dot { background: var(--teal); }
+  /* Paid: a tick. */
+  .status[data-state="paid"] .status-dot { background: var(--ok); }
   .status[data-state="paid"] .status-dot::after {
     content: '';
     width: 0.3125rem;
     height: 0.5625rem;
-    border-right: 2px solid var(--lime-ink);
-    border-bottom: 2px solid var(--lime-ink);
+    border-right: 2px solid var(--surface);
+    border-bottom: 2px solid var(--surface);
     transform: translateY(-1px) rotate(45deg);
   }
-  /* Underpaid and overpaid: an exclamation, coral or amber. */
-  .status[data-state="underpaid"] .status-dot { background: var(--coral); }
-  .status[data-state="overpaid"] .status-dot { background: var(--amber); }
+  /* Underpaid and overpaid: an exclamation, red or amber. */
+  .status[data-state="underpaid"] .status-dot { background: var(--danger); }
+  .status[data-state="overpaid"] .status-dot { background: var(--warn); }
   .status[data-state="underpaid"] .status-dot::after,
   .status[data-state="overpaid"] .status-dot::after {
     content: '!';
-    color: var(--lime-ink);
+    color: var(--surface);
     font-weight: 800;
     font-size: 0.8125rem;
     line-height: 1;
   }
   /* Expired: a grey cross. */
-  .status[data-state="expired"] .status-dot { background: var(--line-2); }
+  .status[data-state="expired"] .status-dot { background: var(--n400); }
   .status[data-state="expired"] .status-dot::after {
     content: '×';
-    color: var(--ink);
+    color: var(--surface);
     font-weight: 700;
     font-size: 0.9375rem;
     line-height: 1;
@@ -794,41 +825,12 @@
   }
   .confirmations:empty { display: none; }
 
-  /* ── steps ──────────────────────────────────────────────────────────── */
-
-  .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
-  .step {
-    display: grid;
-    grid-template-columns: 1.5rem minmax(0, 1fr);
-    gap: var(--sp-3);
-    align-items: start;
-    font-size: var(--s-1);
-    color: var(--muted);
-    line-height: 1.5;
-  }
-  .step-num {
-    font-family: var(--mono);
-    font-size: var(--s-2);
-    width: 1.5rem; height: 1.5rem;
-    display: grid; place-items: center;
-    border: 1px solid var(--line-2);
-    border-radius: 50%;
-    font-variant-numeric: tabular-nums;
-    flex: none;
-  }
-  .step[data-state="done"] { color: var(--muted); }
-  .step[data-state="done"] .step-num {
-    background: var(--teal); border-color: var(--teal); color: var(--lime-ink); font-weight: 700;
-  }
-  .step[data-state="active"] { color: var(--ink); }
-  .step[data-state="active"] .step-num {
-    background: var(--lime); border-color: var(--lime); color: var(--lime-ink); font-weight: 700;
-  }
-
   /* ── aside ──────────────────────────────────────────────────────────── */
 
-  .aside { display: flex; flex-direction: column; gap: var(--sp-3); }
+  .aside { display: flex; flex-direction: column; gap: var(--sp-4); }
 
+  /* A receipt-style list: label left, figure right, a hairline between rows, and the
+     total set apart by weight and a stronger rule rather than a coloured box. */
   .summary { display: flex; flex-direction: column; margin: 0; }
   .summary-row {
     display: grid;
@@ -845,57 +847,67 @@
     font-family: var(--mono);
     font-variant-numeric: tabular-nums;
     text-align: end;
+    color: var(--ink);
     /* A long fee figure wraps rather than pushing the column wide. */
     overflow-wrap: anywhere;
   }
-  .summary-row dd.prose { font-family: var(--sans); }
+  .summary-row dd.prose { font-family: var(--font); }
   .summary-row.total {
     margin-top: var(--sp-2);
-    padding: var(--sp-3) var(--sp-4);
-    background: var(--lime-wash);
-    border: 1px solid var(--lime-edge);
-    border-radius: var(--r-md);
-    border-top-color: var(--lime-edge);
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--line-strong);
     align-items: center;
   }
-  .summary-row.total dt { color: var(--ink); font-weight: 700; }
-  .summary-row.total dd { font-size: var(--s0); font-weight: 700; color: var(--lime); }
+  .summary-row.total dt { color: var(--ink); font-weight: 600; }
+  .summary-row.total dd { font-size: var(--s0); font-weight: 700; color: var(--ink); }
 
   .fine {
     font-size: var(--s-1);
     color: var(--muted);
     margin: 0;
-    line-height: 1.55;
+    line-height: var(--lh);
   }
-  .fine strong { color: var(--ink); font-weight: 700; }
+  .fine strong { color: var(--ink-2); font-weight: 600; }
+
+  /* ── footer ─────────────────────────────────────────────────────────── */
+
+  .foot {
+    margin-top: var(--sp-6);
+    padding: 0 var(--sp-4);
+    font-size: var(--s-2);
+    color: var(--muted);
+    line-height: var(--lh);
+    text-align: center;
+  }
+  .foot strong { font-weight: 600; color: var(--muted); }
 
   .demo-bar {
-    margin-top: var(--sp-4);
+    margin: var(--sp-4) var(--sp-4) 0;
     padding: var(--sp-3) var(--sp-4);
-    background: var(--card);
-    border: 1px dashed var(--line-2);
+    background: var(--surface);
+    border: 1px dashed var(--line-strong);
     border-radius: var(--r-md);
     display: flex;
     flex-wrap: wrap;
     gap: var(--sp-2);
     align-items: center;
     font-size: var(--s-1);
-    color: var(--faint);
+    color: var(--muted);
   }
-  .demo-bar strong { color: var(--muted); font-weight: 700; }
+  .demo-bar strong { color: var(--ink-2); font-weight: 600; }
   .demo-btn {
     min-height: var(--tap);
     padding: 0 var(--sp-3);
-    border: 1px solid var(--line-2);
-    background: transparent;
-    color: var(--muted);
-    border-radius: var(--pill);
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink-2);
+    border-radius: var(--r-md);
     font: inherit;
     font-size: var(--s-1);
     cursor: pointer;
-    transition: color 140ms ease, border-color 140ms ease;
+    transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
   }
-  .demo-btn:hover { color: var(--lime); border-color: var(--lime-edge); }
+  .demo-btn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 
   /* ── wider screens ──────────────────────────────────────────────────── */
 
@@ -910,22 +922,30 @@
   }
 
   @media (min-width: 40rem) {
-    .page { padding: var(--sp-6) var(--sp-5) var(--sp-8); }
-    .masthead { margin-bottom: var(--sp-5); }
-    .panel-head { padding: var(--sp-5) var(--sp-5) var(--sp-3); }
-    .body { padding: 0 var(--sp-5) var(--sp-5); }
-    .amount-card { padding: var(--sp-5); }
+    :root { --card-pad: var(--sp-6); }
+    .page { padding: var(--sp-4) var(--sp-5) var(--sp-8); }
+    .masthead { padding: var(--sp-2) 0 var(--sp-4); }
+    .panel {
+      border-inline-width: 1px;
+      border-radius: var(--r-xl);
+      box-shadow: var(--shadow-2);
+    }
+    .step-desc { display: block; font-size: var(--s-2); line-height: 1.4; }
+    .demo-bar { margin-inline: 0; }
+    .foot { padding: 0; }
   }
 
   @media (min-width: 58rem) {
-    .split { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: var(--sp-4); }
+    .page { padding-top: var(--sp-6); }
+    .split { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: var(--sp-5); }
     .aside { position: sticky; top: var(--sp-4); }
+    .aside .panel { box-shadow: var(--shadow-1); }
   }
 
   @media (prefers-reduced-motion: reduce) {
     * { animation: none !important; transition: none !important; }
     /* The ring still has to read as "in progress" when it cannot turn. */
-    .status[data-state="confirming"] .status-dot::before { border-color: var(--lime); }
+    .status[data-state="confirming"] .status-dot::before { border-color: var(--info); }
   }
 </style>
 
@@ -933,7 +953,7 @@
 
   <header class="masthead">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--void)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>
+      <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>
       <span>AVEX <span class="brand-pay">Pay</span></span>
     </div>
     <div class="invoice-ref">Invoice <code id="invoice-ref">#INV-8F2C41</code></div>
@@ -944,8 +964,39 @@
     <!-- ══ main: the action ══════════════════════════════════════════════ -->
     <main class="panel">
       <div class="panel-head">
-        <h1 id="pay-heading">Pay Example Store</h1>
-        <p class="eyebrow">Step <span class="eyebrow-mono" id="step-of">2</span> of 3</p>
+        <div class="head-row">
+          <h1 id="pay-heading">Pay Example Store</h1>
+          <p class="eyebrow">Step <span class="eyebrow-mono" id="step-of">2</span> of 3</p>
+        </div>
+
+        <!--
+          Where the payer is. The state of each step is written by the script; the short
+          titles are what fits three across at 360px, and the longer line under each one
+          appears once there is room for it.
+        -->
+        <ol class="steps" id="steps" aria-label="Progress">
+          <li class="step" data-state="active">
+            <span class="step-num"><span>1</span></span>
+            <span class="step-text">
+              <span class="step-title">Choose currency</span>
+              <span class="step-desc">Pick the currency and the network you want to pay on</span>
+            </span>
+          </li>
+          <li class="step">
+            <span class="step-num"><span>2</span></span>
+            <span class="step-text">
+              <span class="step-title">Pay</span>
+              <span class="step-desc">Send the exact amount to the address shown</span>
+            </span>
+          </li>
+          <li class="step">
+            <span class="step-num"><span>3</span></span>
+            <span class="step-text">
+              <span class="step-title">Confirmed</span>
+              <span class="step-desc">Once the network confirms, your payment is final</span>
+            </span>
+          </li>
+        </ol>
       </div>
 
       <div class="body">
@@ -1095,26 +1146,6 @@
       </section>
 
       <section class="panel">
-        <div class="panel-head"><h2>What happens next</h2></div>
-        <div class="body">
-          <ol class="steps" id="steps">
-            <li class="step" data-state="active">
-              <span class="step-num">1</span>
-              <span>Choose the currency and network you want to pay on</span>
-            </li>
-            <li class="step">
-              <span class="step-num">2</span>
-              <span>Send the exact amount to the address shown</span>
-            </li>
-            <li class="step">
-              <span class="step-num">3</span>
-              <span>Once the network confirms, your payment is final</span>
-            </li>
-          </ol>
-        </div>
-      </section>
-
-      <section class="panel">
         <div class="panel-head"><h2>Good to know</h2></div>
         <div class="body" style="gap: var(--sp-3)">
           <p class="fine">
@@ -1144,6 +1175,11 @@
     <button class="demo-btn" type="button" data-demo="expired">Rate expired</button>
     <button class="demo-btn" type="button" data-demo="awaiting">Reset</button>
   </div>
+
+  <footer class="foot">
+    Secured by <strong>AVEX Pay</strong>. Non-custodial: your transfer goes straight to the
+    merchant's own wallet.
+  </footer>
 
 </div>
 
