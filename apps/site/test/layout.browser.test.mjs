@@ -469,6 +469,86 @@ describe('the site as a layout', { skip: playwright ? false : 'playwright is not
     await context.close();
   });
 
+  test('the system preference for dark is honoured, and the product card follows it', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
+    const tab = await context.newPage();
+    await tab.route('**/*', (route) => route.abort());
+    await tab.route(`${PAGE}*`, (route) => route.fulfill({ path: pageFile, contentType: 'text/html' }));
+    await tab.goto(PAGE, { waitUntil: 'domcontentloaded' });
+    const bg = await tab.$eval('body', (node) => getComputedStyle(node).backgroundColor);
+    assert.ok(luminance(bg) < 0.05, `the system-dark ground is ${bg}`);
+    const card = await tab.$eval('.derive', (node) => getComputedStyle(node).backgroundColor);
+    assert.ok(luminance(card) < 0.1, `the product card stayed light on a dark page: ${card}`);
+    await context.close();
+  });
+
+  test('the hero card is a product, on every screen: drawn as one, and deriving', async () => {
+    /**
+     * The card is the page's proof, so it has to be in the first screen on a desktop, fit
+     * inside a phone, and be a card — bordered, lifted off the ground — rather than a bare
+     * form. And what it shows has to be the derivation, checksummed, not the static dash.
+     */
+    for (const width of [1440, 360]) {
+      const { tab, context } = await open(width);
+      const card = await tab.$eval('.derive', (node) => {
+        const box = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return { top: box.top, right: box.right, bottom: box.bottom, shadow: style.boxShadow, radius: parseFloat(style.borderRadius) };
+      });
+      assert.ok(card.right <= width, `the card runs off a ${width}px screen`);
+      assert.notEqual(card.shadow, 'none', 'the card casts no shadow');
+      assert.ok(card.radius >= 12, `the card's corners are ${card.radius}px`);
+      if (width === 1440) assert.ok(card.top < 900 && card.bottom <= 900, 'the card is not in the first screen on a desktop');
+
+      const address = await tab.$eval('#d-address', (node) => node.textContent.trim());
+      assert.match(address, /^0x[0-9a-fA-F]{40}$/);
+      assert.notEqual(address, address.toLowerCase(), 'the address is not checksummed');
+      const mono = await tab.$eval('#d-address', (node) => getComputedStyle(node).fontFamily);
+      assert.match(mono, /mono/i, `the address is set in ${mono}`);
+      await context.close();
+    }
+  });
+
+  test('sections enter as they are scrolled to, and are simply there for a reader who asked for no motion', async () => {
+    /**
+     * Below the hero, each block fades in when it reaches the viewport. Two things have to be
+     * true of that: a block far below the fold is not yet shown before anybody scrolls (so the
+     * effect exists), and under `prefers-reduced-motion` every block is fully shown from the
+     * start, with no transition to run — the reader asked for a page, not an entrance.
+     */
+    const { tab, context } = await open(1440);
+    const below = await tab.$$eval('.reveal', (nodes) =>
+      nodes.filter((node) => node.getBoundingClientRect().top > innerHeight * 2).map((node) => getComputedStyle(node).opacity),
+    );
+    assert.ok(below.length >= 3, 'no reveal blocks below the fold');
+    assert.ok(below.every((opacity) => Number(opacity) === 0), `blocks below the fold are already shown: ${below}`);
+
+    // The scroll itself is smooth, so the block is observed only once the page arrives.
+    await tab.evaluate(() => document.getElementById('docs').scrollIntoView());
+    await tab.waitForFunction(
+      () => getComputedStyle(document.querySelector('#docs .reveal')).opacity === '1',
+      null,
+      { timeout: 4000 },
+    ).catch(() => assert.fail('the developers section never appeared'));
+    await context.close();
+
+    const quiet = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+    const still = await quiet.newPage();
+    await still.route('**/*', (route) => route.abort());
+    await still.route(`${PAGE}*`, (route) => route.fulfill({ path: pageFile, contentType: 'text/html' }));
+    await still.goto(PAGE, { waitUntil: 'domcontentloaded' });
+    await still.waitForTimeout(100);
+    const shown = await still.$$eval('.reveal', (nodes) =>
+      nodes.map((node) => ({ opacity: getComputedStyle(node).opacity, transition: getComputedStyle(node).transitionDuration })),
+    );
+    assert.ok(shown.length >= 10);
+    for (const item of shown) {
+      assert.equal(Number(item.opacity), 1, 'a block is hidden for a reader who asked for no motion');
+      assert.ok(parseFloat(item.transition) < 0.01, `a transition of ${item.transition} would still run`);
+    }
+    await quiet.close();
+  });
+
   test('motion is switched off for a reader who asked for none', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
     const tab = await context.newPage();
