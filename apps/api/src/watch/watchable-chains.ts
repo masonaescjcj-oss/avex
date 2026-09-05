@@ -31,10 +31,12 @@ export const CREDITABLE_ADDRESS_MODELS: readonly AddressModel[] = ['unique', 'po
 /**
  * Which chains this build can actually watch.
  *
- * Two kinds now, and the requirements differ. An EVM chain needs a forwarder factory, because
- * the address it watches is a hash over that factory — without one the deposit addresses it
- * would be looking for do not exist. A pooled chain needs no factory at all: its addresses are
- * the merchants' own, read from the database.
+ * An RPC endpoint, and that is all. It used to take a forwarder factory as well on the EVM
+ * chains, because the addresses watched there were hashes over that factory — without one,
+ * nothing it looked for could exist. That stopped being true when a merchant's own wallets
+ * began taking payments on every chain: those addresses come from the database, and a chain
+ * with an RPC and no contract of ours has real invoices on it to be credited. The adapter
+ * built for such a chain watches and does not derive or settle, which is exactly what it has.
  *
  * TRON's endpoint lives in `EVM_RPC_URLS` and that is not a mistake. A TRON node exposes an
  * Ethereum-compatible JSON-RPC, which is exactly what that variable holds and exactly how this
@@ -47,9 +49,20 @@ export function watchableChains(env: ReturnType<typeof loadEnv>): readonly Chain
     .filter((chain) => {
       const model = chainConfig(chain).addressModel;
       if (!CREDITABLE_ADDRESS_MODELS.includes(model)) return false;
-      if (model === 'pooled') return true;
-      if (!(chain in EVM_CHAIN_IDS)) return false;
-      return env.FORWARDER_FACTORIES[chain] !== undefined;
+      // Solana is `unique` and not EVM: no adapter this build can construct.
+      return model === 'pooled' || chain in EVM_CHAIN_IDS;
     });
+}
+
+/**
+ * Whether a chain can derive per-invoice forwarder addresses, as opposed to only taking
+ * payments into merchants' own wallets. Both halves of the contract pair, on an EVM chain.
+ */
+export function hasForwarders(env: ReturnType<typeof loadEnv>, chain: ChainId): boolean {
+  return (
+    chain in EVM_CHAIN_IDS &&
+    env.FORWARDER_FACTORIES[chain] !== undefined &&
+    env.FORWARDER_IMPLEMENTATIONS[chain] !== undefined
+  );
 }
 

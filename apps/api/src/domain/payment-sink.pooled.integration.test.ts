@@ -107,6 +107,7 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
         amountPaid: '0',
         depositAddress: address,
         payoutAddress: address,
+        addressModel: 'pooled',
         status: 'pending',
         mode: 'live',
         // Zero, so an amount that is not exact is visible as underpaid or overpaid rather than
@@ -202,6 +203,75 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
 
     assert.equal(await statusOf(first), 'pending', 'neither invoice may move');
     assert.equal(await statusOf(second), 'pending');
+  });
+
+  test('the same rules hold on an EVM chain, decided by the row rather than the chain', async () => {
+    /**
+     * The generalisation. The sink used to ask the registry whether the *chain* was pooled,
+     * which made a merchant's wallet on BNB Chain impossible to credit correctly: the chain said
+     * unique, three invoices sat at one address, and the first row found got the money. Now the
+     * row says what it is, so BNB Chain carries a wallet with three invoices — matched by amount
+     * — beside a forwarder address with one, matched by address, and each is right.
+     */
+    const [bscAsset] = await db()
+      .select({ id: assets.id })
+      .from(assets)
+      .where(and(eq(assets.chain, 'bsc'), eq(assets.symbol, 'USDT'), eq(assets.curated, true)))
+      .limit(1);
+    assert.ok(bscAsset, 'the curated catalogue has USDT on BNB Chain');
+
+    const wallet = `0x${randomBytes(20).toString('hex')}`;
+    const forwarder = `0x${randomBytes(20).toString('hex')}`;
+    const insert = async (address: string, amountDue: bigint, model: 'pooled' | 'unique') => {
+      const [row] = await db()
+        .insert(invoices)
+        .values({
+          organizationId: orgId,
+          assetId: bscAsset!.id,
+          reference: `bsc-${randomBytes(5).toString('hex')}`,
+          chain: 'bsc',
+          amountDue: amountDue.toString(),
+          amountPaid: '0',
+          depositAddress: address,
+          payoutAddress: address,
+          addressModel: model,
+          status: 'pending',
+          mode: 'live',
+          toleranceBps: 0,
+          feeBps: 0,
+          expiresAt: new Date(Date.now() + 3_600_000),
+        })
+        .returning({ id: invoices.id });
+      return row!.id;
+    };
+    const one = 10n ** 18n;
+    const first = await insert(wallet, 20n * one + 10n ** 16n, 'pooled'); // 20.01
+    const second = await insert(wallet, 20n * one + 2n * 10n ** 16n, 'pooled'); // 20.02
+    const third = await insert(wallet, 20n * one + 3n * 10n ** 16n, 'pooled'); // 20.03
+    const derived = await insert(forwarder, 20n * one, 'unique');
+
+    const bscUsdt = { ...USDT, chain: 'bsc' as const, decimals: 18 };
+    const pay = (to: string, amount: bigint) => ({
+      ...payment(to, amount),
+      chain: 'bsc' as const,
+      asset: bscUsdt,
+    });
+
+    // The exact amount picks its row out of the three at the wallet.
+    await sink.credit(pay(wallet, 20n * one + 2n * 10n ** 16n));
+    assert.equal(await statusOf(second), 'paid');
+    assert.equal(await statusOf(first), 'pending');
+    assert.equal(await statusOf(third), 'pending');
+
+    // A wrong amount with two still open is nobody's until an operator says so.
+    await assert.rejects(
+      sink.credit(pay(wallet, 20n * one)),
+      (error: unknown) => error instanceof UnmatchedPaymentError,
+    );
+
+    // And the forwarder invoice on the same chain is still matched by address, any amount.
+    await sink.credit(pay(forwarder, 20n * one + 12345n));
+    assert.equal(await statusOf(derived), 'overpaid');
   });
 
   test('a payment to a pooled wallet with nothing open is refused', async () => {

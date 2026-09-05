@@ -190,9 +190,17 @@ export class FeePlanService {
      * invoice rather than a guessed one.
      */
     value?: bigint,
+    /**
+     * Whether this invoice is paid straight into one of the merchant's own wallets.
+     *
+     * The caller's to say, because it is no longer a fact about the chain: BNB Chain carries
+     * forwarder invoices and wallet invoices side by side, and the two are charged differently.
+     * Omitted means the chain's native model — pooled on TRON, forwarders elsewhere.
+     */
+    options: { readonly pooled?: boolean } = {},
   ): Promise<
     | {
-        /** Absent on a pooled chain: there is no forwarder and nothing to send a fee to. */
+        /** Absent on a pooled invoice: there is no forwarder and nothing to send a fee to. */
         readonly feeDestination?: string;
         /** Taken on chain, and committed to by the deposit address. */
         readonly feeBps: number;
@@ -228,18 +236,20 @@ export class FeePlanService {
     if (!plan) return undefined;
 
     /**
-     * A pooled chain takes nothing on chain, and still charges the commission.
+     * A pooled invoice takes nothing on chain, and still charges the commission.
      *
      * There is no forwarder and no fee destination: the payer pays the merchant's own wallet
      * directly. So the rate is returned as `accruedFeeBps` — billed to the merchant's balance
-     * when the payment is credited — and `feeBps` is zero, which is the truth about what the
-     * chain does rather than a rate nobody collects.
+     * when the payment is credited — and `feeBps` is zero, which is the truth about what
+     * happens rather than a rate nobody collects. On any chain: the merchant's wallet on BNB
+     * Chain is charged exactly as their wallet on TRON is.
      *
      * Before this, `feeFor` returned `undefined` for any chain without a collector, so every
      * TRON invoice was free. That is the whole of "apply the commission on TRON": the rate was
      * already configured, and nothing was reading it.
      */
-    if (chainConfig(chain as ChainId).addressModel === 'pooled') {
+    const pooled = options.pooled ?? chainConfig(chain as ChainId).addressModel === 'pooled';
+    if (pooled) {
       if (plan.feeBps === 0) return undefined;
       return {
         feeBps: 0,

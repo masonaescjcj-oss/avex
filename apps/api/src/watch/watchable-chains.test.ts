@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { loadEnv } from '../env.js';
-import { watchableChains } from './watchable-chains.js';
+import { hasForwarders, watchableChains } from './watchable-chains.js';
 
 /**
  * Which chains the watcher process will actually watch.
@@ -37,16 +37,36 @@ describe('watchable chains', () => {
     assert.deepEqual(chains, ['tron']);
   });
 
-  test('an EVM chain without a factory is not watched', () => {
+  test('an EVM chain without a factory is watched all the same', () => {
     /**
-     * And this is why the requirement exists. The address an EVM watcher looks for is a hash
-     * over the factory, so without one it would be watching for addresses that cannot exist —
-     * which is worse than not watching, because it looks like watching.
+     * This used to be the other way round, and the reason was sound at the time: the address an
+     * EVM watcher looked for was a hash over the factory, so without one it was watching for
+     * addresses that could not exist. What changed is that merchants' own wallets now take
+     * payments on every chain, and those addresses come from the database. A chain with an
+     * endpoint and no contracts has real invoices on it — so it is watched, and only watched:
+     * `hasForwarders` says whether it can also derive and settle.
      */
-    const chains = watchableChains(
-      env({ EVM_RPC_URLS: 'bsc=https://bsc.example', FORWARDER_FACTORIES: '' }),
-    );
-    assert.deepEqual(chains, []);
+    const source = env({ EVM_RPC_URLS: 'bsc=https://bsc.example', FORWARDER_FACTORIES: '' });
+    assert.deepEqual(watchableChains(source), ['bsc']);
+    assert.equal(hasForwarders(source, 'bsc'), false);
+  });
+
+  test('forwarders need both contract halves, on an EVM chain', () => {
+    const both = env({
+      EVM_RPC_URLS: 'bsc=https://bsc.example',
+      FORWARDER_FACTORIES: `bsc=0x${'11'.repeat(20)}`,
+      FORWARDER_IMPLEMENTATIONS: `bsc=0x${'22'.repeat(20)}`,
+    });
+    assert.equal(hasForwarders(both, 'bsc'), true);
+    // A factory with no logic address would derive from an empty string — a real address that
+    // nothing can ever settle — so half a pair is no pair.
+    const half = env({
+      EVM_RPC_URLS: 'bsc=https://bsc.example',
+      FORWARDER_FACTORIES: `bsc=0x${'11'.repeat(20)}`,
+    });
+    assert.equal(hasForwarders(half, 'bsc'), false);
+    // TRON has no forwarders whatever is configured for it: nothing there is derived.
+    assert.equal(hasForwarders(both, 'tron'), false);
   });
 
   test('an EVM chain with a factory is watched', () => {
@@ -66,8 +86,9 @@ describe('watchable chains', () => {
         FORWARDER_FACTORIES: `bsc=0x${'11'.repeat(20)}`,
       }),
     );
-    // Polygon has an endpoint but no factory, so it is left out; TRON needs no factory.
-    assert.deepEqual([...chains].sort(), ['bsc', 'tron']);
+    // Every chain with an endpoint. Polygon has no factory and is watched for merchants'
+    // wallets; BSC has one and is watched for those and for forwarders; TRON has none to want.
+    assert.deepEqual([...chains].sort(), ['bsc', 'polygon', 'tron']);
   });
 
   test('a chain this build has never heard of is ignored, not crashed on', () => {

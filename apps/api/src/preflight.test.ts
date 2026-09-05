@@ -103,18 +103,20 @@ describe('preflight', () => {
     );
   });
 
-  test('half a forwarder deployment is reported as such', () => {
+  test('half a forwarder deployment is reported as such, and the chain still works', () => {
     /**
      * A factory with no logic address derives addresses from an empty string — valid hex, a real
-     * address, and one nothing can ever settle. `compose` drops the chain rather than deriving
-     * them, so the visible effect is a chain that quietly cannot invoice.
+     * address, and one nothing can ever settle. `compose` drops the pair rather than deriving,
+     * so no forwarder address exists on the chain. That used to be reported as a degradation.
+     * It is not one any more: merchants' own wallets take payments on the chain regardless, so
+     * it is ready, and the finding says exactly what is missing and what that costs.
      */
     const result = check({ FORWARDER_IMPLEMENTATIONS: undefined });
-    assert.ok(areas(result, 'degraded').includes('chains.bsc'));
-    assert.match(
-      result.findings.find((finding) => finding.area === 'chains.bsc')!.detail,
-      /no FORWARDER_IMPLEMENTATIONS entry/,
-    );
+    assert.ok(areas(result, 'ready').includes('chains.bsc'));
+    assert.equal(areas(result, 'degraded').includes('chains.bsc'), false);
+    const detail = result.findings.find((finding) => finding.area === 'chains.bsc')!.detail;
+    assert.match(detail, /no FORWARDER_IMPLEMENTATIONS entry/);
+    assert.match(detail, /own wallets take payments/);
   });
 
   test('a production deployment with a key in the environment is blocked', () => {

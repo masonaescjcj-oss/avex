@@ -259,6 +259,8 @@ describe('a TRON payment, end to end', { skip: !databaseUrl }, () => {
           amountDue: chosen.amountDue.toString(),
           amountPaid: '0',
           depositAddress: chosen.address,
+          // A row at a shared wallet, named by its amount: the unique index reads this.
+          addressModel: 'pooled',
           payoutAddress: chosen.address,
           status: 'pending',
           mode: 'live',

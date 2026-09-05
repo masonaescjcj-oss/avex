@@ -47,7 +47,16 @@ export interface AddressBook {
 export interface EvmAdapterConfig {
   readonly chain: ChainId;
   readonly rpcUrl: string;
-  readonly create2: Create2Config;
+  /**
+   * The forwarder factory and its logic contract, for deriving per-invoice addresses.
+   *
+   * Optional, because a chain can be worth watching with no contract of ours on it at all:
+   * a merchant's own wallets take payments there, matched by amount, and those addresses
+   * come from the address book rather than from CREATE2. Without this, `deriveDepositTarget`
+   * and `settleBatch` refuse — there is nothing to derive from and nothing to settle to — and
+   * the adapter is a watcher and nothing else.
+   */
+  readonly create2?: Create2Config | undefined;
   /** Token contracts we watch. Anything else is ignored — never auto-credit
    *  an unknown contract, or a worthless clone named "USDT" becomes revenue. */
   readonly acceptedAssets: readonly Asset[];
@@ -95,6 +104,12 @@ export class EvmAdapter implements ChainAdapter {
   }
 
   async deriveDepositTarget(input: DeriveInput): Promise<DepositTarget> {
+    if (!this.config.create2) {
+      throw new Error(
+        `${this.chain} has no forwarder factory configured; only the merchants' own wallets ` +
+          'take payments on it',
+      );
+    }
     return {
       address: predictForwarder(
         this.config.create2,
@@ -226,6 +241,9 @@ export class EvmAdapter implements ChainAdapter {
      * deploy-and-flush, which is exactly what each entry in this batch is; the overhead covers
      * the call itself and the loop around it.
      */
+    if (!this.config.create2) {
+      throw new Error(`${this.chain} has no forwarder factory configured; nothing here settles`);
+    }
     const profile = chainConfig(this.chain).settlement;
     const perInvoice = profile.kind === 'evm' ? BigInt(profile.gasDeployAndFlushToken) : 400_000n;
     return {

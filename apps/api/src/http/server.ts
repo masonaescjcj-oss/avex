@@ -1,6 +1,7 @@
 import { PriceUnavailableError, type PriceService } from '@avex/core';
 
 import type { CommissionLedger } from '../domain/commission-ledger.js';
+import { WalletPoolChangeError } from '../domain/wallet-pool-service.js';
 import type { WalletPoolChanges, WalletPoolService } from '../domain/wallet-pool-service.js';
 import { AssetConfigError } from '../domain/asset-service.js';
 import type { AssetService } from '../domain/asset-service.js';
@@ -487,6 +488,23 @@ export function buildServer(context: AppContext): FastifyInstance {
         error: 'organization_suspended',
         message: error.reason ?? 'This organization is suspended. Contact support.',
       });
+    }
+
+    if (error instanceof WalletPoolChangeError) {
+      /**
+       * Mapped here for the first time. These used to fall through to the 500 below, so a
+       * merchant adding an eleventh wallet, or a mistyped one, was told something had gone
+       * wrong on our side — about a refusal that was entirely about their request.
+       */
+      const status =
+        error.code === 'not_found'
+          ? 404
+          : error.code === 'unchanged' ||
+              error.code === 'change_already_pending' ||
+              error.code === 'pool_full'
+            ? 409
+            : 400;
+      return reply.status(status).send({ error: error.code, message: error.message });
     }
 
     if (error instanceof PayoutAddressError) {

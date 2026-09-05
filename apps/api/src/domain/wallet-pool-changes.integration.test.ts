@@ -12,8 +12,7 @@ import { AuditService } from './audit.js';
 import {
   WalletPoolChanges,
   WalletPoolChangeError,
-  WalletPoolService,
-} from './wallet-pool-service.js';
+  WalletPoolService, MAX_WALLETS_PER_CHAIN } from './wallet-pool-service.js';
 
 /**
  * Adding a wallet to a pool, and the day it waits before it counts.
@@ -264,24 +263,93 @@ describe('adding a wallet to the pool', { skip: !databaseUrl }, () => {
     );
   });
 
-  test('a non-pooled chain is refused, and told where to go instead', async () => {
+  test('a wallet on an EVM chain is accepted, checksummed, and needs no contract of ours', async () => {
     /**
-     * On every other chain the deposit address is derived, so a registered wallet would do
-     * nothing at all — and a merchant who added one would believe they had configured something.
+     * This used to be refused: BNB Chain's deposit addresses were derived, so a registered
+     * wallet did nothing. That is the thing that changed. A merchant's own wallet now works on
+     * every chain — the invoice is named by its exact amount, exactly as on TRON — which is how
+     * a merchant takes payments on BNB Chain with no forwarder deployed at all.
+     *
+     * Validated as a payout address is, then stored in its case-folded key form — hex chains
+     * compare case-insensitively — so the pool cannot hold one wallet under two spellings and
+     * hand it to two invoices as though they were apart.
      */
+    const { orgId, ownerId } = await freshOrg();
+    const outcome = await changes.requestAdd({
+      organizationId: orgId,
+      chain: 'bsc',
+      address: '0xabc0000000000000000000000000000000000001',
+      actor: { userId: ownerId },
+    });
+    assert.equal(outcome.status, 'active');
+    assert.equal(outcome.address, '0xabc0000000000000000000000000000000000001'.toLowerCase());
+    const rows = await db().select().from(depositWallets).where(eq(depositWallets.organizationId, orgId));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.chain, 'bsc');
+  });
+
+  test('a malformed EVM address is refused with the reason, not stored', async () => {
     const { orgId, ownerId } = await freshOrg();
     await assert.rejects(
       changes.requestAdd({
         organizationId: orgId,
         chain: 'bsc',
-        address: '0xAbC0000000000000000000000000000000000001',
+        address: '0x1234',
         actor: { userId: ownerId },
       }),
       (error: unknown) =>
         error instanceof WalletPoolChangeError &&
-        error.code === 'not_pooled' &&
-        /payout address/.test(error.message),
+        error.code === 'invalid_address' &&
+        /40 hexadecimal/.test(error.message),
     );
+    // And the zero address, which would burn every payment sent to it.
+    await assert.rejects(
+      changes.requestAdd({
+        organizationId: orgId,
+        chain: 'bsc',
+        address: '0x' + '0'.repeat(40),
+        actor: { userId: ownerId },
+      }),
+      (error: unknown) => error instanceof WalletPoolChangeError && error.code === 'invalid_address',
+    );
+  });
+
+  test('a merchant may hold ten wallets on a chain, and the eleventh is refused', async () => {
+    /**
+     * A product limit rather than a technical one: every wallet is a key the merchant has to
+     * keep, and a pool wider than anyone tracks is how a retired key ends up with an open
+     * invoice pointing at it. Scheduled additions count, or the cap could be sailed past by
+     * requesting eleven at once and waiting a day.
+     */
+    const { orgId, ownerId } = await freshOrg();
+    for (let i = 1; i <= MAX_WALLETS_PER_CHAIN; i++) {
+      await changes.requestAdd({
+        organizationId: orgId,
+        chain: 'bsc',
+        address: '0x' + i.toString(16).padStart(40, '0'),
+        actor: { userId: ownerId },
+      });
+    }
+    await assert.rejects(
+      changes.requestAdd({
+        organizationId: orgId,
+        chain: 'bsc',
+        address: '0x' + 'ee'.repeat(20),
+        actor: { userId: ownerId },
+      }),
+      (error: unknown) =>
+        error instanceof WalletPoolChangeError &&
+        error.code === 'pool_full' &&
+        new RegExp(String(MAX_WALLETS_PER_CHAIN)).test(error.message),
+    );
+    // Another chain is another pool.
+    const elsewhere = await changes.requestAdd({
+      organizationId: orgId,
+      chain: 'tron',
+      address: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+      actor: { userId: ownerId },
+    });
+    assert.equal(elsewhere.status, 'active');
   });
 
   test('a mistyped TRON address is refused, not stored', async () => {

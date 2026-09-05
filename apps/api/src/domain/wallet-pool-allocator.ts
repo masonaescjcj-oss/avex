@@ -30,24 +30,94 @@ export class WalletPoolError extends Error {
 }
 
 /**
- * How many smallest units the disambiguator may use.
+ * How the amount is nudged, for one token.
  *
- * 1 to 9999, which on a 6-decimal token is 0.000001 to 0.009999 — at most one cent added to
- * an invoice, and 9999 invoices can be open at once on a single wallet before the space is full.
- * Wider would cost the payer more; narrower would run out.
+ * ## The shape a payer can type
+ *
+ * The first version of this added between 1 and 9999 smallest units — on a six-decimal token,
+ * up to 0.009999. Under a cent, which was the goal, and unreadable, which was the cost: a payer
+ * typing an amount into a wallet by hand was asked for 20.004137 USDT. That is a number people
+ * mistype, and a mistyped amount on a shared address is a payment nobody can attribute.
+ *
+ * So the nudge is now placed in the digits a person reads. On a stablecoin it is cents:
+ * 20.05, 20.03. Only once nine invoices at one price are open on one wallet does it move to
+ * the next digit — 20.011, 20.024 — and only past ninety-nine to the one after. The payer is
+ * asked for at most a tenth of a dollar more than the price, and almost always for a round
+ * few cents.
+ *
+ * ## Why the token's price decides where the digit is
+ *
+ * "Cents" is a dollar idea, and the amount is in tokens. A hundredth of a USDT is a cent; a
+ * hundredth of an ETH is thirty dollars, which is not a nudge but a robbery. So the coarse
+ * step is chosen from the token's dollar price: two decimals past the price's magnitude, which
+ * is a cent on a stablecoin, a tenth of a cent on TRX, and a third of a cent on ETH at six
+ * decimals. Without a price — a token-priced invoice — the step falls to four decimals
+ * inside the token's precision, which is where the old rule lived and is right for the
+ * stablecoins that are nearly all of those.
  */
-export const DISAMBIGUATOR_MIN = 1n;
-export const DISAMBIGUATOR_MAX = 9999n;
+export interface DisambiguatorPlan {
+  /** The finest step, in smallest units. Every offset is a multiple of this. */
+  readonly unit: bigint;
+  /** Offsets available, as multiples of `unit`: 1 to this. */
+  readonly ticks: number;
+  /** The largest amount that can be added, in smallest units. */
+  readonly max: bigint;
+  /** Decimal places the coarsest offsets occupy — 2 on a stablecoin, so 20.05. */
+  readonly coarseDecimals: number;
+}
+
+/** Multiples of `unit` at the finest tier. Nine coarse, ninety mid, nine hundred fine. */
+export const DISAMBIGUATOR_TICKS = 999;
 
 /**
- * The fewest decimals a token may have to be used on a pooled chain.
+ * The fewest decimals a token may have to be used on a pooled address.
  *
- * With six, the disambiguator is lost in the hundredths of a cent. With two it would be up to
- * 99 whole units, which is not a disambiguator but a surcharge. Refused rather than scaled,
- * because a token with two decimals on a shared address cannot be made to work this way and
- * a merchant should be told that instead of being quietly overcharged.
+ * Two for the coarse digit and two more beneath it for the finer tiers. A two-decimal token
+ * would make the coarse step a whole unit and the fine step a cent, and neither is a nudge.
+ * Refused rather than scaled, so a merchant is told instead of quietly overcharged.
  */
-export const MIN_DECIMALS_FOR_POOL = 6;
+export const MIN_DECIMALS_FOR_POOL = 4;
+
+export function disambiguatorPlan(input: {
+  readonly decimals: number;
+  /** Dollar price of one whole token, or nothing for an invoice priced in tokens. */
+  readonly unitPriceUsd?: number | null | undefined;
+}): DisambiguatorPlan {
+  if (input.decimals < MIN_DECIMALS_FOR_POOL) {
+    throw new WalletPoolError(
+      'decimals_too_few',
+      `an asset with ${input.decimals} decimals cannot be used on a pooled address: the ` +
+        `disambiguator would be a surcharge, not a rounding`,
+    );
+  }
+
+  const price = input.unitPriceUsd;
+  const fromPrice =
+    price !== undefined && price !== null && Number.isFinite(price) && price > 0
+      ? Math.ceil(Math.log10(price)) + 2
+      : input.decimals - 4;
+  // Never coarser than a hundredth of a token, never so fine that the two tiers beneath it
+  // would run out of decimals.
+  const coarseDecimals = Math.min(Math.max(fromPrice, 2), input.decimals - 2);
+
+  const unit = 10n ** BigInt(input.decimals - coarseDecimals - 2);
+  return {
+    unit,
+    ticks: DISAMBIGUATOR_TICKS,
+    max: unit * BigInt(DISAMBIGUATOR_TICKS),
+    coarseDecimals,
+  };
+}
+
+/**
+ * How round an offset is, as a tier: 0 for a whole coarse step, 1 for a whole mid step, 2
+ * otherwise. Lower is preferred — it is the tier a payer reads as "a few cents".
+ */
+function tierOf(tick: number): 0 | 1 | 2 {
+  if (tick % 100 === 0) return 0;
+  if (tick % 10 === 0) return 1;
+  return 2;
+}
 
 /**
  * Pick the wallet for a new invoice.
@@ -88,60 +158,64 @@ export function chooseWallet(pool: readonly WalletLoad[]): WalletLoad {
 /**
  * The exact amount this invoice will ask for.
  *
- * `base` is what the merchant charged. The return value is always strictly greater, by between
- * one and 9999 smallest units, and never equal to an amount another open invoice on the same
+ * `base` is what the merchant charged. The return value is always strictly greater, by an
+ * offset from the plan above, and never equal to an amount another open invoice on the same
  * wallet is waiting for.
  *
  * Two properties are deliberate and worth stating, because both are load-bearing:
  *
  *   - **Always added, never subtracted.** A merchant who invoiced $20 must never be paid
- *     $19.99 because of a mechanism of ours. The payer pays at most a cent more than the price;
+ *     $19.99 because of a mechanism of ours. The payer pays a few cents more than the price;
  *     nobody is short.
  *   - **Never zero.** Every open invoice on a wallet therefore asks for a non-round amount, so
  *     a payer whose exchange truncated the withdrawal to the round number cannot land exactly
  *     on a *different* invoice's amount. Their payment becomes unmatched-but-attributable
  *     rather than silently credited to a stranger.
  *
- * Chosen at random from what is free rather than sequentially. Sequential numbers would leak
- * the merchant's open-invoice count to anybody watching the address, and would collide under
- * concurrency in the gap between reading the highest and writing the next.
+ * Chosen at random within the roundest tier that still has room, rather than sequentially.
+ * Sequential numbers would leak the merchant's open-invoice count to anybody watching the
+ * address, and would collide under concurrency in the gap between reading the highest and
+ * writing the next. Random *within a tier* keeps the amounts readable for as long as they can
+ * be: nine invoices at one price on one wallet all get whole cents before the tenth is asked
+ * for a tenth of one.
  */
 export function chooseAmount(input: {
   readonly base: bigint;
   readonly decimals: number;
   readonly taken: readonly bigint[];
+  readonly unitPriceUsd?: number | null | undefined;
   /** Injected so a test can pin the choice. Returns a float in [0, 1). */
   readonly random?: () => number;
 }): bigint {
-  if (input.decimals < MIN_DECIMALS_FOR_POOL) {
-    throw new WalletPoolError(
-      'decimals_too_few',
-      `an asset with ${input.decimals} decimals cannot be used on a pooled address: the ` +
-        `disambiguator would be a surcharge, not a rounding`,
-    );
-  }
+  const plan = disambiguatorPlan(input);
 
   /**
    * Only the collisions that could actually happen are considered.
    *
    * `taken` is every amount open on this wallet, whatever its size. Filtering to the window
-   * this invoice can reach keeps the exhaustion check honest: 9998 open invoices for other
-   * prices do not make this price unavailable.
+   * this invoice can reach keeps the exhaustion check honest: a thousand open invoices for
+   * other prices do not make this price unavailable.
    */
-  const reachable = new Set(
-    input.taken
-      .filter((amount) => amount > input.base && amount - input.base <= DISAMBIGUATOR_MAX)
-      .map((amount) => amount - input.base),
-  );
+  const reachable = new Set<number>();
+  for (const amount of input.taken) {
+    const offset = amount - input.base;
+    if (offset <= 0n || offset > plan.max || offset % plan.unit !== 0n) continue;
+    reachable.add(Number(offset / plan.unit));
+  }
 
-  const span = Number(DISAMBIGUATOR_MAX - DISAMBIGUATOR_MIN + 1n);
-  if (reachable.size >= span) {
+  const free: number[][] = [[], [], []];
+  for (let tick = 1; tick <= plan.ticks; tick++) {
+    if (!reachable.has(tick)) free[tierOf(tick)]!.push(tick);
+  }
+
+  const tier = free.find((candidates) => candidates.length > 0);
+  if (tier === undefined) {
     /**
      * Every offset for this exact price is in use on this wallet.
      *
      * Refusing is the only safe answer: reusing one would create two open invoices asking for
      * the same amount on the same address, which is precisely the state no rule can untangle.
-     * In practice this needs ten thousand simultaneously open invoices at one price on one
+     * In practice this needs a thousand simultaneously open invoices at one price on one
      * wallet, and the fix is another wallet.
      */
     throw new WalletPoolError(
@@ -151,22 +225,6 @@ export function chooseAmount(input: {
   }
 
   const random = input.random ?? Math.random;
-
-  /**
-   * Try random offsets, then fall back to a scan.
-   *
-   * The random path is what runs: with a handful of open invoices it succeeds on the first
-   * attempt essentially always. The scan exists so that a nearly-full window terminates —
-   * random probing into a space that is 99% occupied would take an unbounded number of tries,
-   * and "unbounded" inside invoice creation is a request that never returns.
-   */
-  for (let attempt = 0; attempt < 24; attempt++) {
-    const offset = DISAMBIGUATOR_MIN + BigInt(Math.floor(random() * span));
-    if (!reachable.has(offset)) return input.base + offset;
-  }
-  for (let offset = DISAMBIGUATOR_MIN; offset <= DISAMBIGUATOR_MAX; offset++) {
-    if (!reachable.has(offset)) return input.base + offset;
-  }
-  // Unreachable: the size check above guarantees a free offset exists.
-  throw new WalletPoolError('pool_exhausted', 'no free disambiguator');
+  const tick = tier[Math.min(tier.length - 1, Math.floor(random() * tier.length))]!;
+  return input.base + BigInt(tick) * plan.unit;
 }

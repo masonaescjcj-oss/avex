@@ -14,6 +14,7 @@ import type { Database } from '../db/client.js';
 import {
   assets,
   checkoutSessions,
+  depositWallets,
   invoices,
   merchantAssets,
   organizations,
@@ -173,8 +174,8 @@ export class CheckoutService {
     if (payable.length === 0) {
       throw new CheckoutError(
         'no_assets',
-        'No currency is payable yet. Enable at least one approved asset and add a payout ' +
-          'address for its chain.',
+        'No currency is payable yet. Enable at least one approved asset and add one of your ' +
+          'own wallets for its chain — or a payout address, where the chain has forwarders.',
       );
     }
 
@@ -345,9 +346,16 @@ export class CheckoutService {
      * from the one invoice creation asks a moment later. That is how the payer ends up shown
      * $20.00 and asked for $20.10, which reads as a scam rather than a rounding.
      */
+    const where = await this.destinations(session.organizationId);
     const feeForChain = async (chain: string) => {
       if (!fees.has(chain)) {
-        fees.set(chain, await this.feePlans.feeFor(session.organizationId, chain, amountFiat));
+        fees.set(
+          chain,
+          await this.feePlans.feeFor(session.organizationId, chain, amountFiat, {
+            // The same decision invoice creation makes, so the quoted amount is the asked one.
+            pooled: this.pooledOn(chain, where),
+          }),
+        );
       }
       return fees.get(chain);
     };
@@ -622,6 +630,50 @@ export class CheckoutService {
    * and there is a payout address on its chain. Offering a currency that fails any of
    * them would take a payment we could not deliver.
    */
+  /**
+   * Which chains this merchant has somewhere for money to land on.
+   *
+   * Two ways, and either is enough. A wallet of their own means invoices are paid straight
+   * into it, matched by amount, with no contract of ours involved — on any chain. A payout
+   * address means a forwarder is derived to sweep into it, where the chain has forwarders.
+   * The wallet wins when both exist, because it is the one that costs nobody any gas; the
+   * same rule invoice creation applies, so what the payer is shown is what they will get.
+   */
+  private async destinations(organizationId: string): Promise<{
+    readonly wallets: ReadonlySet<string>;
+    readonly payouts: ReadonlySet<string>;
+  }> {
+    const [wallets, payouts] = await Promise.all([
+      this.db
+        .selectDistinct({ chain: depositWallets.chain })
+        .from(depositWallets)
+        .where(
+          and(eq(depositWallets.organizationId, organizationId), isNull(depositWallets.retiredAt)),
+        ),
+      this.db
+        .selectDistinct({ chain: payoutAddresses.chain })
+        .from(payoutAddresses)
+        .where(
+          and(
+            eq(payoutAddresses.organizationId, organizationId),
+            isNull(payoutAddresses.supersededAt),
+          ),
+        ),
+    ]);
+    return {
+      wallets: new Set(wallets.map((row) => row.chain)),
+      payouts: new Set(payouts.map((row) => row.chain)),
+    };
+  }
+
+  /** Whether an invoice on this chain would be paid into the merchant's own wallet. */
+  private pooledOn(
+    chain: string,
+    where: { readonly wallets: ReadonlySet<string> },
+  ): boolean {
+    return this.deriver.isPooled(chain) || where.wallets.has(chain);
+  }
+
   private async payableAssets(organizationId: string) {
     const rows = await this.db
       .select({
@@ -636,14 +688,6 @@ export class CheckoutService {
       })
       .from(merchantAssets)
       .innerJoin(assets, eq(assets.id, merchantAssets.assetId))
-      .innerJoin(
-        payoutAddresses,
-        and(
-          eq(payoutAddresses.organizationId, merchantAssets.organizationId),
-          eq(payoutAddresses.chain, assets.chain),
-          isNull(payoutAddresses.supersededAt),
-        ),
-      )
       .where(
         and(
           eq(merchantAssets.organizationId, organizationId),
@@ -652,10 +696,24 @@ export class CheckoutService {
         ),
       );
 
-    // A chain this deployment has no deposit configuration for cannot be offered,
-    // however well the merchant has set it up.
+    /**
+     * Payable means: somewhere for the money to go, on a chain this build can credit.
+     *
+     * This used to be an inner join on payout addresses, which made a merchant's own wallet
+     * on BNB Chain — and every TRON wallet — invisible to the checkout until they also added a
+     * payout address they did not need. A wallet is a destination in its own right. A payout
+     * address is one only where the chain has forwarders to sweep into it.
+     */
+    const where = await this.destinations(organizationId);
     const supported = new Set(this.deriver.supportedChains());
-    return rows.filter((row) => supported.has(row.chain));
+    const forwarders = new Set(this.deriver.forwarderChains());
+    return rows.filter(
+      (row) =>
+        supported.has(row.chain) &&
+        (where.wallets.has(row.chain) ||
+          this.deriver.isPooled(row.chain) ||
+          (where.payouts.has(row.chain) && forwarders.has(row.chain))),
+    );
   }
 
   private async findByReference(organizationId: string, reference: string) {

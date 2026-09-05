@@ -1821,14 +1821,15 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     /**
      * The amount carries a disambiguator, and it is what makes the wallet shareable.
      *
-     * Between one and 9999 smallest units above the price — under a cent on a six-decimal
-     * token — and never zero, so no open invoice ever asks for the round number a truncating
-     * exchange would produce.
+     * A few cents above the price — 20.05, 20.03 — because it is typed by hand into a wallet,
+     * and never zero, so no open invoice ever asks for the round number a truncating exchange
+     * would produce. On a stablecoin the first nine at one price on one wallet are whole cents.
      */
     const base = await quotedAmount(invoice.id);
     const due = BigInt(invoice.amountDue);
     assert.ok(due > base, `${due} must exceed the quoted ${base}`);
-    assert.ok(due - base <= 9999n, `${due - base} is outside the disambiguator's range`);
+    assert.ok(due - base <= 99_900n, `${due - base} is outside the disambiguator's range`);
+    assert.equal((due - base) % 10_000n, 0n, `${due - base} should be a whole cent on USDT`);
   });
 
   test('two invoices at one price get two amounts on the same wallet', async () => {
@@ -1882,6 +1883,81 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     const response = await open({ assetId, amountFiatMicros: '20000000' });
     assert.equal(response.statusCode, 409, response.body);
     assert.equal(response.json().error, 'no_deposit_wallet');
+  });
+
+  test("a merchant's own wallet on BNB Chain takes the invoice, with no forwarder involved", async () => {
+    /**
+     * The generalisation. Everything above is TRON, where there was never a forwarder; this is
+     * a chain that *has* forwarders configured in this suite, and a merchant who registered a
+     * wallet of their own on it anyway. The wallet wins: the invoice goes to it, is named by its
+     * amount, records itself as pooled, needs no payout address, and charges the commission to
+     * the balance with nothing taken on chain — exactly as a TRON invoice does.
+     */
+    const assetId = await enableAsset({ chain: 'bsc', symbol: 'USDT', decimals: 18 });
+    const wallet = `0x${randomBytes(20).toString('hex')}`;
+    await walletPool.register({ organizationId: orgId, chain: 'bsc', address: wallet });
+    try {
+      const response = await open({ assetId, amountFiatMicros: '20000000', reference: `w-${randomBytes(4).toString('hex')}` });
+      assert.equal(response.statusCode, 201, response.body);
+      const invoice = response.json() as { id: string; depositAddress: string; amountDue: string };
+      assert.equal(invoice.depositAddress, wallet.toLowerCase(), 'the wallet, not a CREATE2 address');
+
+      const [row] = await db
+        .select()
+        .from(schema.invoices)
+        .where(eq(schema.invoices.id, invoice.id));
+      assert.equal(row!.addressModel, 'pooled');
+      assert.equal(row!.payoutAddress, wallet.toLowerCase(), 'the wallet is the destination');
+      assert.equal(row!.feeBps, 0, 'nothing is taken on chain');
+      assert.ok(row!.accruedFeeBps > 0, 'the commission is billed instead');
+      assert.equal(row!.networkFeeBps, 0, 'no transfer of ours, so nothing to pass on');
+
+      // Nudged in the digits a payer reads: USDT at a dollar, so whole cents first.
+      const base = await quotedAmount(invoice.id);
+      const due = BigInt(invoice.amountDue);
+      assert.ok(due > base);
+      assert.equal((due - base) % 10n ** 16n, 0n, `${due - base} wei should be a whole cent`);
+    } finally {
+      for (const row of await walletPool.list({ organizationId: orgId, chain: 'bsc' })) {
+        await walletPool.retire({ organizationId: orgId, walletId: row.id });
+      }
+    }
+  });
+
+  test('without a wallet the same chain derives a forwarder, and both kinds coexist', async () => {
+    /**
+     * The other half of "both systems, side by side". No wallet on BNB Chain means the
+     * forwarder path, unchanged — and the two rows can sit on one chain because the model is
+     * on the row, not on the chain.
+     */
+    const assetId = await enableAsset({ chain: 'bsc', symbol: 'USDT', decimals: 18 });
+    await addPayoutAddress('bsc');
+    const response = await open({ assetId, amountFiatMicros: '20000000', reference: `f-${randomBytes(4).toString('hex')}` });
+    assert.equal(response.statusCode, 201, response.body);
+    const [row] = await db
+      .select()
+      .from(schema.invoices)
+      .where(eq(schema.invoices.id, (response.json() as { id: string }).id));
+    assert.equal(row!.addressModel, 'unique');
+    assert.ok(row!.feeBps > 0, 'a forwarder takes the commission on chain');
+  });
+
+  test('a small order is fine on any chain when it goes to the merchant\'s own wallet', async () => {
+    /**
+     * The floor exists because we pay to settle. A wallet invoice settles nothing, so the floor
+     * does not apply — on BNB Chain as on TRON. A merchant testing with a dollar is the case.
+     */
+    const assetId = await enableAsset({ chain: 'bsc', symbol: 'USDT', decimals: 18 });
+    const wallet = `0x${randomBytes(20).toString('hex')}`;
+    await walletPool.register({ organizationId: orgId, chain: 'bsc', address: wallet });
+    try {
+      const response = await open({ assetId, amountFiatMicros: '100000', reference: `s-${randomBytes(4).toString('hex')}` });
+      assert.equal(response.statusCode, 201, response.body);
+    } finally {
+      for (const row of await walletPool.list({ organizationId: orgId, chain: 'bsc' })) {
+        await walletPool.retire({ organizationId: orgId, walletId: row.id });
+      }
+    }
   });
 
   test('a test invoice on a pooled chain never touches the pool', async () => {

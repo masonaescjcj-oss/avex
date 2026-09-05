@@ -755,16 +755,20 @@ export const depositWallets = pgTable(
 // ── Invoices and observed payments ────────────────────────────────────────────
 
 /**
- * Chains whose deposit addresses are pooled, as SQL.
+ * How an invoice's deposit address identifies it.
  *
- * Needed as a literal because a partial index's predicate must be immutable — it cannot call
- * into the application to ask which chains are pooled. `db/schema.pooled.test.ts` asserts this
- * list equals the chains the registry marks `addressModel: 'pooled'`, so adding one there
- * without a migration here is a failing test rather than a unique-constraint violation on the
- * second invoice.
+ * On the invoice, not on the chain. For a long time the model was a property of the chain —
+ * TRON pooled, the EVM chains unique — and every rule that needed it asked the registry. That
+ * made "a merchant's own wallet on BNB Chain" impossible to express: the chain said unique, so
+ * a second invoice at the wallet's address violated the unique index, and the sink matched by
+ * address and credited a stranger.
+ *
+ * With the model on the row, one chain carries both: a forwarder invoice (`unique`, the address
+ * is the identity) and a wallet invoice (`pooled`, the exact amount is) can sit side by side,
+ * and the index and the sink each read the row in front of them instead of guessing from the
+ * chain. `shared-memo` is TON's model, where the memo is the identity.
  */
-export const POOLED_CHAINS = ['tron'] as const;
-const POOLED_CHAINS_SQL = sql`array['tron']::text[]`;
+export const addressModelEnum = pgEnum('address_model', ['unique', 'pooled', 'shared-memo']);
 
 export const invoiceStatusEnum = pgEnum('invoice_status', [
   'pending',
@@ -794,6 +798,13 @@ export const invoices = pgTable(
     /** Recomputed from credited payments, never incremented blindly. */
     amountPaid: numeric('amount_paid', { precision: 78, scale: 0 }).notNull().default('0'),
     status: invoiceStatusEnum('status').notNull().default('pending'),
+
+    /**
+     * Which of the three things names this invoice on chain: its address, the exact amount, or
+     * the memo. Decided when the invoice is created and never changed — the index below and
+     * the payment sink both read it. See `addressModelEnum`.
+     */
+    addressModel: addressModelEnum('address_model').notNull().default('unique'),
 
     /**
      * Test or live. Taken from the credential that created the invoice, never from the
@@ -919,19 +930,22 @@ export const invoices = pgTable(
      * address) makes those chains unusable after their very first invoice, which is
      * exactly what it did until a TON test caught it.
      *
-     * And on a *pooled* chain many invoices share each of a handful of addresses with no memo
-     * at all — the exact amount is what names them. So those chains are excluded here too.
-     * Their invariant is "no two *open* invoices on one address ask for the same amount", which
-     * no index can express: `status in ('pending','confirming')` is not immutable, so Postgres
-     * refuses to index on it. It is held instead by `WalletPoolService.allocate`, which
-     * serialises allocations per (organisation, chain) with a transaction-scoped advisory lock
-     * and re-reads the open amounts inside it. Naming the chains in SQL duplicates a fact the
-     * chain registry already owns, so `POOLED_CHAINS` below is checked against the registry by
-     * a test rather than left to agree by luck.
+     * And a *pooled* invoice shares its address — one of the merchant's own wallets — with
+     * every other open invoice on that wallet, with no memo at all; the exact amount is what
+     * names it. So those rows are excluded here too. Their invariant is "no two *open* invoices
+     * on one address ask for the same amount", which no index can express: `status in
+     * ('pending','confirming')` is not immutable, so Postgres refuses to index on it. It is held
+     * instead by `WalletPoolService.allocate`, which serialises allocations per (organisation,
+     * chain) with a transaction-scoped advisory lock and re-reads the open amounts inside it.
+     *
+     * The predicate reads the row's own `address_model`. It used to name the pooled *chains*
+     * as a literal array — a fact the registry also owned, held together by a test — and it
+     * meant a chain could carry only one model. Now BNB Chain can hold a forwarder invoice and
+     * a wallet invoice at once, and each is governed by the rule that fits it.
      */
     uniqueIndex('invoices_chain_deposit_key')
       .on(table.chain, table.depositAddress)
-      .where(sql`${table.memo} is null and ${table.chain} <> all(${POOLED_CHAINS_SQL})`),
+      .where(sql`${table.addressModel} = 'unique'`),
     /**
      * And the memo carries the same weight there that the address does elsewhere: two
      * invoices on one shared wallet with the same memo could not be told apart, so a

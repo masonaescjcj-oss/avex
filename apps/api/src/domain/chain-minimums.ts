@@ -72,7 +72,13 @@ export class ChainMinimums {
   async verdict(
     chain: string,
     valueUsdMicros: bigint | null | undefined,
+    /**
+     * Pooled: paid into the merchant's own wallet, so there is no settlement whose cost could
+     * exceed anything, on any chain. The floor is about gas we pay, and here we pay none.
+     */
+    options: { readonly pooled?: boolean } = {},
   ): Promise<{ readonly ok: true } | { readonly ok: false; readonly minUsdMicros: bigint }> {
+    if (options.pooled) return { ok: true };
     if (valueUsdMicros === null || valueUsdMicros === undefined || valueUsdMicros <= 0n) {
       return { ok: true };
     }

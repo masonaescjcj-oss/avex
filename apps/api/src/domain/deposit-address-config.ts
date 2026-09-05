@@ -34,6 +34,22 @@ export function depositAddressConfig(env: Env): DepositAddressConfig {
     const model = chainConfig(chain).addressModel;
 
     /**
+     * A merchant's own wallets take payments on every chain this build watches.
+     *
+     * So every creditable chain with an endpoint is a pooled chain, whatever else it is:
+     * BNB Chain is here with its forwarders *and* as a place a merchant's wallet works, and
+     * which of the two an invoice uses is decided per merchant, from whether they registered
+     * one. This is what makes a chain usable with no contract of ours deployed on it.
+     */
+    if (
+      CREDITABLE_ADDRESS_MODELS.includes(model) &&
+      (env.EVM_RPC_URLS[chain]?.length ?? 0) > 0 &&
+      (model === 'pooled' || chain in EVM_CHAIN_IDS)
+    ) {
+      pooled.push(chain);
+    }
+
+    /**
      * Nothing this build cannot credit a payment on, whatever else is configured for it.
      *
      * TON is the case: `SHARED_DEPOSIT_WALLETS=ton=…` used to put it in front of payers while no
@@ -67,16 +83,8 @@ export function depositAddressConfig(env: Env): DepositAddressConfig {
       continue;
     }
 
-    /**
-     * Pooled, and it needs nothing from configuration — that is the point.
-     *
-     * Its deposit addresses are the merchant's own wallets, so whether it works is per merchant
-     * rather than per deployment. It still belongs here: `supportedChains()` is what the checkout
-     * filters its currency list by, and a chain missing from it cannot be offered at all, which
-     * is how TRON came to be silently absent from every checkout after it became pooled.
-     */
-    pooled.push(chain);
+    // A natively pooled chain — TRON — was added above with the others.
   }
 
-  return { evm, shared, pooled };
+  return { evm, shared, pooled: [...new Set(pooled)] };
 }

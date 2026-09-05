@@ -346,15 +346,26 @@ export class DatabasePaymentSink implements PaymentSink {
     );
 
     /**
-     * On a pooled chain the address is not the identity; the exact amount is.
+     * On a pooled invoice the address is not the identity; the exact amount is.
      *
      * Several open invoices share one of the merchant's own wallets, each asking for a slightly
-     * different amount. Looking up by address alone — which is what every other chain does and
+     * different amount. Looking up by address alone — which is what every other model does and
      * what this method did — would return whichever row Postgres found first and credit a
      * stranger's payment to it. That is why this branch exists rather than a comment warning
      * about it.
+     *
+     * Decided by the rows at this address, not by the chain. It used to ask the registry
+     * whether the *chain* was pooled, which made a merchant's own wallet on BNB Chain
+     * impossible: the chain said unique, the address held three invoices, and the first row
+     * found got the money. Every invoice at one address shares a model — a wallet is never
+     * also a forwarder — so one row is enough to ask.
      */
-    if (chainConfig(payment.chain).addressModel === 'pooled') {
+    const [any] = await this.db
+      .select({ addressModel: invoices.addressModel })
+      .from(invoices)
+      .where(atAddress)
+      .limit(1);
+    if (any?.addressModel === 'pooled') {
       return this.matchPooled(payment, atAddress);
     }
 

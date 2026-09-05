@@ -361,7 +361,8 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
         error.code === 'amount_below_minimum' &&
         // The figure has to be in the message: "too small" without a number is unactionable.
         /\$1\.43/.test(error.message) &&
-        /TRON/.test(error.message),
+        // And where to go instead: a wallet of their own has no floor, on this chain or any.
+        /own wallets/.test(error.message),
     );
   });
 

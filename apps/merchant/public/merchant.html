@@ -543,6 +543,33 @@
 
     <!-- payouts -->
     <section class="view" id="view-payouts" hidden>
+      <div class="panel" id="wallets-panel" hidden>
+        <div class="panel-head"><h2>👛 Your own wallets</h2><span class="note" id="wallet-count"></span></div>
+        <div class="panel-body">
+          <p class="note">
+            Your customers pay straight into a wallet of yours, on any chain — no contract of ours
+            in the path, nothing to sweep, and no network fee for us to pass on. Register one to
+            ten addresses per chain and we hand them out. Each invoice asks for a very slightly
+            different amount — 20.05, 20.03 — and that is how two payments to one address are told
+            apart. Paying into your own wallet has no minimum order size.
+          </p>
+          <p class="warn-note">
+            Your first wallet on a chain is usable at once. Every one after it waits 24 hours and
+            everyone in your organization is emailed, because these are addresses your money lands
+            in — the same protection a payout address gets, for the same reason. Retiring one is
+            immediate.
+          </p>
+          <div class="scroll"><table id="wallet-table"></table></div>
+          <form id="wallet-form">
+            <div class="row">
+              <label>Chain<select id="wallet-chain"></select></label>
+              <label>Address<input class="mono" id="wallet-address" placeholder="your wallet address on that chain" required></label>
+              <label>Label<input id="wallet-label" placeholder="optional"></label>
+              <button class="primary" type="submit">Add wallet</button>
+            </div>
+          </form>
+        </div>
+      </div>
       <div class="panel">
         <div class="panel-head"><h2>🏦 Payout addresses</h2></div>
         <div class="panel-body">
@@ -562,33 +589,6 @@
         </div>
       </div>
 
-      <div class="panel" id="wallets-panel" hidden>
-        <div class="panel-head"><h2>👛 Your own wallets on TRON</h2></div>
-        <div class="panel-body">
-          <p class="note">
-            On TRON your customers pay straight into a wallet of yours — no contract of ours in
-            the path, nothing to sweep, and no network fee for us to pass on. Register three to
-            five addresses and we hand them out; each invoice asks for a very slightly different
-            amount, a fraction of a cent apart, and that is how two payments to one address are
-            told apart.
-          </p>
-          <p class="warn-note">
-            Your first wallet is usable at once. Every one after it waits 24 hours and everyone
-            in your organization is emailed, because these are addresses your money lands in —
-            the same protection a payout address gets, for the same reason. Retiring one is
-            immediate.
-          </p>
-          <div class="scroll"><table id="wallet-table"></table></div>
-          <form id="wallet-form">
-            <div class="row">
-              <label>Chain<select id="wallet-chain"></select></label>
-              <label>Address<input class="mono" id="wallet-address" placeholder="T…" required></label>
-              <label>Label<input id="wallet-label" placeholder="optional"></label>
-              <button class="primary" type="submit">Add wallet</button>
-            </div>
-          </form>
-        </div>
-      </div>
     </section>
 
     <!-- webhooks -->
@@ -1799,6 +1799,14 @@ function qrToSvgPath(code) {
     return parts.join('');
 }
 
+/**
+ * The merchant dashboard's own decisions, as pure functions.
+ *
+ * Everything here answers a question the page has to get right and that a reader cannot
+ * check by looking: whether a merchant is ready to take a live payment, what an invoice
+ * status means for them, how close they are to a cheaper commission. Rendering can be
+ * eyeballed; these cannot, so they live in a module with tests.
+ */
 function statusView(status) {
     switch (status) {
         case 'paid':
@@ -1869,11 +1877,11 @@ function statusView(status) {
  */
 function setupSteps(input) {
     /**
-     * Every chain with an enabled asset must have a payout address.
+     * Every chain with an enabled asset must have somewhere for the money to land.
      *
-     * Not "at least one payout address": a merchant who enabled USDT on BSC and TON, and
-     * added a BSC address only, has a half-configured account whose TON invoices are all
-     * refused. Checking the intersection is what catches that.
+     * Not "at least one": a merchant who enabled USDT on BSC and TON, and added a BSC wallet
+     * only, has a half-configured account whose TON invoices are all refused. Checking the
+     * intersection is what catches that.
      */
     const covered = new Set(input.payoutChains);
     const uncovered = input.assetChains.filter((chain) => !covered.has(chain));
@@ -1905,11 +1913,11 @@ function setupSteps(input) {
         },
         {
             id: 'payouts',
-            title: 'Add a payout address for every chain',
+            title: 'Add a wallet of your own for every chain',
             done: input.assetChains.length > 0 && uncovered.length === 0,
             why: uncovered.length > 0
-                ? `Invoices on ${uncovered.join(', ')} will be refused: funds can only move to an address you configured.`
-                : 'Funds go straight from the payer to your own wallet, so we need one address per chain.',
+                ? `Invoices on ${uncovered.join(', ')} will be refused: there is nowhere on that chain for the money to land.`
+                : 'Your customers pay straight into it — no contract of ours in the way, and no network fee. A payout address works too, where we have contracts deployed.',
         },
         {
             id: 'webhook',
@@ -2017,9 +2025,9 @@ function assetStance(asset, hasPayoutAddress, now = Date.now()) {
     if (!hasPayoutAddress) {
         return {
             state: 'needs_payout',
-            label: 'Needs a payout address',
+            label: 'Needs a wallet',
             tone: 'warn',
-            hint: 'On. Invoices are refused until you add an address for this chain.',
+            hint: 'On. Invoices are refused until you add a wallet of your own for this chain — or a payout address, where we have contracts there.',
             canToggle: true,
         };
     }
@@ -2354,19 +2362,6 @@ function ledgerRows(entries, formatUsd) {
             when: entry.createdAt,
         };
     });
-}
-/**
- * Which of these chains use a wallet pool.
- *
- * From the shared chain registry rather than a list written here, so the page and the server
- * cannot disagree about which chains work this way — and adding a second pooled chain later
- * changes one fact in one place instead of two in two.
- */
-function pooledChains(chains) {
-    return chains
-        .filter((chain) => SUPPORTED_CHAINS.includes(chain))
-        .filter((chain) => chainConfig(chain).addressModel === 'pooled')
-        .sort();
 }
 
 /**
@@ -3415,8 +3410,17 @@ function matchPreview(method, url, routes = previewRoutes()) {
       enabledAssets: enabled.length,
       approvedEnabledAssets: approved.length,
       assetChains: [...new Set(approved.map((asset) => asset.chain))],
+      /**
+       * Somewhere for the money to land: a wallet of the merchant's own on the chain, or a
+       * payout address. Either will do, and the wallet needs no contract of ours.
+       */
       payoutChains: [
-        ...new Set(payouts.active.filter((row) => !row.supersededAt).map((row) => row.chain)),
+        ...new Set([
+          ...payouts.active.filter((row) => !row.supersededAt).map((row) => row.chain),
+          ...((cache.wallets || {}).wallets || [])
+            .filter((wallet) => !wallet.retiredAt)
+            .map((wallet) => wallet.chain),
+        ]),
       ],
       webhookEndpoints: endpoints.length,
       liveKeys: keys.filter((key) => keyMode(key.displayPrefix) === 'live').length,
@@ -3897,12 +3901,12 @@ function matchPreview(method, url, routes = previewRoutes()) {
     const data = cache.wallets;
     const panel = el('wallets-panel');
     /**
-     * Which of the merchant's chains are pooled, taken from the currencies they can accept.
-     *
-     * `pooledChains` comes from the shared chain registry, so the page cannot disagree with the
-     * server about which chains work this way — the list is one fact in one place.
+     * Every chain the merchant accepts a currency on. This used to be filtered to the chains
+     * the registry called pooled — TRON — because a wallet did nothing anywhere else. A
+     * merchant's own wallet now takes payments on every chain, so the panel is the first thing
+     * on this tab and the chain list is simply theirs.
      */
-    const chains = pooledChains([...new Set((cache.assets || []).map((asset) => asset.chain))]);
+    const chains = [...new Set((cache.assets || []).map((asset) => asset.chain))].sort();
     if (!data || chains.length === 0) {
       panel.hidden = true;
       return;
@@ -3911,8 +3915,11 @@ function matchPreview(method, url, routes = previewRoutes()) {
 
     fill(el('wallet-chain'), chains.map((chain) => h('option', { value: chain, text: chain })));
 
-    const wallets = (data.wallets || []).filter((wallet) => chains.includes(wallet.chain));
+    const wallets = data.wallets || [];
     const pending = data.pending || [];
+    const live = wallets.filter((wallet) => !wallet.retiredAt).length;
+    el('wallet-count').textContent =
+      live === 0 ? '' : live + ' in use' + (pending.length ? ', ' + pending.length + ' waiting' : '');
 
     const rows = [
       /**
@@ -4893,6 +4900,8 @@ function matchPreview(method, url, routes = previewRoutes()) {
           ['report', base + '/reports/volume', (body) => body],
           ['assets', base + '/assets', assetList],
           ['payouts', base + '/payout-addresses', payoutLists],
+          // For the checklist too: a wallet of the merchant's own is somewhere for money to land.
+          ['wallets', base + '/deposit-wallets', (body) => body],
           ['endpoints', base + '/webhook-endpoints', (body) => body.endpoints || []],
           ['keys', base + '/api-keys', (body) => body.data || []],
           ['invoices', base + '/invoices?limit=50', (body) => body.invoices || []],

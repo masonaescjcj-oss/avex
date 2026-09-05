@@ -95,9 +95,21 @@ export class DepositAddressDeriver {
     ].sort();
   }
 
-  /** Whether this chain's address comes from a wallet pool rather than from configuration. */
+  /**
+   * Whether this chain has *only* a wallet pool — no forwarder to derive from.
+   *
+   * TRON, and any EVM chain nobody deployed contracts on. On such a chain every live invoice
+   * is pooled, and a merchant without a wallet is told to add one rather than handed an address
+   * that cannot exist. A chain with forwarders is not "pooled" in this sense even though a
+   * merchant's wallet works there too — that choice is per merchant, made by invoice creation.
+   */
   isPooled(chain: string): boolean {
-    return (this.config.pooled ?? []).includes(chain);
+    return (this.config.pooled ?? []).includes(chain) && !(chain in this.config.evm);
+  }
+
+  /** Chains that can derive a per-invoice forwarder address: the ones with contracts. */
+  forwarderChains(): readonly string[] {
+    return Object.keys(this.config.evm).sort();
   }
 
   /**

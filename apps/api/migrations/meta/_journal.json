@@ -183,6 +183,13 @@
       "when": 1788363085893,
       "tag": "0025_totp_pending_secret",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1788621815276,
+      "tag": "0026_invoice_address_model",
+      "breakpoints": true
     }
   ]
 }

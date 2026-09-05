@@ -1,4 +1,4 @@
-import { SUPPORTED_CHAINS, addressKey, chainConfig, isTronAddress } from '@avex/core';
+import { SUPPORTED_CHAINS, addressKey, isTronAddress } from '@avex/core';
 import type { ChainId } from '@avex/core';
 import { and, eq, isNull, lte, sql } from 'drizzle-orm';
 
@@ -6,6 +6,7 @@ import type { Database, Transaction } from '../db/client.js';
 import { depositWallets, invoices, memberships, pendingChanges, users } from '../db/schema.js';
 import type { Mailer } from '../mailer.js';
 import type { AuditService } from './audit.js';
+import { PayoutAddressError, PayoutAddressService } from './payout-service.js';
 import { WalletPoolError, chooseAmount, chooseWallet } from './wallet-pool-allocator.js';
 import type { WalletLoad } from './wallet-pool-allocator.js';
 
@@ -174,6 +175,8 @@ export class WalletPoolService {
       readonly chain: ChainId;
       readonly base: bigint;
       readonly decimals: number;
+      /** Dollar price of one whole token, so the nudge lands in the digits a payer reads. */
+      readonly unitPriceUsd?: number | null | undefined;
       readonly random?: (() => number) | undefined;
     },
   ): Promise<PoolAllocation> {
@@ -242,11 +245,35 @@ export class WalletPoolService {
     const amountDue = chooseAmount({
       base: input.base,
       decimals: input.decimals,
+      unitPriceUsd: input.unitPriceUsd,
       taken: chosen.openAmounts,
       ...(input.random === undefined ? {} : { random: input.random }),
     });
 
     return { walletId: chosen.id, address: chosen.address, amountDue };
+  }
+
+  /**
+   * Whether this merchant has a wallet an invoice on this chain could be paid into.
+   *
+   * The question invoice creation asks before deciding how an invoice will be identified: a
+   * wallet here means the invoice goes to it and is named by its amount; none means a
+   * forwarder address is derived, if the chain has a factory. Active wallets only — one
+   * retired but still holding open invoices is watched, not allocated.
+   */
+  async hasActiveWallet(organizationId: string, chain: ChainId): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: depositWallets.id })
+      .from(depositWallets)
+      .where(
+        and(
+          eq(depositWallets.organizationId, organizationId),
+          eq(depositWallets.chain, chain),
+          isNull(depositWallets.retiredAt),
+        ),
+      )
+      .limit(1);
+    return row !== undefined;
   }
 
   /**
@@ -306,7 +333,13 @@ export interface WalletChangeOutcome {
 
 export class WalletPoolChangeError extends Error {
   constructor(
-    readonly code: 'unsupported_chain' | 'not_pooled' | 'unchanged' | 'change_already_pending' | 'not_found',
+    readonly code:
+      | 'unsupported_chain'
+      | 'invalid_address'
+      | 'pool_full'
+      | 'unchanged'
+      | 'change_already_pending'
+      | 'not_found',
     message: string,
   ) {
     super(message);
@@ -331,6 +364,9 @@ export class WalletPoolChangeError extends Error {
  * stop money arriving somewhere; a delay on it would mean a merchant who spotted a wrong address
  * had to wait a day to stop using it.
  */
+/** The most wallets a merchant may hold on one chain, active and scheduled together. */
+export const MAX_WALLETS_PER_CHAIN = 10;
+
 export class WalletPoolChanges {
   constructor(
     private readonly db: Database,
@@ -353,32 +389,34 @@ export class WalletPoolChanges {
     if (!SUPPORTED_CHAINS.includes(input.chain)) {
       throw new WalletPoolChangeError('unsupported_chain', `${input.chain} is not supported.`);
     }
-    if (chainConfig(input.chain).addressModel !== 'pooled') {
-      /**
-       * Refused rather than accepted and ignored.
-       *
-       * On every other chain the deposit address is derived and a registered wallet would do
-       * nothing at all — so a merchant who added one would believe they had configured
-       * something. They want `payout-addresses` for those chains, and the message says so.
-       */
-      throw new WalletPoolChangeError(
-        'not_pooled',
-        `${input.chain} does not use a wallet pool: its deposit addresses are derived. Set a ` +
-          'payout address for it instead.',
-      );
-    }
 
     /**
-     * Normalised before anything compares it.
+     * Any chain. This used to refuse everything but TRON, on the grounds that elsewhere the
+     * deposit address is derived and a wallet would do nothing — which was true, and is the
+     * thing that changed. A merchant's own wallet now works on every chain: an invoice on it
+     * is matched by its exact amount, no contract of ours is in the path, and there is nothing
+     * to settle. It is the way to take payments on BNB Chain with no forwarder deployed at all.
      *
-     * A TRON address arrives from a merchant's clipboard in any of three forms, and a pool
-     * holding the same wallet twice would let the allocator treat one address as two — handing
-     * it to two invoices as though they were on separate wallets, which is the state the
-     * amount-matching cannot untangle.
+     * Validated for the chain it is on, with the same rules a payout address gets, because it
+     * is the same kind of thing: an address money will be sent to and cannot be recalled from.
+     * Normalised before anything compares it — a pool holding one wallet under two spellings
+     * would let the allocator treat it as two, handing one address to two invoices as though
+     * they were apart, which is the state the amount-matching cannot untangle.
      */
-    const address = addressKey(input.chain, input.address);
-    if (!isTronAddress(input.address) && input.chain === 'tron') {
-      throw new WalletPoolChangeError('unsupported_chain', 'That is not a valid TRON address.');
+    let address: string;
+    try {
+      address = addressKey(
+        input.chain,
+        PayoutAddressService.normalizeAddress(input.chain, input.address),
+      );
+    } catch (error) {
+      if (error instanceof PayoutAddressError) {
+        throw new WalletPoolChangeError('invalid_address', error.message);
+      }
+      throw error;
+    }
+    if (input.chain === 'tron' && !isTronAddress(input.address)) {
+      throw new WalletPoolChangeError('invalid_address', 'That is not a valid TRON address.');
     }
 
     const live = await this.pool.list({
@@ -387,6 +425,27 @@ export class WalletPoolChanges {
     });
     if (live.some((row) => row.address === address && row.retiredAt === null)) {
       throw new WalletPoolChangeError('unchanged', 'That wallet is already in your pool.');
+    }
+
+    /**
+     * Ten per chain, counting the ones still waiting out their delay.
+     *
+     * Not a technical limit — the allocator would spread invoices over a hundred as happily —
+     * but a product one: every wallet is an address the merchant has to hold the key for, and
+     * a pool wider than anyone can keep track of is how a retired key ends up with an open
+     * invoice pointing at it. Ten covers a busy shop many times over: each wallet holds nine
+     * invoices at one price in whole cents before amounts get a third decimal.
+     */
+    const active = live.filter((row) => row.retiredAt === null).length;
+    const waiting = (await this.pending(input.organizationId)).filter(
+      (change) => change.chain === input.chain,
+    ).length;
+    if (active + waiting >= MAX_WALLETS_PER_CHAIN) {
+      throw new WalletPoolChangeError(
+        'pool_full',
+        `You already have ${MAX_WALLETS_PER_CHAIN} wallets on ${input.chain}, counting any ` +
+          'still waiting to join. Retire one before adding another.',
+      );
     }
 
     const outstanding = await this.pendingFor(input.organizationId, input.chain, address);

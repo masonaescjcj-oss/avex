@@ -33,7 +33,7 @@ import { AlertForwarder } from './settle/alerts.js';
 import { startSettlement } from './settle/start.js';
 import { DEFAULT_LOOP, runLoop } from './watch/loop.js';
 import { WatchHealth } from './watch/health.js';
-import { watchableChains } from './watch/watchable-chains.js';
+import { hasForwarders, watchableChains } from './watch/watchable-chains.js';
 import type { LoopHandle } from './watch/loop.js';
 
 /**
@@ -244,6 +244,15 @@ async function main(): Promise<void> {
      * addresses nobody owns and then look for payments to them.
      */
     const pooled = chainConfig(chain).addressModel === 'pooled';
+    /**
+     * Whether this chain has forwarders to derive and settle with, or only watches.
+     *
+     * A chain with an endpoint and no contracts is watched all the same: merchants' own
+     * wallets take payments there, matched by amount, and those addresses come from the
+     * address book. The EVM adapter is built without a factory and refuses to derive or
+     * settle, which is exactly what such a chain has.
+     */
+    const forwarders = hasForwarders(env, chain);
     const adapter = pooled
       ? new TronAdapter(
           {
@@ -267,10 +276,14 @@ async function main(): Promise<void> {
           {
             chain,
             rpcUrl: urls[0]!,
-            create2: {
-              factory: env.FORWARDER_FACTORIES[chain]!,
-              implementation: env.FORWARDER_IMPLEMENTATIONS[chain]!,
-            },
+            ...(forwarders
+              ? {
+                  create2: {
+                    factory: env.FORWARDER_FACTORIES[chain]!,
+                    implementation: env.FORWARDER_IMPLEMENTATIONS[chain]!,
+                  },
+                }
+              : {}),
             acceptedAssets: accepted,
             pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
           },
@@ -332,7 +345,12 @@ async function main(): Promise<void> {
        * nothing to move at all — the payer already paid the merchant's wallet — so the line says
        * which of the two situations this is rather than one sentence covering both.
        */
-      settlement: pooled ? 'nothing to settle: the payer paid the merchant directly' : 'not in this process',
+      settlement: pooled
+        ? 'nothing to settle: the payer paid the merchant directly'
+        : forwarders
+          ? 'not in this process'
+          : "no forwarders on this chain: only merchants' own wallets take payments here",
+      forwarders,
     });
 
     adapters.set(chain, adapter);

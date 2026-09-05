@@ -128,7 +128,7 @@ fresh deployment had an admin panel nobody could ever sign in to and nothing any
 The TOTP secret is printed once. Login without a working authenticator returns an enrolment
 challenge and no session, so enrolling it is not optional.
 
-### 5. TRON deposit wallets — *needs the operator*
+### 5. The merchant's own wallets — *needs the operator*
 
 **Turn on two-factor authentication first**, on the dashboard's Security tab. Registering a
 deposit wallet, setting a payout address and creating a live key all carry
@@ -139,10 +139,18 @@ the only time. Moving to a new phone later is safe: the replacement secret is he
 the live one until a code proves it, so the app in hand keeps working and an abandoned
 enrolment costs nothing.
 
-Three to five TRON addresses, registered in the dashboard. **The keys stay with the merchant**;
-we only ever hold the addresses. A TRON endpoint goes in `EVM_RPC_URLS` as
-`tron=https://api.trongrid.io/jsonrpc` — TRON exposes an Ethereum-compatible JSON-RPC, which is
-why it is that variable and not another.
+One to ten of the merchant's own addresses per chain, registered in the dashboard — on TRON,
+and equally on BNB Chain, Ethereum or Polygon, with no contract of ours deployed there. **The
+keys stay with the merchant**; we only ever hold the addresses. Each invoice is named by its
+exact amount (20.05, 20.03, then 20.011); one open invoice on a wallet is credited whatever
+arrives, two or more take only the exact amount and send anything else to the operator queue.
+Nothing settles, so there is no gas, no network fee passed on and no minimum order.
+
+A TRON endpoint goes in `EVM_RPC_URLS` as `tron=https://api.trongrid.io/jsonrpc` — TRON
+exposes an Ethereum-compatible JSON-RPC, which is why it is that variable and not another. Any
+EVM chain with an endpoint is watched for merchants' wallets whether or not its contracts are
+deployed; the contracts add the per-invoice forwarder path for merchants who set a payout
+address instead.
 
 ### 6. Testnet, end to end — *both*
 

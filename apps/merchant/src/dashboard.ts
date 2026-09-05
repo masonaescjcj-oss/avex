@@ -1,4 +1,3 @@
-import { SUPPORTED_CHAINS, chainConfig } from '@avex/core';
 
 /**
  * The merchant dashboard's own decisions, as pure functions.
@@ -106,6 +105,10 @@ export interface SetupStep {
 export interface SetupInput {
   readonly enabledAssets: number;
   readonly approvedEnabledAssets: number;
+  /**
+   * Chains with somewhere for money to land: a wallet of the merchant's own, or a payout
+   * address on a chain with forwarders. Either satisfies the step, and the page unions them.
+   */
   readonly payoutChains: readonly string[];
   readonly assetChains: readonly string[];
   readonly webhookEndpoints: number;
@@ -124,11 +127,11 @@ export interface SetupInput {
  */
 export function setupSteps(input: SetupInput): readonly SetupStep[] {
   /**
-   * Every chain with an enabled asset must have a payout address.
+   * Every chain with an enabled asset must have somewhere for the money to land.
    *
-   * Not "at least one payout address": a merchant who enabled USDT on BSC and TON, and
-   * added a BSC address only, has a half-configured account whose TON invoices are all
-   * refused. Checking the intersection is what catches that.
+   * Not "at least one": a merchant who enabled USDT on BSC and TON, and added a BSC wallet
+   * only, has a half-configured account whose TON invoices are all refused. Checking the
+   * intersection is what catches that.
    */
   const covered = new Set(input.payoutChains);
   const uncovered = input.assetChains.filter((chain) => !covered.has(chain));
@@ -162,12 +165,12 @@ export function setupSteps(input: SetupInput): readonly SetupStep[] {
     },
     {
       id: 'payouts',
-      title: 'Add a payout address for every chain',
+      title: 'Add a wallet of your own for every chain',
       done: input.assetChains.length > 0 && uncovered.length === 0,
       why:
         uncovered.length > 0
-          ? `Invoices on ${uncovered.join(', ')} will be refused: funds can only move to an address you configured.`
-          : 'Funds go straight from the payer to your own wallet, so we need one address per chain.',
+          ? `Invoices on ${uncovered.join(', ')} will be refused: there is nowhere on that chain for the money to land.`
+          : 'Your customers pay straight into it — no contract of ours in the way, and no network fee. A payout address works too, where we have contracts deployed.',
     },
     {
       id: 'webhook',
@@ -352,9 +355,9 @@ export function assetStance(
   if (!hasPayoutAddress) {
     return {
       state: 'needs_payout',
-      label: 'Needs a payout address',
+      label: 'Needs a wallet',
       tone: 'warn',
-      hint: 'On. Invoices are refused until you add an address for this chain.',
+      hint: 'On. Invoices are refused until you add a wallet of your own for this chain — or a payout address, where we have contracts there.',
       canToggle: true,
     };
   }
@@ -805,18 +808,3 @@ export function ledgerRows(
   });
 }
 
-/**
- * Which of these chains use a wallet pool.
- *
- * From the shared chain registry rather than a list written here, so the page and the server
- * cannot disagree about which chains work this way — and adding a second pooled chain later
- * changes one fact in one place instead of two in two.
- */
-export function pooledChains(chains: readonly string[]): readonly string[] {
-  return chains
-    .filter((chain): chain is (typeof SUPPORTED_CHAINS)[number] =>
-      (SUPPORTED_CHAINS as readonly string[]).includes(chain),
-    )
-    .filter((chain) => chainConfig(chain).addressModel === 'pooled')
-    .sort();
-}

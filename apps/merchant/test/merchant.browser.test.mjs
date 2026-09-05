@@ -1512,7 +1512,8 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     const row = await page.$eval('.asset-row[data-state="needs_payout"]', (node) =>
       node.textContent.replace(/\s+/g, ' ').trim(),
     );
-    assert.match(row, /Needs a payout address/);
+    // A wallet of their own, first; the payout address is the alternative where contracts exist.
+    assert.match(row, /Needs a wallet/);
     assert.match(row, /refused/);
     await context.close();
   });
@@ -1716,7 +1717,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await page.waitForTimeout(200);
 
     const body = await text(page, '#wallets-panel');
-    assert.match(body, /Your own wallets on TRON/);
+    assert.match(body, /Your own wallets/);
     assert.match(body, /in use/);
     assert.match(body, /retired/);
     // The scheduled one says how long is left, not just that it is pending.
@@ -1736,20 +1737,38 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await page.click('nav.tabs button:has-text("Payouts")');
     await page.waitForTimeout(200);
     const body = await text(page, '#wallets-panel');
-    assert.match(body, /first wallet is usable at once/);
+    assert.match(body, /first wallet on a chain is usable at once/);
     assert.match(body, /waits 24 hours/);
     assert.match(body, /Retiring one is\s+immediate/);
     await context.close();
   });
 
-  test('a merchant with no pooled currency is shown no pool at all', async () => {
+  test('the pool offers every chain the merchant accepts, not only TRON', async () => {
     /**
-     * A panel explaining a TRON-only mechanism to somebody who takes only BSC is a paragraph
-     * they have to read in order to discover it does not apply to them.
+     * This panel used to appear only for TRON, because a wallet did nothing anywhere else. A
+     * merchant's own wallet now takes payments on every chain — it is how BNB Chain works with
+     * no contract of ours deployed — so the chain list is simply theirs, and the panel comes
+     * first on the tab because it is the path that costs nobody any gas.
      */
-    const { page, context } = await open({
-      assets: { data: FIXTURE.assets.data.filter((asset) => asset.chain !== 'tron') },
-    });
+    const { page, context } = await open();
+    await page.click('nav.tabs button:has-text("Payouts")');
+    await page.waitForTimeout(200);
+
+    const chains = await page.$$eval('#wallet-chain option', (nodes) => nodes.map((n) => n.value));
+    assert.ok(chains.includes('bsc'), chains.join(', '));
+    assert.ok(chains.includes('tron'), chains.join(', '));
+
+    // First on the tab: the panel order is the recommendation.
+    const order = await page.$$eval('#view-payouts .panel h2', (nodes) => nodes.map((n) => n.textContent.trim()));
+    assert.match(order[0], /Your own wallets/, order.join(' | '));
+    assert.match(await text(page, '#wallets-panel'), /any chain/);
+    assert.match(await text(page, '#wallets-panel'), /20\.05/);
+    await context.close();
+  });
+
+  test('a merchant with no currency at all is shown no pool', async () => {
+    // Nothing to register a wallet for, so nothing to explain.
+    const { page, context } = await open({ assets: { data: [] } });
     await page.click('nav.tabs button:has-text("Payouts")');
     await page.waitForTimeout(200);
     assert.equal(await page.$eval('#wallets-panel', (node) => node.hidden), true);
@@ -2116,7 +2135,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     const { page, context } = await open();
     const titles = await all(page, '#checklist .check-title');
     const twoFactor = titles.findIndex((title) => /two-factor/i.test(title));
-    const payouts = titles.findIndex((title) => /payout address/i.test(title));
+    const payouts = titles.findIndex((title) => /wallet of your own/i.test(title));
     assert.ok(twoFactor >= 0, titles.join(' | '));
     assert.ok(twoFactor < payouts, titles.join(' | '));
     await context.close();

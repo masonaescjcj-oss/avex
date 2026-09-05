@@ -742,20 +742,23 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
 
   <!-- ── deposit wallets ─────────────────────────────────────────────── -->
   <section class="panel" id="wallets">
-    <div class="panel-head"><h2>👛 Your own wallets, on TRON</h2></div>
+    <div class="panel-head"><h2>👛 Your own wallets, on any network</h2></div>
     <div class="body">
       <p>
-        On most networks we hand each invoice its own address, derived so that funds sent there
-        can only reach you. TRON works differently: a transfer there carries no note, so one
-        address cannot say which invoice it was for, and giving every invoice its own contract
-        would cost more in network fees than the payment is often worth.
+        Register one to ten of <em>your own</em> addresses on a network and we hand them out.
+        The payer's transfer goes straight into your wallet: no contract of ours in the path,
+        nothing to sweep, no network fee for us to pass on, and no minimum order size. Each
+        invoice asks for a very slightly different amount — 20.05, 20.03, then 20.011 — and
+        that is how two payments to one address are told apart. It works on every network,
+        including the ones where we also deploy per-invoice contracts; a wallet of yours on a
+        network is used in preference to those.
       </p>
       <p>
-        So on TRON you register a handful of <em>your own</em> addresses — three to five is
-        plenty — and we hand them out. The payer's transfer goes straight into your wallet: no
-        contract of ours in the path, nothing to sweep, and no network fee for us to pass on.
-        Each invoice asks for a very slightly different amount, a few hundredths of a cent
-        apart, and that is how two payments to one address are told apart.
+        The rule for a payment that does not match exactly: if one invoice is open on the
+        wallet, it is credited to that invoice whatever the amount — an exchange rounded the
+        withdrawal, or the payer typed the round number. If two or more are open, nothing on
+        the chain says which it was for, so nothing guesses; it goes to our operators, where
+        the payer's support ticket meets it.
       </p>
       <div class="endpoint" data-route="GET /v1/organizations/:orgId/deposit-wallets">
         <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/deposit-wallets</span></div>
@@ -767,7 +770,7 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
       <div class="endpoint" data-route="POST /v1/organizations/:orgId/deposit-wallets">
         <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/deposit-wallets</span></div>
         <div class="params">
-          <div class="param"><code>chain</code><span><span class="req">required</span> — a pooled network. Anything else is refused: set a payout address for those instead.</span></div>
+          <div class="param"><code>chain</code><span><span class="req">required</span> — any supported network. Up to ten wallets per network, counting ones still waiting to join.</span></div>
           <div class="param"><code>address</code><span><span class="req">required</span> — your own address. Checked, so a mistyped one is refused rather than accepted.</span></div>
           <div class="param"><code>label</code><span>Your name for it, so a support conversation can refer to one.</span></div>
         </div>

@@ -103,6 +103,7 @@ describe('the wallet pool', { skip: !databaseUrl }, () => {
         amountPaid: '0',
         depositAddress: input.address,
         payoutAddress: input.address,
+        addressModel: 'pooled',
         status: 'pending',
         mode: 'live',
         toleranceBps: 0,
@@ -220,10 +221,11 @@ describe('the wallet pool', { skip: !databaseUrl }, () => {
     const org = await freshOrg();
     const only = tronAddress();
     await pool.register({ organizationId: org, chain: 'tron', address: only });
+    // 20.05 — the fifth whole cent, which `random: 0.5` lands on among nine.
     const invoiceId = await openInvoice({
       organizationId: org,
       address: only,
-      amountDue: 20_000_007n,
+      amountDue: 20_050_000n,
     });
     await db().update(invoices).set({ status: 'paid' }).where(eq(invoices.id, invoiceId));
 
@@ -233,10 +235,11 @@ describe('the wallet pool', { skip: !databaseUrl }, () => {
         chain: 'tron',
         base: 20_000_000n,
         decimals: 6,
-        random: () => 6 / 9999,
+        unitPriceUsd: 1,
+        random: () => 0.5,
       }),
     );
-    assert.equal(allocation.amountDue, 20_000_007n, 'the freed amount is available again');
+    assert.equal(allocation.amountDue, 20_050_000n, 'the freed amount is available again');
   });
 
   test('concurrent allocations for one price never collide', async () => {
@@ -273,6 +276,7 @@ describe('the wallet pool', { skip: !databaseUrl }, () => {
             amountPaid: '0',
             depositAddress: allocation.address,
             payoutAddress: allocation.address,
+            addressModel: 'pooled',
             status: 'pending',
             mode: 'live',
             toleranceBps: 0,

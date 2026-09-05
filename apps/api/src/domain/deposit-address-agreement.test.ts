@@ -114,14 +114,31 @@ describe('the invoice side and the watcher agree', () => {
     assert.equal(watchableChains(withTon).includes('ton'), false);
   });
 
-  test('an EVM chain missing either contract half is offered by neither side', () => {
+  test('an EVM chain missing either contract half has no forwarders, and is still offered', () => {
+    /**
+     * Two different facts, and this test used to conflate them. Half a contract pair means no
+     * forwarder address can be derived, so a merchant with only a payout address there cannot be
+     * invoiced — that half is unchanged. But a merchant's own wallet takes payments on the chain
+     * regardless, so the chain is offered and watched; it is simply pooled-only.
+     */
     const halfConfigured = env({
       EVM_RPC_URLS: { bsc: ['https://rpc.example'] },
       FORWARDER_FACTORIES: { bsc: '0x' + '11'.repeat(20) },
       // and no FORWARDER_IMPLEMENTATIONS
     });
 
-    assert.equal(offered(halfConfigured).includes('bsc'), false);
+    const config = depositAddressConfig(halfConfigured);
+    assert.equal('bsc' in config.evm, false, 'half a pair derives nothing');
+    assert.ok(config.pooled?.includes('bsc'), 'and wallets still work there');
+    assert.equal(offered(halfConfigured).includes('bsc'), true);
+    assert.equal(watchableChains(halfConfigured).includes('bsc'), true);
+  });
+
+  test('a chain with no endpoint is offered nowhere, wallets or not', () => {
+    // The floor under all of it: a payment nobody polls for is a payment never credited.
+    const silent = env({ EVM_RPC_URLS: {} });
+    assert.deepEqual(offered(silent), []);
+    assert.deepEqual([...watchableChains(silent)], []);
   });
 
   test('a pooled chain is offered with nothing configured but an endpoint', () => {

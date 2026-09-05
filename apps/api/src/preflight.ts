@@ -85,20 +85,22 @@ export function preflight(env: Env): Preflight {
 
       if (!factory || !implementation) {
         /**
-         * Both halves or neither, and the asymmetry is worth naming.
+         * Not a degradation any more, and it used to be.
          *
-         * A factory with no logic address derives addresses from an empty string: valid hex, a
-         * real address, and one nothing can ever settle. Payers would fund them and the money
-         * would be unreachable. `compose` drops such a chain rather than deriving, so the effect
-         * is that the chain quietly cannot issue invoices.
+         * A chain with an endpoint and no contracts is watched, and merchants' own wallets take
+         * payments on it — matched by amount, with nothing of ours in the path. What it cannot
+         * do is derive a per-invoice forwarder address, so a merchant with only a payout address
+         * on it cannot be invoiced there until contracts are deployed. Said as what it is.
          */
         add(
-          'degraded',
+          'ready',
           `chains.${chain}`,
-          `has an RPC endpoint but ${!factory ? 'no FORWARDER_FACTORIES entry' : ''}` +
+          "is watched; merchants' own wallets take payments on it. It has " +
+            `${!factory ? 'no FORWARDER_FACTORIES entry' : ''}` +
             `${!factory && !implementation ? ' and ' : ''}` +
-            `${!implementation ? 'no FORWARDER_IMPLEMENTATIONS entry' : ''}. ` +
-            'It will be watched and cannot issue invoices. Run contracts/deploy.mjs.',
+            `${!implementation ? 'no FORWARDER_IMPLEMENTATIONS entry' : ''}, so no forwarder ` +
+            'addresses are derived — a payout address alone cannot be invoiced against here ' +
+            'until contracts/deploy.mjs has run.',
         );
       }
     }
@@ -135,7 +137,7 @@ export function preflight(env: Env): Preflight {
         'ready',
         `chains.${chain}`,
         'is watched and needs nothing here: its deposit addresses are the wallets each merchant ' +
-          'registers, so check the dashboard rather than this list.',
+          'registers — as on every other chain — so check the dashboard rather than this list.',
       );
     }
   }

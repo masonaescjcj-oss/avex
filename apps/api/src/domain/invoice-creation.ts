@@ -1,19 +1,4 @@
-import {
-  DEFAULT_MAX_ROUNDING_BPS,
-  DEFAULT_QUOTE_TTL_MS,
-  QuoteInputError,
-  applyFeePayer,
-  createQuote,
-  fiatToTokenAmount,
-  tokenAmountToFiat,
-  type Asset,
-  type ChainId,
-  type FeePayer,
-  type FeeSplit,
-  type PriceSymbol,
-  type PricingMode,
-  type Rate,
-} from '@avex/core';
+import { applyFeePayer, createQuote, DEFAULT_MAX_ROUNDING_BPS, DEFAULT_QUOTE_TTL_MS, fiatToTokenAmount, QuoteInputError, RATE_SCALE, tokenAmountToFiat, type Asset, type ChainId, type FeePayer, type FeeSplit, type PriceSymbol, type PricingMode, type Rate } from '@avex/core';
 import { and, eq, isNull } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
@@ -207,6 +192,29 @@ export class InvoiceCreationService {
      * verdict could ever have said no.
      */
     const config = await this.resolveAsset(organizationId, request.assetId);
+    const mode = request.mode ?? 'live';
+
+    /**
+     * 1b. How this invoice will be identified on chain, decided first because everything
+     *     after it depends on the answer: the fee, the floor, the destination, the address.
+     *
+     * The merchant's own wallet wins. If they have registered one on this chain, the invoice
+     * goes to it and is named by its exact amount — no contract of ours in the path, no gas,
+     * nothing to settle, on any chain. Only without one does a forwarder address get derived,
+     * and only where the chain has a factory. A chain with no forwarders at all — TRON, or an
+     * EVM chain nobody deployed contracts on — is pooled regardless, so that a merchant with
+     * no wallet there is told to add one rather than handed an address that cannot exist.
+     *
+     * Test mode is excluded deliberately: `derive` answers a test invoice with an address no
+     * wallet will accept, and a test invoice must not consume a slot in a real pool or become
+     * payable by accident.
+     */
+    const pooled =
+      !config.stars &&
+      mode !== 'test' &&
+      (this.deriver.isPooled(config.asset.chain) ||
+        (this.pool !== undefined &&
+          (await this.pool.hasActiveWallet(organizationId, config.asset.chain as ChainId))));
 
     /**
      * 2. Where the money ends up.
@@ -215,10 +223,16 @@ export class InvoiceCreationService {
      * already looking at. Stars are the exception and it is structural: the customer pays
      * the merchant's own bot, so the funds are already where they are going and there is no
      * address for us to hold. The column records the rail rather than pretending otherwise.
+     *
+     * A pooled invoice has no payout address either, for the same reason: the payer's transfer
+     * lands in the merchant's wallet and stays there, so the wallet is the destination and is
+     * written into that column once the allocation has chosen it.
      */
     const payoutAddress = config.stars
       ? 'telegram:bot'
-      : await this.resolvePayoutAddress(organizationId, config.asset.chain);
+      : pooled
+        ? null
+        : await this.resolvePayoutAddress(organizationId, config.asset.chain);
 
     // 3. The rate, and from it the amount. `createQuote` is pure, so every rounding
     //    decision it makes is testable without a network.
@@ -241,14 +255,15 @@ export class InvoiceCreationService {
       const verdict = await this.minimums.verdict(
         config.asset.chain,
         quote.amountFiatMicros ?? null,
+        { pooled },
       );
       if (!verdict.ok) {
         throw new InvoiceCreationError(
           'amount_below_minimum',
           `An order this small cannot carry its own settlement on ${config.asset.chain} ` +
             `right now — the minimum is ${formatUsdMicros(verdict.minUsdMicros)}, and it moves ` +
-            'with the chain. TRON and TON have no such floor: the payment lands in your own ' +
-            'wallet and nothing has to be settled.',
+            'with the chain. Paying into one of your own wallets has no such floor, on any ' +
+            'chain: the payment lands there and nothing has to be settled.',
         );
       }
     }
@@ -280,6 +295,7 @@ export class InvoiceCreationService {
            * figure invented at this line would not be the one the merchant is later shown.
            */
           quote.amountFiatMicros ?? undefined,
+          { pooled },
         );
 
     /**
@@ -367,8 +383,6 @@ export class InvoiceCreationService {
       .returning();
 
     const invoiceId = crypto.randomUUID();
-    const mode = request.mode ?? 'live';
-
     /**
      * Stars carry a payload, not an address.
      *
@@ -378,7 +392,7 @@ export class InvoiceCreationService {
      * which is why it goes in the same column rather than a new one.
      */
     /**
-     * A pooled chain is the one case where the address is not known before the write.
+     * A pooled invoice is the one case where the address is not known before the write.
      *
      * Everywhere else the deposit address comes from configuration and an id — a CREATE2 hash,
      * or one shared wallet plus a memo — so it can be computed and then written. A pooled
@@ -387,14 +401,7 @@ export class InvoiceCreationService {
      * transaction that writes this invoice. Otherwise two concurrent creations read the same
      * state and produce two invoices asking for one amount at one address, which is the single
      * state this design cannot untangle afterwards.
-     *
-     * Test mode is excluded deliberately: `derive` answers a test invoice with an address no
-     * wallet will accept, and a test invoice must not consume a slot in a real pool or become
-     * payable by accident.
      */
-    const pooled =
-      !config.stars && mode !== 'test' && this.deriver.isPooled(config.asset.chain);
-
     let target;
     if (config.stars) {
       target = { address: `${TELEGRAM_RAIL}:${invoiceId}`, memo: undefined };
@@ -409,7 +416,7 @@ export class InvoiceCreationService {
         target = this.deriver.derive({
           invoiceId,
           chain: config.asset.chain,
-          payoutAddress,
+          payoutAddress: payoutAddress!,
           /**
            * Only the on-chain split reaches the address derivation, and only when it is real.
            *
@@ -438,6 +445,12 @@ export class InvoiceCreationService {
      */
     const invoiceRow = (address: string, amountDue: bigint) => ({
       id: invoiceId,
+      /**
+       * Which of the three things names this invoice on chain. Read by the unique index —
+       * a pooled row may share its address, a unique one may not — and by the payment sink,
+       * which matches a pooled row by amount and every other by address.
+       */
+      addressModel: pooled ? ('pooled' as const) : target.memo ? ('shared-memo' as const) : ('unique' as const),
       organizationId,
       assetId: config.asset.id,
       quoteId: quoteRow!.id,
@@ -452,7 +465,8 @@ export class InvoiceCreationService {
       chain: config.asset.chain,
       depositAddress: address,
       memo: target.memo ?? null,
-      payoutAddress,
+      // A pooled invoice's destination is the wallet it is paid into.
+      payoutAddress: payoutAddress ?? address,
       feeBps: fee?.feeBps ?? 0,
       feeDestination: fee?.feeDestination ?? null,
       accruedFeeBps: fee?.accruedFeeBps ?? 0,
@@ -478,8 +492,9 @@ export class InvoiceCreationService {
       if (!this.pool) {
         throw new InvoiceCreationError(
           'not_configured',
-          `${config.asset.chain} is a pooled chain and this deployment has no wallet pool ` +
-            'service wired. Our misconfiguration, not the request.',
+          `${config.asset.chain} has no forwarder here, so invoices on it are paid into the ` +
+            "merchant's own wallets — and this deployment has no wallet pool service wired. " +
+            'Our misconfiguration, not the request.',
         );
       }
       const pool = this.pool;
@@ -496,6 +511,14 @@ export class InvoiceCreationService {
              */
             base: charged.amountDue,
             decimals: config.asset.decimals,
+            /**
+             * Dollars per whole token, so the disambiguator lands in the digits a payer reads —
+             * cents on a stablecoin, something worth about a cent on anything dearer. Null on
+             * a token-priced invoice, where the allocator falls back to the token's own scale.
+             */
+            unitPriceUsd: quote.effectiveRate
+              ? Number(quote.effectiveRate.priceScaled) / Number(RATE_SCALE)
+              : null,
           });
           const [row] = await tx
             .insert(invoices)

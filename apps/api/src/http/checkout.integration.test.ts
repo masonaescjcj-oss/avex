@@ -927,6 +927,34 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     assert.ok(!ids.includes(noPayout), 'a chain with no payout address must not be offered');
   });
 
+  test("a merchant's own wallet makes a chain payable, with no payout address at all", async () => {
+    /**
+     * The condition above used to be an inner join on payout addresses, so a wallet on
+     * Polygon — or every TRON wallet — left the chain off the checkout until the merchant also
+     * added a payout address they did not need. A wallet is a destination in its own right, and
+     * the option quoted for it carries the wallet-invoice fee shape: nothing on chain, the
+     * commission accrued.
+     */
+    const viaWallet = await enableAsset({ chain: 'polygon', symbol: 'WLLT' });
+    const wallet = `0x${randomBytes(20).toString('hex')}`;
+    await walletPool.register({ organizationId: orgId, chain: 'polygon', address: wallet });
+    try {
+      const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+      const options = (await optionsFor(session.id)).json().options as {
+        assetId: string;
+        feeBps?: number;
+        networkFeeBps?: number;
+      }[];
+      const offered = options.find((option) => option.assetId === viaWallet);
+      assert.ok(offered, 'a chain with a wallet on it must be offered');
+      assert.equal(offered.networkFeeBps ?? 0, 0, 'no transfer of ours to pass on');
+    } finally {
+      for (const row of await walletPool.list({ organizationId: orgId, chain: 'polygon' })) {
+        await walletPool.retire({ organizationId: orgId, walletId: row.id });
+      }
+    }
+  });
+
   // ── lifecycle ─────────────────────────────────────────────────────────────
 
   test('the session reports paid once its invoice is paid', async () => {
