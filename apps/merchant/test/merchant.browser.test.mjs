@@ -211,7 +211,8 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
    * without restating the whole account.
    */
   async function open(overrides = {}) {
-    const context = await browser.newContext({ viewport: { width: 1100, height: 900 } });
+    // A desktop unless a test says otherwise; the layout tests open a phone.
+    const context = await browser.newContext({ viewport: overrides.viewport ?? { width: 1100, height: 900 } });
     const page = await context.newPage();
     const errors = [];
     const seen = [];
@@ -2359,6 +2360,105 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
     assert.equal(await shown(page, '#flash'), true);
     assert.match(await text(page, '#flash'), /preview|cannot be changed/i);
+    await context.close();
+  });
+
+  // ── layout ────────────────────────────────────────────────────────────────
+
+  /** A small phone, portrait. Everything below is asked of the page at this width. */
+  const PHONE = { width: 360, height: 740 };
+  const EVERY_TAB = ['Overview', 'Take a payment', 'Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Team', 'Security', 'Commission'];
+
+  test('no tab makes a phone scroll sideways', async () => {
+    /**
+     * Measured on the document, not on any one element: a page that scrolls sideways has
+     * something wider than the viewport in it somewhere, and this is the assertion that finds
+     * it wherever it is. Every tab, because each draws a different table.
+     */
+    const { page, context } = await open({ viewport: PHONE });
+    for (const label of EVERY_TAB) {
+      await page.click(`nav.tabs button:has-text("${label}")`);
+      await page.waitForTimeout(120);
+      const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+      }));
+      assert.ok(
+        scrollWidth <= clientWidth,
+        `${label}: the page is ${scrollWidth}px wide in a ${clientWidth}px viewport`,
+      );
+    }
+    await context.close();
+  });
+
+  test('the tab strip is one scrolling row on a phone, and every tab on it can still be opened', async () => {
+    /**
+     * Ten tabs do not fit in 360px. Wrapped, they took four lines of the screen before the
+     * first figure; now the row scrolls sideways. The buttons are still `nav.tabs button` with
+     * their labels — that is how every other test here finds them — and opening one brings
+     * it into view by moving the strip, not the page.
+     */
+    const { page, context } = await open({ viewport: PHONE });
+    const strip = await page.$eval('nav.tabs', (node) => ({
+      scrollWidth: node.scrollWidth,
+      clientWidth: node.clientWidth,
+      rows: new Set([...node.children].map((button) => Math.round(button.getBoundingClientRect().top))).size,
+    }));
+    assert.ok(strip.scrollWidth > strip.clientWidth, 'ten tabs in 360px have to scroll');
+    assert.equal(strip.rows, 1, 'one row, not a stack');
+
+    for (const label of EVERY_TAB) {
+      await page.click(`nav.tabs button:has-text("${label}")`);
+      await page.waitForTimeout(120);
+      assert.equal(await text(page, 'nav.tabs button[aria-current="page"]'), label);
+      const inView = await page.$eval('nav.tabs button[aria-current="page"]', (node) => {
+        const box = node.getBoundingClientRect();
+        return box.left >= 0 && box.right <= document.documentElement.clientWidth;
+      });
+      assert.equal(inView, true, `${label} was opened but is off the edge of the strip`);
+    }
+    assert.equal(await shown(page, '#view-commission'), true);
+    await context.close();
+  });
+
+  test('a table wider than a phone scrolls inside its panel, not the page', async () => {
+    /**
+     * Six columns of identifiers and amounts are wider than 360px, and they must stay so —
+     * an address or a figure broken across two lines is misread. So the table overflows its
+     * `.scroll` wrapper, the wrapper scrolls, and the document does not.
+     */
+    const { page, context } = await open({ viewport: PHONE });
+    await page.click('nav.tabs button:has-text("Invoices")');
+    await page.waitForTimeout(120);
+    const measured = await page.$eval('#invoice-table', (table) => {
+      const scroller = table.closest('.scroll');
+      return {
+        table: table.getBoundingClientRect().width,
+        scrolls: scroller.scrollWidth > scroller.clientWidth,
+        overflowX: getComputedStyle(scroller).overflowX,
+        page: document.documentElement.scrollWidth,
+        viewport: document.documentElement.clientWidth,
+      };
+    });
+    assert.ok(measured.table > measured.viewport, `the table is ${measured.table}px in a ${measured.viewport}px viewport; it should be wider`);
+    assert.equal(measured.scrolls, true, 'the .scroll wrapper should have something to scroll');
+    assert.equal(measured.overflowX, 'auto');
+    assert.ok(measured.page <= measured.viewport, 'the page itself must not scroll sideways');
+    await context.close();
+  });
+
+  test('fields and buttons are big enough to tap on a phone', async () => {
+    // 44px is the floor both platforms' guidelines give for a touch target.
+    const { page, context } = await open({ viewport: PHONE });
+    await page.click('nav.tabs button:has-text("Take a payment")');
+    await page.waitForTimeout(120);
+    const tooSmall = await page.$$eval('#view-new input, #view-new select, #view-new button, #sign-out', (nodes) =>
+      nodes
+        .map((node) => ({ node, height: node.getBoundingClientRect().height }))
+        .filter(({ height }) => height > 0 && height < 44)
+        .map(({ node, height }) => `${node.id || node.textContent.trim()} is ${Math.round(height)}px`),
+    );
+    assert.deepEqual(tooSmall, []);
     await context.close();
   });
 
