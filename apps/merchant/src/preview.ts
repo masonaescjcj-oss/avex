@@ -396,13 +396,31 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
     ['GET /assets', ok({ data: previewAssets() })],
     [
       'GET /payout-addresses',
+      /**
+       * `{ active, pending }`, which is what the endpoint returns.
+       *
+       * It used to say `addresses`, a key the API has never produced — and because the page
+       * had been written to read the fixture, the preview looked right while the real tab
+       * threw on the first render. A fixture whose shape is invented tests the fixture.
+       *
+       * The pending change is here deliberately: it is the state the whole delay exists for,
+       * and the one somebody previewing the product should see.
+       */
       ok({
-        addresses: [
+        active: [
           {
+            id: 'pa-1',
             chain: 'bsc',
             address: '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52',
             activeFrom: ago(60 * 24 * 30),
-            supersededAt: null,
+          },
+        ],
+        pending: [
+          {
+            id: 'pc-1',
+            chain: 'ton',
+            address: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
+            effectiveAt: ahead(60 * 18),
           },
         ],
       }),
@@ -414,8 +432,9 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
     ],
     [
       'GET /api-keys',
+      // `data`, like every other list this API returns.
       ok({
-        keys: [
+        data: [
           {
             id: 'k1',
             name: 'staging',

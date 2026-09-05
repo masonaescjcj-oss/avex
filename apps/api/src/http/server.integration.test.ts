@@ -1478,6 +1478,65 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
     assert.equal(await payouts.activeAddress(orgId, 'bsc'), FIRST);
   });
 
+  test('the dashboard reads this list under the keys it actually returns', async () => {
+    /**
+     * A shape contract, written after the dashboard spent its whole life reading three keys
+     * this endpoint has never had — `addresses`, then `payoutAddresses`, then the response
+     * object itself. The last guess handed a plain object to code that called `.map` on it,
+     * so the Payouts tab threw `rows.map is not a function` for every merchant who opened
+     * it. Nothing failed anywhere: the browser fixtures had been written to match the page,
+     * so the page and its tests agreed with each other about a server neither had met.
+     *
+     * Only the top-level keys, because that is the part a client cannot discover by reading
+     * a row. Renaming one of these is a breaking change to the dashboard and has to fail
+     * here, on the side that makes it.
+     */
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/payout-addresses`,
+      headers: asOwner(),
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(Object.keys(response.json()).sort(), ['active', 'pending']);
+    assert.ok(Array.isArray(response.json().active));
+    assert.ok(Array.isArray(response.json().pending));
+
+    // The fields each row carries, which the tab renders as columns.
+    const [row] = response.json().active;
+    assert.deepEqual(Object.keys(row).sort(), ['activeFrom', 'address', 'chain', 'id']);
+  });
+
+  test('every list the dashboard loads answers under a key, never as a bare array', async () => {
+    /**
+     * The same contract for the other tabs, in one place. `api-keys` was the second casualty
+     * of the same habit: the page read `keys`, the API says `data`, and the tab reported "No
+     * keys yet" to merchants who had them.
+     *
+     * The rule is worth stating because it is what makes these guessable: every list this API
+     * returns is wrapped, and wrapped under the name the endpoint is about — `data` for the
+     * plain collections, a named key where a response carries two lists.
+     */
+    const expected: readonly [string, readonly string[]][] = [
+      ['api-keys', ['data']],
+      ['assets', ['data']],
+      ['members', ['data']],
+      ['invites', ['data']],
+      ['deposit-wallets', ['pending', 'wallets']],
+      ['webhook-endpoints', ['endpoints']],
+    ];
+
+    for (const [path, keys] of expected) {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/v1/organizations/${orgId}/${path}`,
+        headers: asOwner(),
+      });
+      assert.equal(response.statusCode, 200, path);
+      assert.deepEqual(Object.keys(response.json()).sort(), [...keys].sort(), path);
+    }
+  });
+
   test('replacing an address is scheduled, not applied', async () => {
     await reElevate();
     const response = await app.inject({

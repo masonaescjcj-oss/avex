@@ -111,7 +111,42 @@ describe('the preview router', () => {
     assert.deepEqual((endpoints?.body as { endpoints: unknown[] }).endpoints, []);
 
     const keys = matchPreview('GET', '/v1/organizations/x/api-keys', routes);
-    const modes = (keys?.body as { keys: { mode: string }[] }).keys.map((key) => key.mode);
+    const modes = (keys?.body as { data: { mode: string }[] }).data.map((key) => key.mode);
     assert.ok(!modes.includes('live'), 'a live key would tick the last step of the checklist');
+  });
+
+  test('the fixtures carry the keys the real endpoints return', () => {
+    /**
+     * The preview's whole claim is that it is the real dashboard driven by canned answers.
+     * That holds only while the answers have the server's shape — and two of them did not:
+     * `payout-addresses` said `addresses` where the API says `active` and `pending`, and
+     * `api-keys` said `keys` where it says `data`. The page had been written to match, so
+     * the preview looked right and the live tab threw on first render.
+     *
+     * Pinned here as the top-level keys, because that is exactly what went wrong. What the
+     * rows contain is checked by the tests that render them.
+     */
+    const shapes: readonly [string, readonly string[]][] = [
+      ['/v1/organizations/x/payout-addresses', ['active', 'pending']],
+      ['/v1/organizations/x/api-keys', ['data']],
+      ['/v1/organizations/x/assets', ['data']],
+      ['/v1/organizations/x/members', ['data']],
+      ['/v1/organizations/x/invites', ['data']],
+      ['/v1/organizations/x/deposit-wallets', ['wallets', 'pending']],
+      ['/v1/organizations/x/webhook-endpoints', ['endpoints']],
+      ['/v1/organizations/x/webhook-deliveries', ['deliveries']],
+      ['/v1/organizations/x/invoices', ['invoices']],
+    ];
+
+    for (const [path, keys] of shapes) {
+      const route = matchPreview('GET', path, routes);
+      assert.ok(route, `${path} has no fixture`);
+      for (const key of keys) {
+        assert.ok(
+          Object.prototype.hasOwnProperty.call(route.body as object, key),
+          `${path} must answer with a "${key}" — the API does`,
+        );
+      }
+    }
   });
 });

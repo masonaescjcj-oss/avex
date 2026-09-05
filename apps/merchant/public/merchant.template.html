@@ -1322,7 +1322,7 @@
 
   function renderChecklist() {
     const assets = cache.assets || [];
-    const payouts = cache.payouts || [];
+    const payouts = cache.payouts || { active: [], pending: [] };
     const endpoints = cache.endpoints || [];
     const keys = cache.keys || [];
 
@@ -1333,7 +1333,9 @@
       enabledAssets: enabled.length,
       approvedEnabledAssets: approved.length,
       assetChains: [...new Set(approved.map((asset) => asset.chain))],
-      payoutChains: [...new Set(payouts.filter((row) => !row.supersededAt).map((row) => row.chain))],
+      payoutChains: [
+        ...new Set(payouts.active.filter((row) => !row.supersededAt).map((row) => row.chain)),
+      ],
       webhookEndpoints: endpoints.length,
       liveKeys: keys.filter((key) => keyMode(key.displayPrefix) === 'live').length,
       twoFactorEnabled: (cache.me || {}).totpEnabled === true,
@@ -1471,7 +1473,9 @@
   function renderAssets() {
     const rows = cache.assets || [];
     const payoutChains = new Set(
-      (cache.payouts || []).filter((row) => !row.supersededAt).map((row) => row.chain),
+      ((cache.payouts || {}).active || [])
+        .filter((row) => !row.supersededAt)
+        .map((row) => row.chain),
     );
 
     if (rows.length === 0) {
@@ -1655,6 +1659,26 @@
     return response?.data || response?.assets || response || [];
   }
 
+  /**
+   * The payout endpoint's two lists, as it actually returns them.
+   *
+   * `GET /payout-addresses` answers `{ active, pending }`. This page used to read
+   * `.addresses`, then `.payoutAddresses`, then fall back to the response object itself —
+   * three guesses, none of them the API's shape, and the last one silently handed a plain
+   * object to code that called `.map` on it. The tab crashed with "rows.map is not a
+   * function" for every merchant, and every test passed because the fixtures had been
+   * written to match the page instead of the server.
+   *
+   * So this reads the documented shape and nothing else. A response that does not carry it
+   * gives two empty lists rather than a page half-built from a wrong guess.
+   */
+  function payoutLists(response) {
+    return {
+      active: Array.isArray(response?.active) ? response.active : [],
+      pending: Array.isArray(response?.pending) ? response.pending : [],
+    };
+  }
+
   async function reloadAssets() {
     const base = '/v1/organizations/' + orgId;
     const [assets, payouts] = await Promise.all([
@@ -1662,7 +1686,7 @@
       api(base + '/payout-addresses'),
     ]);
     cache.assets = assetList(assets);
-    cache.payouts = payouts.addresses || payouts.payoutAddresses || payouts;
+    cache.payouts = payoutLists(payouts);
     renderAssets();
   }
 
@@ -1704,18 +1728,45 @@
   // ── payouts ───────────────────────────────────────────────────────────────
 
   function renderPayouts() {
-    const rows = cache.payouts || [];
+    const { active, pending } = cache.payouts || { active: [], pending: [] };
     const chains = [...new Set((cache.assets || []).map((asset) => asset.chain))].sort();
     fill(el('payout-chain'), chains.map((chain) => h('option', { value: chain, text: chain })));
 
-    if (rows.length === 0) {
+    if (active.length === 0 && pending.length === 0) {
       fill(el('payout-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No payout addresses yet. Add one per chain you accept.' })])])]);
       return;
     }
 
-    fill(el('payout-table'), [
-      h('thead', {}, [h('tr', {}, ['Chain', 'Address', 'Active since', 'State'].map((label) => h('th', { text: label })))]),
-      h('tbody', {}, rows.map((row) =>
+    const rows = [
+      /**
+       * Scheduled changes first, and cancellable — the same order the wallet pool uses, for
+       * the same reason. The delay on a payout address exists so that somebody who did not
+       * request the change can stop it, and a change nobody can see is a delay that protects
+       * nothing. The email we send says to cancel it here; before this there was no here.
+       */
+      ...pending.map((change) =>
+        h('tr', {}, [
+          h('td', { class: 'mono', text: change.chain }),
+          h('td', { class: 'mono', title: change.address, text: shortenAddress(change.address) }),
+          h('td', { text: '—' }),
+          h('td', {}, [
+            h('span', {
+              class: 'pill',
+              'data-tone': 'warn',
+              text: 'in ' + (formatUntil(change.effectiveAt) ?? 'moments'),
+            }),
+          ]),
+          h('td', {}, [
+            h('button', {
+              class: 'ghost',
+              type: 'button',
+              text: 'Cancel',
+              onclick: () => void cancelPayout(change.id),
+            }),
+          ]),
+        ]),
+      ),
+      ...active.map((row) =>
         h('tr', {}, [
           h('td', { class: 'mono', text: row.chain }),
           h('td', { class: 'mono', title: row.address, text: shortenAddress(row.address) }),
@@ -1727,9 +1778,30 @@
               text: row.supersededAt ? 'replaced' : 'active',
             }),
           ]),
+          h('td', {}, []),
         ]),
-      )),
+      ),
+    ];
+
+    fill(el('payout-table'), [
+      h('thead', {}, [
+        h('tr', {}, ['Chain', 'Address', 'Active since', 'State', ''].map((label) => h('th', { text: label }))),
+      ]),
+      h('tbody', {}, rows),
     ]);
+  }
+
+  /** Stop a scheduled address change before it takes effect. */
+  async function cancelPayout(changeId) {
+    try {
+      await api('/v1/organizations/' + orgId + '/payout-addresses/pending/' + changeId, {
+        method: 'DELETE',
+      });
+      flash('The scheduled change was cancelled. Your payout address is unchanged.', 'ok');
+      await refresh('payouts');
+    } catch (problem) {
+      reportProblem(problem);
+    }
   }
 
   /**
@@ -2735,9 +2807,9 @@
           commission,
           report,
           assets: assetList(assets),
-          payouts: payouts.addresses || payouts.payoutAddresses || payouts,
+          payouts: payoutLists(payouts),
           endpoints: endpoints.endpoints || [],
-          keys: keys.keys || keys.apiKeys || [],
+          keys: keys.data || [],
           invoices: invoices.invoices || [],
         };
         renderOverview();
@@ -2752,7 +2824,7 @@
           api(base + '/deposit-wallets'),
         ]);
         cache.assets = assetList(assets);
-        cache.payouts = payouts.addresses || payouts.payoutAddresses || payouts;
+        cache.payouts = payoutLists(payouts);
         cache.wallets = wallets;
         renderPayouts();
         renderWallets();
@@ -2766,7 +2838,7 @@
         renderWebhooks();
       } else if (view === 'keys') {
         const keys = await api(base + '/api-keys');
-        cache.keys = keys.keys || keys.apiKeys || [];
+        cache.keys = keys.data || [];
         renderKeys();
       } else if (view === 'team') {
         const [members, invites] = await Promise.all([

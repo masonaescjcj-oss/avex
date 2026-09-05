@@ -132,9 +132,29 @@ const FIXTURE = {
       { id: 'a4', symbol: 'USDT', chain: 'tron', contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', decimals: 6, kind: 'trc20', curated: true, verdict: 'approved', listed: true, requiresFixedRate: false, enabled: true, pricingMode: 'fiat', fixedRateValidUntil: null },
     ],
   },
-  payouts: { addresses: [{ chain: 'bsc', address: '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52', activeFrom: '2026-08-01T00:00:00.000Z', supersededAt: null }] },
+  /**
+   * `{ active, pending }` — the shape `GET /payout-addresses` actually returns.
+   *
+   * It said `addresses` here for as long as this file existed, which is a key the API has
+   * never produced. The page had been written to read the fixture, so every test on this tab
+   * passed while the real one threw `rows.map is not a function` on first render for every
+   * merchant. The fixture was not testing the page; the page and the fixture were agreeing
+   * with each other about a server neither had met.
+   */
+  payouts: {
+    active: [
+      {
+        id: 'pa-1',
+        chain: 'bsc',
+        address: '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52',
+        activeFrom: '2026-08-01T00:00:00.000Z',
+      },
+    ],
+    pending: [],
+  },
   endpoints: { endpoints: [] },
-  keys: { keys: [{ id: 'k1', name: 'staging', displayPrefix: 'ak_test_ab', scopes: ['invoice:create'], createdAt: '2026-08-10T00:00:00.000Z', revokedAt: null }] },
+  // `data`, as the API returns it. `keys` was invented here too, and the tab showed nothing.
+  keys: { data: [{ id: 'k1', name: 'staging', displayPrefix: 'ak_test_ab', scopes: ['invoice:create'], createdAt: '2026-08-10T00:00:00.000Z', revokedAt: null }] },
   invoices: {
     invoices: [
       { id: 'i1', reference: 'order-1', status: 'paid', amountDue: '20100502512562814071', amountPaid: '20100502512562814071', chain: 'bsc', assetSymbol: 'USDT', assetDecimals: 18, createdAt: '2026-08-17T10:00:00.000Z' },
@@ -1237,7 +1257,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     const { page, context } = await open({
       assets: { assets: [{ id: 'a1', symbol: 'USDT', chain: 'bsc', decimals: 18, verdict: 'approved', enabled: true, pricingMode: 'fiat' }] },
       endpoints: { endpoints: [{ id: 'e1', url: 'https://x.test/h', events: ['*'], enabled: true, pending: 0, failed: 0, createdAt: '2026-08-01T00:00:00.000Z' }] },
-      keys: { keys: [{ id: 'k1', name: 'live', displayPrefix: 'ak_live_zz', scopes: ['invoice:create'], createdAt: '2026-08-01T00:00:00.000Z', revokedAt: null }] },
+      keys: { data: [{ id: 'k1', name: 'live', displayPrefix: 'ak_live_zz', scopes: ['invoice:create'], createdAt: '2026-08-01T00:00:00.000Z', revokedAt: null }] },
       // Including the authenticator, which is now one of the steps.
       me: { totpEnabled: true, mfaComplete: true },
     });
@@ -1350,6 +1370,85 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
   });
 
   // ── currencies and payouts ────────────────────────────────────────────────
+
+  test('the payouts tab renders the addresses the API returns', async () => {
+    /**
+     * The regression this file exists to prevent from happening twice. The tab threw
+     * `rows.map is not a function` on first render for every merchant, because the page read
+     * three keys the endpoint does not have and fell back to the response object itself.
+     *
+     * Asserted through the rendered table rather than through the cache, because the bug was
+     * in the render: reading the wrong key produced something truthy, and only calling `.map`
+     * on it failed.
+     */
+    const { page, context, errors } = await open();
+    await page.click('nav.tabs button:has-text("Payouts")');
+    await page.waitForTimeout(250);
+
+    assert.equal(await shown(page, '#flash'), false, await text(page, '#flash').catch(() => ''));
+    const table = await text(page, '#payout-table');
+    assert.match(table, /bsc/);
+    assert.match(table, /0x7A3f/);
+    assert.match(table, /active/);
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('a scheduled address change is shown, with the cancel the email promises', async () => {
+    /**
+     * The delay on a payout address exists so somebody who did not request the change can
+     * stop it, and the mail we send says to cancel it in the dashboard. The endpoint has
+     * always been there; the tab never drew the row, so there was nowhere to cancel it.
+     */
+    const { page, context, posts } = await open({
+      payouts: {
+        active: [
+          {
+            id: 'pa-1',
+            chain: 'bsc',
+            address: '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52',
+            activeFrom: '2026-08-01T00:00:00.000Z',
+          },
+        ],
+        pending: [
+          {
+            id: 'pc-9',
+            chain: 'bsc',
+            address: '0x1111111111111111111111111111111111111111',
+            effectiveAt: new Date(Date.now() + 18 * 3600 * 1000).toISOString(),
+          },
+        ],
+      },
+    });
+    await page.click('nav.tabs button:has-text("Payouts")');
+    await page.waitForTimeout(250);
+
+    const table = await text(page, '#payout-table');
+    assert.match(table, /0x1111/, 'the scheduled address must be visible');
+    // `formatUntil` counts down in hours and minutes: "in 17h 59m".
+    assert.match(table, /in \d+h/, table);
+
+    await page.click('#payout-table button:has-text("Cancel")');
+    await page.waitForTimeout(300);
+    assert.ok(
+      posts.some((post) => post.path.endsWith('/payout-addresses/pending/pc-9')),
+      `the cancel must reach the API: ${posts.map((p) => p.path).join(', ')}`,
+    );
+    await context.close();
+  });
+
+  test('the API keys tab lists the keys the account has', async () => {
+    // The same wrong-key bug, quieter: the page read `keys`, the API answers `data`, and a
+    // merchant with keys was told they had none.
+    const { page, context } = await open();
+    await page.click('nav.tabs button:has-text("API keys")');
+    await page.waitForTimeout(250);
+
+    const table = await text(page, '#key-table');
+    assert.match(table, /staging/);
+    assert.doesNotMatch(table, /No keys yet/);
+    await context.close();
+  });
 
   test('each chain says whether it has a payout address', async () => {
     /**
