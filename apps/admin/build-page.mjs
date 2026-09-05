@@ -36,7 +36,24 @@ const MODULES = [
 ];
 const MARKER = '/* @inject:modules */';
 
-const template = readFileSync(join(here, 'public', 'admin.template.html'), 'utf8');
+/**
+ * The design tokens come first: one file in `packages/design` decides the palette, the
+ * type scale and the spacing for every surface, pasted in at build time in place of a
+ * marker at the top of the page's stylesheet. A template without the marker is refused
+ * rather than shipped unstyled.
+ */
+const tokens = readFileSync(join(here, '..', '..', 'packages', 'design', 'tokens.css'), 'utf8').trim();
+const TOKENS_MARKER = '/* @inject:tokens */';
+const raw = readFileSync(join(here, 'public', 'admin.template.html'), 'utf8');
+if (!raw.includes(TOKENS_MARKER)) {
+  console.error(`template is missing the ${TOKENS_MARKER} marker`);
+  process.exit(1);
+}
+const template = raw.replace(TOKENS_MARKER, () => tokens);
+if (!template.includes(tokens)) {
+  console.error('inlining altered the design tokens; refusing to write a corrupt page');
+  process.exit(1);
+}
 if (!template.includes(MARKER)) {
   console.error(`template is missing the ${MARKER} marker`);
   process.exit(1);
