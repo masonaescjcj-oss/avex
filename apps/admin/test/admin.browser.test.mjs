@@ -496,6 +496,10 @@ describe('staff panel, as a layout', { skip: playwright ? false : 'playwright is
       await page.waitForTimeout(350);
       assert.equal(await railOnScreen(page), false, `the drawer stayed open after picking ${name}`);
       assert.equal(await overflow(page), 0, `${name} is wider than the phone`);
+      // The bar stays a bar. A short section once arrived under one half the screen tall,
+      // because the shell's minimum height was shared out between its rows.
+      const bar = await page.$eval('.topbar', (node) => node.getBoundingClientRect().height);
+      assert.ok(bar <= 64, `the top bar is ${bar}px tall on ${name}`);
     }
 
     // The detail page, with its tables and its two blocks.

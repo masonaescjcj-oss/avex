@@ -410,7 +410,9 @@
   /* ── a phone: the rail becomes a drawer ─────────────────────────────── */
 
   @media (max-width: 52rem) {
-    .shell { grid-template-columns: minmax(0, 1fr); }
+    /* Rows named, or the shell's minimum height is shared out between the bar and the
+       page, and a short section arrives under a bar half the screen tall. */
+    .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
     .topbar { display: flex; }
     .side {
       position: fixed; inset: 0 auto 0 0; z-index: 19;
