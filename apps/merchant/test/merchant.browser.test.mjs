@@ -368,7 +368,21 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
       if (path.endsWith('/members')) return route.fulfill(json(data.members));
       if (path.endsWith('/invites')) return route.fulfill(json(data.invites));
-      if (path.endsWith('/commission')) return route.fulfill(json(data.commission));
+      if (path.endsWith('/commission')) {
+        // A 500 from one endpoint, to prove the rest of the page survives it.
+        return overrides.commissionFails
+          ? route.fulfill(
+              json(
+                {
+                  error: 'internal_error',
+                  message: 'Something went wrong on our side.',
+                  requestId: 'req-7c',
+                },
+                500,
+              ),
+            )
+          : route.fulfill(json(data.commission));
+      }
       if (path.endsWith('/balance')) return route.fulfill(json(data.balance));
       if (path.endsWith('/deposit-wallets')) return route.fulfill(json(data.wallets));
       if (path.endsWith('/reports/volume')) return route.fulfill(json(data.report));
@@ -1234,6 +1248,27 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.equal(await page.$eval('#tier-bar', (node) => node.style.width), '100%');
     // Future-tense, because the rate changes when the period closes and not before.
     assert.match(await text(page, '#tier-note'), /enough for 0\.45%.*when the period closes/);
+    await context.close();
+  });
+
+  test('one dead endpoint does not take the whole overview down', async () => {
+    /**
+     * How a missing fee plan presented: the overview loads eight endpoints with
+     * `Promise.all`, one rejected, and the merchant got three empty panels under a single
+     * banner. Seven good answers were thrown away with the rejection — including the
+     * checklist that would have told them what to do next.
+     */
+    const { page, context } = await open({ commissionFails: true });
+
+    // Named, with the failing call and the reference, rather than reported as an empty
+    // account.
+    const message = await text(page, '#flash');
+    assert.match(message, /commission/i, message);
+
+    // And everything that did arrive is on the page.
+    const checklist = await all(page, '#checklist .check-title');
+    assert.ok(checklist.length > 0, 'the checklist must survive a failure elsewhere');
+    assert.match(await text(page, '#attention-table'), /\S/);
     await context.close();
   });
 

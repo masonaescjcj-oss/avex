@@ -348,6 +348,19 @@ export function registerMerchantRoutes(app: FastifyInstance, context: AppContext
     // rate from the people who negotiate it serves nobody.
     requirePermission(granted, 'settings:read');
 
+    /**
+     * The plan first, because a merchant is entitled to one and this is the call their
+     * dashboard opens with.
+     *
+     * Every account created before signup started making a plan has no row, and what they
+     * saw was a dead overview reading "No fee plan for this merchant" — about a row only we
+     * could insert, through an interface that failed for the same reason. `ensure` returns
+     * the existing row when there is one, so this writes once in an organisation's life.
+     *
+     * Here rather than inside `forOrganization`, because the staff panel reads that too and
+     * opening a merchant's detail page must not write into their billing.
+     */
+    await context.feePlans.ensureForOrganization(granted.organizationId);
     return reply.send(await context.feePlans.forOrganization(granted.organizationId));
   });
 

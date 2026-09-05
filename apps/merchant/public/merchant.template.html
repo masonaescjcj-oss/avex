@@ -1266,6 +1266,17 @@
   function renderOverview() {
     const commission = cache.commission;
     const report = cache.report;
+
+    /**
+     * The checklist and the attention table first, and unconditionally.
+     *
+     * They are built from other endpoints' answers, and returning early when the period
+     * figures are missing used to take them down too — which is how a single failing call
+     * left this page as three empty panels. Whatever arrived gets drawn.
+     */
+    renderChecklist();
+    renderAttention();
+
     if (!commission || !report) return;
 
     const progress = tierProgressView({
@@ -1307,9 +1318,6 @@
     el('period-note').textContent = commission.period.end
       ? 'Rate next reviewed ' + new Date(commission.period.end).toLocaleDateString()
       : '';
-
-    renderChecklist();
-    renderAttention();
   }
 
   function stat(label, value, sub, lime) {
@@ -2789,30 +2797,64 @@
     const base = '/v1/organizations/' + orgId;
     try {
       if (view === 'overview') {
-        const [me, commission, report, assets, payouts, endpoints, keys, invoices] = await Promise.all([
-          // For the checklist: whether an authenticator is enrolled is one of the things
-          // standing between this account and its first live payment.
-          api('/v1/auth/me'),
-          api(base + '/commission'),
-          api(base + '/reports/volume'),
-          api(base + '/assets'),
-          api(base + '/payout-addresses'),
-          api(base + '/webhook-endpoints'),
-          api(base + '/api-keys'),
-          api(base + '/invoices?limit=50'),
-        ]);
-        cache = {
-          ...cache,
-          me,
-          commission,
-          report,
-          assets: assetList(assets),
-          payouts: payoutLists(payouts),
-          endpoints: endpoints.endpoints || [],
-          keys: keys.data || [],
-          invoices: invoices.invoices || [],
-        };
+        /**
+         * Eight endpoints, and no one of them may take the page down.
+         *
+         * `Promise.all` rejects on the first failure, so a single unhappy answer left this
+         * screen blank with one banner over it — which is exactly how a merchant whose fee
+         * plan predated the signup hook experienced their whole dashboard: three empty
+         * panels reading "No fee plan for this merchant", while the seven answers that had
+         * arrived were thrown away with the rejection.
+         *
+         * Settled instead. What arrived is drawn, what failed is named, and the difference
+         * between "your account is empty" and "one of our endpoints is down" stops being
+         * invisible.
+         *
+         * `/v1/auth/me` is in here for the checklist: whether an authenticator is enrolled
+         * is one of the things standing between this account and its first live payment.
+         */
+        const wanted = [
+          ['me', '/v1/auth/me', (body) => body],
+          ['commission', base + '/commission', (body) => body],
+          ['report', base + '/reports/volume', (body) => body],
+          ['assets', base + '/assets', assetList],
+          ['payouts', base + '/payout-addresses', payoutLists],
+          ['endpoints', base + '/webhook-endpoints', (body) => body.endpoints || []],
+          ['keys', base + '/api-keys', (body) => body.data || []],
+          ['invoices', base + '/invoices?limit=50', (body) => body.invoices || []],
+        ];
+
+        const settled = await Promise.allSettled(wanted.map(([, path]) => api(path)));
+        const failures = [];
+        settled.forEach((outcome, index) => {
+          const [key, path, read] = wanted[index];
+          if (outcome.status === 'fulfilled') {
+            cache[key] = read(outcome.value);
+          } else {
+            failures.push({ key, path, problem: outcome.reason });
+          }
+        });
+
         renderOverview();
+
+        /**
+         * One line for all of them, and the API's own words for the first.
+         *
+         * A banner per failed endpoint would bury the page it is describing, and the
+         * reference on a 500 is the same reference whichever of them produced it.
+         */
+        if (failures.length > 0) {
+          const [first] = failures;
+          const others = failures.length > 1 ? ` (and ${failures.length - 1} more)` : '';
+          reportProblem({
+            ...first.problem,
+            message: `Could not load ${first.key}${others}: ${first.problem.message}`,
+            status: first.problem.status,
+            code: first.problem.code,
+            path: first.problem.path ?? first.path,
+            requestId: first.problem.requestId,
+          });
+        }
       } else if (view === 'invoices') {
         await loadInvoices();
       } else if (view === 'assets') {

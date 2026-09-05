@@ -166,6 +166,8 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
   let app: FastifyInstance;
   let mailer: ConsoleMailer;
   let close: () => Promise<void>;
+  /** The pool this suite's app is built on, for the assertions that read a row directly. */
+  let db: ReturnType<typeof createDatabase>['db'];
 
   const unique = randomBytes(6).toString('hex');
   const ownerEmail = `owner-${unique}@example.com`;
@@ -204,6 +206,7 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
 
     const database = createDatabase(env.DATABASE_URL);
     close = database.close;
+    db = database.db;
 
     const audit = new AuditService(database.db);
     mailer = new ConsoleMailer(env.APP_URL, () => {});
@@ -421,6 +424,21 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
      * Asserted through the HTTP surface a merchant actually reaches. What broke was the wiring,
      * and a unit test of the service passed the whole time it was broken.
      */
+    /**
+     * Read from the table, not through `/commission`.
+     *
+     * That endpoint now creates a missing plan rather than refusing — which every merchant
+     * older than the signup hook needed — and a test that went through it would pass whether
+     * signup created the row or the read did. The distinction is the whole point of this
+     * test: a plan created on first read is a plan created outside the transaction that
+     * created the organisation.
+     */
+    const rows = await db
+      .select()
+      .from(schema.feePlans)
+      .where(eq(schema.feePlans.organizationId, organizationId));
+    assert.equal(rows.length, 1, 'signup itself must leave exactly one fee plan behind');
+
     const response = await app.inject({
       method: 'GET',
       url: `/v1/organizations/${organizationId}/commission`,
@@ -440,6 +458,42 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     );
     // Entry rate, not negotiated: nobody has touched it yet.
     assert.equal(commission.negotiated, false);
+  });
+
+  test('a merchant older than that hook gets a plan on first read, not an error', async () => {
+    /**
+     * The repair. Every account created before signup made a plan has none, and this is the
+     * call their dashboard opens with — so what they saw was "Could not load: No fee plan for
+     * this merchant" and three empty panels, about a row only we could insert, through an
+     * interface that failed for the same reason.
+     *
+     * Reproduced by deleting the row, which is exactly the state those accounts are in.
+     */
+    await db
+      .delete(schema.feePlans)
+      .where(eq(schema.feePlans.organizationId, organizationId));
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${organizationId}/commission`,
+      headers: asOwner(),
+    });
+
+    assert.equal(response.statusCode, 200, response.body);
+    // The published entry rate, which is what they were entitled to all along.
+    assert.equal(response.json().commission.negotiated, false);
+
+    // And once, not once per request: the plan is now a row like any other.
+    await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${organizationId}/commission`,
+      headers: asOwner(),
+    });
+    const rows = await db
+      .select()
+      .from(schema.feePlans)
+      .where(eq(schema.feePlans.organizationId, organizationId));
+    assert.equal(rows.length, 1, 'reading twice must not create two plans');
   });
 
   test('a garbage bearer token is rejected', async () => {

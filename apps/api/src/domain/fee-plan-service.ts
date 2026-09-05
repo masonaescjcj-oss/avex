@@ -356,6 +356,11 @@ export class FeePlanService {
     feePayer: FeePayer,
     userId: string | null,
   ): Promise<void> {
+    // The plan first, for the same reason the read does it: a merchant older than the signup
+    // hook has none, and being unable to say who pays their commission is not a thing they
+    // should have to ask support to fix.
+    await this.ensureForOrganization(organizationId);
+
     const [updated] = await this.db
       .update(feePlans)
       .set({ feePayer })
@@ -682,7 +687,16 @@ export class FeePlanService {
     return created!;
   }
 
-  /** The rate, the ladder, and this period's volume — for the merchant's own page. */
+  /**
+   * The rate, the ladder, and this period's volume — for the merchant's own page.
+   *
+   * A read, and it stays a read: it refuses when there is no plan rather than creating one.
+   * The staff panel calls this too, and an operator opening a merchant's detail page must
+   * not thereby write a row into that merchant's billing — it shows the gap as a gap.
+   *
+   * The merchant's own route ensures the plan before calling this, which is where that
+   * decision belongs. See `GET /v1/organizations/:orgId/commission`.
+   */
   async forOrganization(organizationId: string) {
     const [plan] = await this.db
       .select()
