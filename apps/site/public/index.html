@@ -1,3 +1,5 @@
+<!doctype html>
+<html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AVEX Pay</title>
@@ -8,194 +10,219 @@
   nowhere.
 -->
 <meta name="avex-dashboard" content="/dashboard">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   /**
    * avex.pay
    *
-   * The palette is not this page's own — it is the product's, already shipping across the
-   * checkout, the receipt, the merchant dashboard and the staff panel. Pure black ground,
-   * acid lime spent once per section, dark cards at a 10-20px radius, and monospace for
-   * every number and identifier so an address, an amount and a rate can be read digit by
-   * digit. A site with its own palette would be a site about a different product.
+   * The palette, type scale, spacing, radii and motion are the product's: `@avex/design`
+   * tokens, inlined below at build time. This stylesheet extends them and defines no colour
+   * of its own — every fill, stroke and gradient on the page is a token, so the site, the
+   * checkout, the dashboard and the staff panel are one system by construction.
    *
-   * Dark by default, on every host and under every system preference, because dark is what
-   * the product looks like. A light palette exists for a host that asks for it explicitly
-   * (`data-theme="light"` on the root) — and every colour below is a token defined in both
-   * blocks, so nothing on the page depends on a colour that exists in only one of them. The
-   * one thing the light palette changes in kind rather than in value is the accent: lime on
-   * white is unreadable as text, so `--accent` (text, strokes, links) darkens to an olive
-   * while `--lime` (fills, the primary button) stays the brand colour.
+   * Light first, as the tokens are. Dark follows the system preference or an explicit
+   * `data-theme="dark"` on the root, and is a palette in its own right rather than an
+   * inversion. The page reaches no host: the type is the system stack the tokens name, and
+   * every drawing on it is inline SVG painted with the same tokens.
    *
-   * The type is where the site is allowed to be its own thing: Archivo carries the display
-   * at heavy weights and tight tracking, IBM Plex Sans keeps the prose quiet, and IBM Plex
-   * Mono does most of the actual work — because on a page about payments almost everything
-   * worth reading is a figure.
+   * The layout is a marketing page's: a 1200px column, display type at 48–72px with tight
+   * leading, one accent spent on fills and marks, and 96–128px of air between sections. The
+   * hero's right-hand card is not a picture of the product — it is the product's own CREATE2
+   * derivation, running.
+   */
+
+  /*
+  AVEX Pay design tokens — the one place the visual system is decided.
+
+  Every page inlines this file at build time (see each app's build-page.mjs, marker
+  `/* @inject:tokens *​/`). Nothing below is page-specific; a page extends these, never
+  redefines them. Two themes, light first: the dashboard and checkout are read for hours
+  in daylight, and the reference products this is measured against are light. Dark is a
+  full palette, not an inversion.
+
+  Type: a system stack. These pages are single files that reach no host, so no webfont.
+  Inter/SF/Segoe are what the stack resolves to on the three platforms that matter.
+*/
+
+:root {
+  /* ── neutrals (light) ─────────────────────────────────────────────────── */
+  --n0: #ffffff;
+  --n50: #f7f8f9;
+  --n100: #eef0f2;
+  --n200: #e3e6ea;
+  --n300: #cfd4da;
+  --n400: #a6adb7;
+  --n500: #7a828e;
+  --n600: #5b6370;
+  --n700: #414853;
+  --n800: #2a2f37;
+  --n900: #1a1d22;
+  --n950: #0f1114;
+
+  /* ── brand ────────────────────────────────────────────────────────────── */
+  --lime: #c8f135;          /* fills: buttons, marks, progress */
+  --lime-ink: #1a2400;      /* text on a lime fill */
+  --accent: #5f7a00;        /* lime as *text* on a light ground: 4.9:1 */
+  --accent-soft: #eef7c9;   /* tinted backgrounds */
+  --accent-edge: #b9d95a;
+
+  /* ── semantic ─────────────────────────────────────────────────────────── */
+  --ok: #0f7a4f;      --ok-soft: #e3f5ec;
+  --warn: #9a5b00;    --warn-soft: #fff1d6;
+  --danger: #b42318;  --danger-soft: #fde8e6;
+  --info: #175cd3;    --info-soft: #e6effc;
+
+  /* ── surfaces & text (semantic aliases every page uses) ───────────────── */
+  --bg: var(--n50);
+  --surface: var(--n0);
+  --surface-2: var(--n50);
+  --surface-3: var(--n100);
+  --line: var(--n200);
+  --line-strong: var(--n300);
+  --ink: var(--n900);
+  --ink-2: var(--n700);
+  --muted: var(--n600);   /* 6.4:1 on --surface */
+  --faint: var(--n500);   /* labels and disabled only: 4.6:1 */
+
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.10);
+  --shadow-2: 0 4px 12px rgba(16, 24, 40, 0.08), 0 2px 4px rgba(16, 24, 40, 0.06);
+  --shadow-3: 0 16px 40px rgba(16, 24, 40, 0.14);
+  --focus: 0 0 0 3px rgba(95, 122, 0, 0.35);
+
+  /* ── type ─────────────────────────────────────────────────────────────── */
+  --font: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --s-2: 0.75rem;   /* 12 */
+  --s-1: 0.8125rem; /* 13 */
+  --s0: 0.9375rem;  /* 15 — body */
+  --s1: 1.0625rem;  /* 17 */
+  --s2: 1.25rem;    /* 20 */
+  --s3: 1.5rem;     /* 24 */
+  --s4: 1.875rem;   /* 30 */
+  --s5: 2.375rem;   /* 38 */
+  --s6: 3rem;       /* 48 */
+  --lh: 1.5;
+  --lh-tight: 1.2;
+  --tracking-caps: 0.06em;
+
+  /* ── space (8px grid), radii, motion ──────────────────────────────────── */
+  --sp-1: 0.25rem; --sp-2: 0.5rem; --sp-3: 0.75rem; --sp-4: 1rem; --sp-5: 1.25rem;
+  --sp-6: 1.5rem;  --sp-8: 2rem;   --sp-10: 2.5rem; --sp-12: 3rem;  --sp-16: 4rem;
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 20px; --pill: 999px;
+  --tap: 44px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --t-fast: 120ms; --t-base: 200ms;
+
+  color-scheme: light;
+}
+
+/* Dark: a palette in its own right. Applied by system preference unless the page says light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c0e11;
+    --surface: #14171c;
+    --surface-2: #1a1e24;
+    --surface-3: #22272f;
+    --line: #262c35;
+    --line-strong: #343b46;
+    --ink: #f2f4f6;
+    --ink-2: #c9cfd7;
+    --muted: #a3abb6;
+    --faint: #7d8591;
+    --accent: #c8f135;
+    --accent-soft: #232b0f;
+    --accent-edge: #3e4d10;
+    --ok: #4ade80;     --ok-soft: #0f2a1c;
+    --warn: #fbbf24;   --warn-soft: #2d2208;
+    --danger: #f87171; --danger-soft: #2f1412;
+    --info: #60a5fa;   --info-soft: #0f1e33;
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5);
+    --shadow-3: 0 16px 40px rgba(0, 0, 0, 0.6);
+    --focus: 0 0 0 3px rgba(200, 241, 53, 0.35);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c0e11; --surface: #14171c; --surface-2: #1a1e24; --surface-3: #22272f;
+  --line: #262c35; --line-strong: #343b46;
+  --ink: #f2f4f6; --ink-2: #c9cfd7; --muted: #a3abb6; --faint: #7d8591;
+  --accent: #c8f135; --accent-soft: #232b0f; --accent-edge: #3e4d10;
+  --ok: #4ade80; --ok-soft: #0f2a1c; --warn: #fbbf24; --warn-soft: #2d2208;
+  --danger: #f87171; --danger-soft: #2f1412; --info: #60a5fa; --info-soft: #0f1e33;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5); --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 16px 40px rgba(0, 0, 0, 0.6);
+  --focus: 0 0 0 3px rgba(200, 241, 53, 0.35);
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-fast: 0ms; --t-base: 0ms; }
+}
+
+  /**
+   * Page-level extensions. Aliases and measures only; the colours all live above.
+   *
+   * The three faces are named so a host that happens to carry Archivo or IBM Plex renders
+   * with them, and everybody else gets the system stack the tokens define. No webfont is
+   * fetched.
    */
   :root {
-    color-scheme: dark;
+    --display: Archivo, 'Helvetica Neue', var(--font);
+    --sans: 'IBM Plex Sans', -apple-system, var(--font);
+    --mono: 'IBM Plex Mono', ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 
-    /* ground */
-    --void: #000000;
-    --card: #111111;
-    --card-2: #181818;
-    --card-3: #222222;
-    --line: #262626;
-    --line-2: #383838;
-    --input: #000000;
-
-    /* text */
-    --ink: #FFFFFF;
-    --muted: #A6A6A6;
-    --faint: #858585;
-
-    /* accent */
-    --lime: #C6F73F;
-    --lime-hover: #D3FA5E;
-    --lime-ink: #0A0A0A;
-    --accent: #C6F73F;
-    --lime-wash: rgba(198, 247, 63, 0.10);
-    --lime-edge: rgba(198, 247, 63, 0.30);
-    /**
-     * A lime-biased haze over the black.
-     *
-     * The one addition to the product's palette, and the reason is that a marketing page
-     * sits on far more empty ground than an application screen does. Pure #000000 across a
-     * full viewport reads as an absence; the same black with a trace of the accent in it
-     * reads as a decision.
-     */
-    --haze: rgba(198, 247, 63, 0.07);
-
-    --teal: #2ED3A0;
-    --teal-wash: rgba(46, 211, 160, 0.12);
-    --amber: #F5A623;
-    --amber-wash: rgba(245, 166, 35, 0.14);
-
-    --bar: rgba(0, 0, 0, 0.78);
-    --bar-solid: #000000;
-    --shadow: 0 32px 80px -32px rgba(0, 0, 0, 0.9);
-    --focus: var(--lime);
-
-    /* type */
-    --display: Archivo, 'Helvetica Neue', Helvetica, Arial, sans-serif;
-    --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-
-    /**
-     * The scale. Six steps, each with the line-height it is read at.
-     *
-     * Body copy sits at 16px on a 1.6 line, in a 45-70ch measure. Everything smaller is a
-     * label — an eyebrow, a table header, a caption — and nothing a person has to read as a
-     * paragraph goes below 14px.
-     */
-    --t-display: clamp(2.625rem, 1.6rem + 4.6vw, 4.875rem);
-    --t-h2: clamp(1.875rem, 1.35rem + 2.1vw, 2.75rem);
-    --t-h3: 1.0625rem;
-    --t-lede: clamp(1.0625rem, 1rem + 0.35vw, 1.1875rem);
-    --t-body: 1rem;
-    --t-small: 0.875rem;
-    --t-xs: 0.75rem;
-
-    /* space, on an 8px grid */
-    --sp-1: 0.5rem;
-    --sp-2: 1rem;
-    --sp-3: 1.5rem;
-    --sp-4: 2rem;
-    --sp-5: 2.5rem;
-    --sp-6: 3rem;
-    --sp-8: 4rem;
-    --sp-10: 5rem;
-    --sp-section: clamp(4rem, 3rem + 4vw, 7rem);
-
-    /* radius */
-    --r-sm: 10px;
-    --r-md: 14px;
-    --r-lg: 20px;
-    --pill: 999px;
-
-    --bar-h: 4rem;
-    --rail: 12rem;
-    --gutter: clamp(1.25rem, 5vw, 4rem);
-    --wrap: 76rem;
-    --measure: 62ch;
-    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --void: var(--surface);
+    --wrap: 75rem;
+    --gutter: clamp(1.25rem, 4vw, 2.5rem);
+    --bar-h: 4.25rem;
+    --section: clamp(4.5rem, 5rem + 3vw, 8rem);
+    --h1: clamp(2.75rem, 1.5rem + 4.4vw, 4.5rem);
+    --h2: clamp(2rem, 1.4rem + 2.2vw, 3rem);
+    --measure: 65ch;
   }
 
-  :root[data-theme="light"] {
-    color-scheme: light;
-
-    --void: #FFFFFF;
-    --card: #F7F7F5;
-    --card-2: #F0F0ED;
-    --card-3: #E7E7E3;
-    --line: #E4E4DF;
-    --line-2: #CFCFC9;
-    --input: #FFFFFF;
-
-    --ink: #0B0B0B;
-    --muted: #4A4A4A;
-    --faint: #6A6A6A;
-
-    --lime: #C6F73F;
-    --lime-hover: #BDEF34;
-    --lime-ink: #0A0A0A;
-    --accent: #3D6B00;
-    --lime-wash: rgba(198, 247, 63, 0.28);
-    --lime-edge: rgba(61, 107, 0, 0.35);
-    --haze: rgba(198, 247, 63, 0.26);
-
-    --teal: #0E7A5A;
-    --teal-wash: rgba(14, 122, 90, 0.10);
-    --amber: #9A5B00;
-    --amber-wash: rgba(154, 91, 0, 0.12);
-
-    --bar: rgba(255, 255, 255, 0.82);
-    --bar-solid: #FFFFFF;
-    --shadow: 0 32px 80px -40px rgba(0, 0, 0, 0.25);
-    --focus: #3D6B00;
-  }
+  /* ── base ─────────────────────────────────────────────────────────────── */
 
   *, *::before, *::after { box-sizing: border-box; }
-
-  html { scroll-behavior: smooth; scroll-padding-top: calc(var(--bar-h) + 1rem); }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
-    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
   }
-
   body {
     margin: 0;
-    background: var(--void);
-    color: var(--ink);
     font-family: var(--sans);
-    font-size: var(--t-body);
-    line-height: 1.6;
+    font-size: var(--s1);
+    line-height: var(--lh);
+    color: var(--ink);
+    background: var(--void);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
-
   a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; text-underline-offset: 3px; }
-  a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible {
-    outline: 2px solid var(--focus);
+  a:hover { text-decoration: underline; text-underline-offset: 0.15em; }
+  a:focus-visible, button:focus-visible, input:focus-visible, [role="tab"]:focus-visible {
+    outline: 2px solid var(--accent);
     outline-offset: 3px;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
   }
-
-  code, .mono, .num {
+  code, .mono, pre, kbd {
     font-family: var(--mono);
     font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1, "zero" 1;
   }
   p code {
-    font-size: 0.9em;
+    font-size: 0.875em;
+    padding: 0.1em 0.4em;
+    border-radius: var(--r-sm);
+    background: var(--surface-3);
     color: var(--ink);
-    background: var(--card-2);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 0.05em 0.4em;
+    white-space: nowrap;
   }
+  p { margin: 0; }
+  h1, h2, h3, h4 { margin: 0; font-family: var(--display); color: var(--ink); }
+  strong { font-weight: 600; color: var(--ink); }
+  svg { display: block; }
+  [hidden] { display: none !important; }
 
   .wrap { max-width: var(--wrap); margin: 0 auto; padding-inline: var(--gutter); }
 
@@ -204,24 +231,115 @@
     position: absolute;
     top: -100px;
     left: var(--gutter);
-    z-index: 30;
-    background: var(--lime);
-    color: var(--lime-ink);
+    z-index: 40;
     padding: 0.6rem 1rem;
     border-radius: var(--r-sm);
+    background: var(--ink);
+    color: var(--surface);
     font-weight: 600;
   }
   .skip:focus { top: 0.5rem; text-decoration: none; }
 
-  /* ── chrome ───────────────────────────────────────────────────────────── */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* ── type ─────────────────────────────────────────────────────────────── */
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: var(--s-1);
+    font-weight: 600;
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .eyebrow::before {
+    content: "";
+    width: 1.25rem;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--lime);
+  }
+  h1 {
+    font-size: var(--h1);
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+    font-weight: 700;
+    text-wrap: balance;
+  }
+  h2 {
+    font-size: var(--h2);
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    font-weight: 700;
+    text-wrap: balance;
+  }
+  h3 {
+    font-size: var(--s2);
+    line-height: 1.25;
+    letter-spacing: -0.015em;
+    font-weight: 600;
+  }
+  .lede {
+    font-size: var(--s2);
+    line-height: 1.45;
+    color: var(--ink-2);
+    max-width: 40rem;
+  }
+  .body p { color: var(--ink-2); }
+  .body > p { max-width: var(--measure); }
+  .body > p strong { color: var(--ink); }
+
+  /* ── buttons ──────────────────────────────────────────────────────────── */
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: var(--tap);
+    padding: 0 1.25rem;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--pill);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-size: var(--s0);
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: transform var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), background var(--t-fast);
+  }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); box-shadow: var(--shadow-1); }
+  .btn:active { transform: translateY(0); }
+  .btn-lime { background: var(--lime); border-color: var(--lime); color: var(--lime-ink); }
+  .btn-lime:hover { background: var(--accent-edge); border-color: var(--accent-edge); }
+  .btn-ghost { background: transparent; }
+  .btn-sm { min-height: 2.5rem; padding: 0 1rem; font-size: var(--s-1); }
+  .btn-lg { min-height: 3.25rem; padding: 0 1.5rem; font-size: var(--s1); }
+  .btn svg { width: 1.1em; height: 1.1em; }
+
+  /* ── header ───────────────────────────────────────────────────────────── */
 
   .bar {
     position: sticky;
     top: 0;
-    z-index: 20;
-    background: var(--bar);
-    -webkit-backdrop-filter: blur(16px);
-    backdrop-filter: blur(16px);
+    z-index: 30;
+    background: color-mix(in srgb, var(--surface) 78%, transparent);
+    -webkit-backdrop-filter: saturate(160%) blur(14px);
+    backdrop-filter: saturate(160%) blur(14px);
     border-bottom: 1px solid var(--line);
   }
   .bar-inner {
@@ -231,33 +349,24 @@
     min-height: var(--bar-h);
   }
   .wordmark {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: var(--tap);
     font-family: var(--display);
     font-weight: 800;
     font-size: 1.125rem;
     letter-spacing: -0.03em;
     color: var(--ink);
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-height: 2.75rem;
     white-space: nowrap;
   }
   .wordmark:hover { text-decoration: none; }
   .wordmark span { color: var(--accent); }
+  .mark { width: 1.7em; height: 1.7em; flex: none; border-radius: 22%; box-shadow: var(--shadow-1); }
 
-  /**
-   * The mark, drawn rather than fetched.
-   *
-   * An artifact may reach no host but Google Fonts, so a logo file would have to be a data
-   * URI — and at this size the shape is two arches, which is less markup than the base64 of a
-   * PNG of two arches. Scales to any size and stays sharp; `flex: none` because a flex row
-   * will otherwise squash it before it squashes the text beside it.
-   */
-  .mark { width: 1.6em; height: 1.6em; flex: none; display: block; }
-
-  .bar nav { margin-inline-start: auto; display: flex; gap: var(--sp-3); align-items: center; }
+  .bar nav { margin-inline-start: auto; display: flex; gap: var(--sp-6); align-items: center; }
   .nav-links { display: contents; }
-  .bar nav a:not(.btn) { color: var(--muted); font-size: var(--t-small); font-weight: 500; white-space: nowrap; }
+  .bar nav a:not(.btn) { color: var(--ink-2); font-size: var(--s0); font-weight: 500; white-space: nowrap; }
   .bar nav a:not(.btn):hover { color: var(--ink); text-decoration: none; }
   /* Sign in is a link beside a button, not a second button: one primary action per view. */
   .nav-auth { color: var(--ink) !important; }
@@ -271,8 +380,8 @@
    */
   .nav-toggle {
     display: none;
-    width: 2.75rem;
-    height: 2.75rem;
+    width: var(--tap);
+    height: var(--tap);
     flex: none;
     align-items: center;
     justify-content: center;
@@ -284,24 +393,23 @@
     color: var(--ink);
     cursor: pointer;
   }
-  .nav-toggle svg { width: 22px; height: 22px; display: block; }
-  .nav-toggle path { transition: transform 200ms var(--ease), opacity 200ms; transform-origin: 12px 12px; }
+  .nav-toggle svg { width: 22px; height: 22px; }
+  .nav-toggle path { transition: transform var(--t-base) var(--ease); transform-origin: 12px 12px; }
   .nav-toggle[aria-expanded="true"] .l1 { transform: translateY(3.5px) rotate(45deg); }
   .nav-toggle[aria-expanded="true"] .l2 { transform: translateY(-3.5px) rotate(-45deg); }
 
   /**
    * On a phone the bar carries the two doors and a menu button.
    *
-   * Five items in one row at 390px wrapped "Start now" onto two lines and pushed the wordmark
-   * into the links — the header was the first thing on the page and the first thing that
-   * looked broken. The section links move into a panel under the bar; the two doors never
-   * do, because getting somebody into the panel is what the header is for.
+   * Five items in one row at 390px wrap "Start now" onto two lines and push the wordmark into
+   * the links. The section links move into a panel under the bar; the two doors never do,
+   * because getting somebody into the dashboard is what the header is for.
    */
   @media (max-width: 46rem) {
-    :root { --bar-h: 3.5rem; }
+    :root { --bar-h: 3.75rem; }
     .bar-inner { gap: 0.75rem; }
     .bar nav { gap: 0.75rem; }
-    .bar nav > a { min-height: 2.75rem; display: inline-flex; align-items: center; }
+    .bar nav > a { min-height: var(--tap); display: inline-flex; align-items: center; }
     .nav-toggle { display: inline-flex; }
     .wordmark { font-size: 1.0625rem; }
 
@@ -312,18 +420,18 @@
       left: 0;
       right: 0;
       flex-direction: column;
-      padding: var(--sp-1) var(--gutter) var(--sp-2);
-      background: var(--bar-solid);
+      padding: var(--sp-2) var(--gutter) var(--sp-3);
+      background: var(--surface);
       border-bottom: 1px solid var(--line);
-      box-shadow: var(--shadow);
+      box-shadow: var(--shadow-2);
     }
     .bar[data-open="true"] .nav-links { display: flex; }
     .nav-links a {
       display: flex;
       align-items: center;
       min-height: 3rem;
-      font-size: 1.0625rem;
-      color: var(--ink);
+      font-size: var(--s1) !important;
+      color: var(--ink) !important;
       border-bottom: 1px solid var(--line);
     }
     .nav-links a:last-child { border-bottom: 0; }
@@ -334,624 +442,612 @@
     .nav-auth-menu { display: flex; }
   }
 
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    font-family: var(--sans);
-    font-size: var(--t-small);
-    font-weight: 500;
-    line-height: 1.2;
-    min-height: 2.5rem;
-    padding: 0.6rem 1.15rem;
-    border-radius: var(--pill);
-    border: 1px solid var(--line-2);
-    background: var(--card-2);
-    color: var(--ink);
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background 160ms, border-color 160ms, transform 160ms var(--ease);
-  }
-  .btn:hover { background: var(--card-3); text-decoration: none; }
-  .btn:active { transform: translateY(1px); }
-  .btn-lime {
-    background: var(--lime);
-    color: var(--lime-ink);
-    border-color: var(--lime);
-    font-weight: 600;
-  }
-  .btn-lime:hover { background: var(--lime-hover); border-color: var(--lime-hover); }
-  .btn-ghost { background: transparent; }
-  .btn-sm { min-height: 2.25rem; padding: 0.45rem 0.95rem; font-size: 0.8125rem; }
-  .btn-lg { min-height: 3rem; padding: 0.8rem 1.5rem; font-size: var(--t-body); }
-  .btn svg { width: 1em; height: 1em; }
+  /* ── sections ─────────────────────────────────────────────────────────── */
 
-  /* ── the spec-sheet grid ──────────────────────────────────────────────── */
+  main > section { padding-block: var(--section); }
+  /* Alternate bands. `#products` is named rather than classed: a test reads its bare tag. */
+  main > section.band, main > #products { background: var(--surface-2); border-block: 1px solid var(--line); }
 
   /**
-   * Every section below the hero is a label rail and a body.
+   * A section opens with its copy on the left and its one figure on the right.
    *
-   * The rail holds the one fact that defines the section — a count, a window, a word — set
-   * in monospace and stuck to the top of the viewport while its section scrolls. It is the
-   * structure of a datasheet rather than a brochure, which is what this product is: the
-   * interesting things about it are all exact.
+   * The figure is a fact the page derives, not a number typed in: the network count comes
+   * from the chain registry, the product count is held to the grid below it by a test.
    */
-  main > section + section { border-top: 1px solid var(--line); }
-
-  .grid {
-    padding-block: var(--sp-section);
+  .sec-head {
     display: grid;
-    grid-template-columns: var(--rail) minmax(0, 1fr);
-    gap: var(--sp-4) clamp(2rem, 5vw, 5rem);
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-8);
+    align-items: end;
+    margin-bottom: clamp(2.5rem, 3vw + 1rem, 4rem);
   }
-  @media (max-width: 60rem) {
-    .grid { grid-template-columns: minmax(0, 1fr); }
+  .sec-copy { display: grid; gap: var(--sp-5); }
+  .sec-copy h2 { max-width: 22ch; }
+  @media (min-width: 64rem) {
+    .sec-head { grid-template-columns: minmax(0, 1fr) 17rem; gap: var(--sp-16); }
   }
-
-  .rail { align-self: start; }
-  @media (min-width: 60rem) { .rail { position: sticky; top: calc(var(--bar-h) + 2rem); } }
+  .rail { display: grid; gap: var(--sp-2); align-content: end; }
   .rail-eyebrow {
-    font-family: var(--mono);
-    font-size: var(--t-xs);
-    letter-spacing: 0.14em;
+    font-size: var(--s-1);
+    font-weight: 600;
+    letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
-    color: var(--faint);
-    display: block;
-    margin-bottom: var(--sp-1);
+    color: var(--muted);
   }
   .rail-figure {
-    font-family: var(--mono);
-    font-size: clamp(2.25rem, 2rem + 1vw, 3rem);
-    font-weight: 500;
-    color: var(--accent);
-    letter-spacing: -0.03em;
-    line-height: 1;
+    font-family: var(--display);
+    font-size: clamp(3rem, 2rem + 3vw, 4.5rem);
+    line-height: 0.95;
+    letter-spacing: -0.04em;
+    font-weight: 700;
+    color: var(--ink);
     font-variant-numeric: tabular-nums;
   }
-  /* A word in the figure's place is set smaller than a number, so it still fits the rail. */
-  .rail-word { font-size: clamp(1.75rem, 1.5rem + 0.8vw, 2.25rem); letter-spacing: -0.04em; }
-  .rail-note { font-size: var(--t-small); color: var(--faint); line-height: 1.5; margin: 0.75rem 0 0; max-width: 24ch; }
-  @media (max-width: 60rem) {
-    .rail { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: end; column-gap: var(--sp-3); }
+  .rail-word { font-size: clamp(2rem, 1.5rem + 1.8vw, 3rem); }
+  .rail-note { font-size: var(--s0); color: var(--muted); max-width: 18rem; }
+  @media (max-width: 63.99rem) {
+    .rail { grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: var(--sp-5); }
     .rail-eyebrow { grid-column: 1 / -1; }
-    .rail-note { margin: 0; max-width: 40ch; }
+    .rail-figure { font-size: 2.75rem; }
+    .rail-word { font-size: 1.75rem; }
+    .rail-note { max-width: 24rem; }
   }
-
-  h1, h2, h3 { font-family: var(--display); margin: 0; text-wrap: balance; }
-  h1 {
-    font-size: var(--t-display);
-    font-weight: 800;
-    letter-spacing: -0.04em;
-    line-height: 1;
-  }
-  h2 {
-    font-size: var(--t-h2);
-    font-weight: 700;
-    letter-spacing: -0.03em;
-    line-height: 1.08;
-    max-width: 26ch;
-  }
-  h3 {
-    font-family: var(--sans);
-    font-size: var(--t-h3);
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    line-height: 1.35;
-  }
-
-  .body > * + * { margin-top: var(--sp-3); }
-  .body p { margin: 0; color: var(--muted); max-width: var(--measure); }
-  .body p strong { color: var(--ink); font-weight: 500; }
-  .lede { font-size: var(--t-lede); line-height: 1.55; max-width: 56ch; }
-  .body > .cards, .body > .steps, .body > figure, .body > .note, .body > .pair { margin-top: var(--sp-5); }
+  .body > * + * { margin-top: var(--sp-6); }
+  .body > .cards, .body > .steps, .body > figure, .body > .note, .body > .pair,
+  .body > .doc-block, .body > .plan, .body > .cards-sub { margin-top: clamp(2.5rem, 3vw + 1rem, 4rem); }
+  .body > .cards-sub + .cards { margin-top: var(--sp-6); }
 
   /* ── hero ─────────────────────────────────────────────────────────────── */
 
   .hero {
     position: relative;
+    isolation: isolate;
     overflow: hidden;
+    padding-block: clamp(3.5rem, 4rem + 3vw, 7.5rem) clamp(4rem, 4rem + 3vw, 8rem);
+    border-bottom: 1px solid var(--line);
   }
-  /**
-   * The haze, placed rather than tiled.
-   *
-   * One soft ellipse behind the derivation panel, so the eye lands where the argument is, over
-   * a faint grid that says "infrastructure" without saying it. `pointer-events: none` because
-   * it sits over the whole hero and would otherwise eat clicks on the buttons.
-   */
+  /* A quiet mesh behind the hero: three soft tinted lights, blurred, and nothing else. */
   .hero::before {
-    content: '';
+    content: "";
     position: absolute;
-    inset: -30% -10% auto -10%;
-    height: 130%;
+    z-index: -1;
+    inset: -20% -10% -10% -10%;
     background:
-      radial-gradient(56% 44% at 68% 36%, var(--haze), transparent 70%),
-      linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 4rem,
-      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 4rem 100%;
-    -webkit-mask-image: radial-gradient(70% 60% at 60% 40%, black 30%, transparent 100%);
-    mask-image: radial-gradient(70% 60% at 60% 40%, black 30%, transparent 100%);
-    opacity: 0.7;
+      radial-gradient(38% 45% at 18% 18%, var(--accent-soft) 0%, transparent 70%),
+      radial-gradient(30% 40% at 85% 10%, var(--info-soft) 0%, transparent 70%),
+      radial-gradient(34% 40% at 70% 92%, var(--accent-soft) 0%, transparent 70%);
+    filter: blur(48px);
+    pointer-events: none;
+  }
+  /* And a faint grid that fades in from the top, so the mesh reads as a surface. */
+  .hero::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 56px 56px;
+    background-position: center top;
+    -webkit-mask-image: radial-gradient(60% 70% at 50% 0%, currentColor 10%, transparent 90%);
+    mask-image: radial-gradient(60% 70% at 50% 0%, currentColor 10%, transparent 90%);
+    opacity: 0.45;
     pointer-events: none;
   }
   .hero-inner {
-    position: relative;
-    padding-block: clamp(3.5rem, 2rem + 6vw, 7.5rem) clamp(3.5rem, 2rem + 5vw, 6.5rem);
     display: grid;
-    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
-    gap: clamp(2.5rem, 5vw, 5rem);
+    grid-template-columns: minmax(0, 1fr);
+    gap: clamp(2.5rem, 4vw, 5rem);
     align-items: center;
   }
-  @media (max-width: 66rem) { .hero-inner { grid-template-columns: minmax(0, 1fr); } }
-
-  .eyebrow {
+  @media (min-width: 66rem) {
+    .hero-inner { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); }
+  }
+  .hero-copy { display: grid; gap: var(--sp-6); justify-items: start; }
+  .hero h1 em {
+    font-style: normal;
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-color: var(--lime);
+    text-decoration-thickness: 0.09em;
+    text-underline-offset: 0.08em;
+    text-decoration-skip-ink: none;
+  }
+  .hero-sub {
+    font-size: var(--s2);
+    line-height: 1.45;
+    color: var(--ink-2);
+    max-width: 34rem;
+  }
+  .hero-cta { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+  .hero-hint {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    font-family: var(--mono);
-    font-size: var(--t-xs);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--accent);
-    background: var(--lime-wash);
-    border: 1px solid var(--lime-edge);
-    border-radius: var(--pill);
-    padding: 0.35rem 0.9rem;
-  }
-  .eyebrow::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-  .hero h1 { margin-top: var(--sp-3); }
-  .hero h1 em { font-style: normal; color: var(--accent); }
-  .hero-sub {
-    font-size: var(--t-lede);
-    line-height: 1.55;
+    font-size: var(--s0);
     color: var(--muted);
-    max-width: 48ch;
-    margin: var(--sp-3) 0 0;
   }
-  .hero-sub strong { color: var(--ink); font-weight: 500; }
-  .hero-cta { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: var(--sp-4); }
-  .hero-hint { font-size: var(--t-small); color: var(--faint); margin: var(--sp-2) 0 0; }
+  .hero-hint svg { width: 1rem; height: 1rem; color: var(--accent); flex: none; }
   @media (max-width: 30rem) {
+    .hero-cta { width: 100%; }
     .hero-cta .btn { flex: 1 1 100%; }
   }
 
-  /* ── the derivation panel ─────────────────────────────────────────────── */
-
+  /**
+   * The product card.
+   *
+   * A gradient hairline — two backgrounds, one clipped to the padding box — a deep soft
+   * shadow, and the derivation running inside. It is the one object on the page drawn to
+   * look like a product, because it is one.
+   */
   .derive {
     position: relative;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--r-lg);
-    padding: var(--sp-3);
-    display: flex;
-    flex-direction: column;
-    gap: var(--sp-2);
-    box-shadow: var(--shadow);
+    padding: var(--sp-6);
+    border: 1px solid transparent;
+    border-radius: var(--r-xl);
+    background:
+      linear-gradient(var(--surface), var(--surface)) padding-box,
+      linear-gradient(150deg, var(--accent-edge), var(--line) 35%, var(--line) 65%, var(--accent-edge)) border-box;
+    background-color: var(--surface);
+    box-shadow: var(--shadow-3);
   }
+  @media (min-width: 40rem) { .derive { padding: var(--sp-8); } }
   .derive-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
+    gap: var(--sp-3);
     flex-wrap: wrap;
+    margin-bottom: var(--sp-6);
   }
-  .derive-title {
-    font-family: var(--mono);
-    font-size: var(--t-xs);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--faint);
-  }
+  .derive-title { font-weight: 600; font-size: var(--s1); letter-spacing: -0.01em; color: var(--ink); }
   .derive-live {
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
     font-family: var(--mono);
-    font-size: var(--t-xs);
-    color: var(--teal);
+    font-size: var(--s-2);
+    color: var(--accent);
   }
   .derive-live::before {
-    content: '';
-    width: 7px;
-    height: 7px;
+    content: "";
+    width: 0.5rem;
+    height: 0.5rem;
     border-radius: 50%;
-    background: var(--teal);
-    box-shadow: 0 0 0 3px var(--teal-wash);
+    background: var(--lime);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+    animation: pulse 2.4s var(--ease) infinite;
   }
-
-  .field { display: flex; flex-direction: column; gap: 0.4rem; }
-  .field label { font-size: var(--t-small); color: var(--muted); }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 3px var(--accent-soft); }
+    50% { box-shadow: 0 0 0 6px var(--accent-soft); }
+  }
+  .field { display: grid; gap: var(--sp-2); margin-bottom: var(--sp-4); }
+  .field label { font-size: var(--s-1); font-weight: 600; color: var(--ink-2); }
   .field input {
-    font-family: var(--mono);
-    font-size: var(--t-small);
-    background: var(--input);
-    border: 1px solid var(--line-2);
-    border-radius: var(--r-sm);
-    color: var(--ink);
-    padding: 0 0.85rem;
-    min-height: 2.75rem;
     width: 100%;
-    transition: border-color 160ms;
-  }
-  .field input:hover { border-color: var(--faint); }
-  .field input:focus-visible { outline-offset: 0; border-color: var(--focus); }
-
-  .arrow-down {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    font-size: var(--t-xs);
-    color: var(--faint);
-    font-family: var(--mono);
-    letter-spacing: 0.08em;
-  }
-  .arrow-down::before, .arrow-down::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--line-2);
-  }
-
-  .result {
-    background: var(--input);
-    border: 1px solid var(--lime-edge);
+    min-height: 2.75rem;
+    padding: 0 var(--sp-3);
+    border: 1px solid var(--line-strong);
     border-radius: var(--r-md);
-    padding: var(--sp-2);
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-  .result-label { font-size: var(--t-small); color: var(--muted); }
-  .result-value {
+    background: var(--surface-2);
+    color: var(--ink);
+    font: inherit;
     font-family: var(--mono);
-    font-size: var(--t-small);
-    color: var(--accent);
-    overflow-wrap: anywhere;
-    line-height: 1.5;
-    min-height: 3em;
+    font-size: var(--s-1);
+    transition: border-color var(--t-fast), box-shadow var(--t-fast);
   }
-  .result-note { font-size: var(--t-xs); color: var(--faint); line-height: 1.5; }
-  .derive-error { font-size: var(--t-small); color: var(--amber); margin: 0; }
-
-  /* ── generic pieces ───────────────────────────────────────────────────── */
-
-  .cards {
+  .field input:hover { border-color: var(--n400); }
+  .field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent); }
+  .arrow-down {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: var(--sp-3);
+    margin: var(--sp-5) 0;
+    font-family: var(--mono);
+    font-size: var(--s-2);
+    color: var(--muted);
+  }
+  .arrow-down::before, .arrow-down::after { content: ""; height: 1px; background: var(--line-strong); }
+  .result {
+    display: grid;
     gap: var(--sp-2);
+    padding: var(--sp-5);
+    border-radius: var(--r-lg);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-edge);
+  }
+  .result-label { font-size: var(--s-1); font-weight: 600; color: var(--ink-2); }
+  .result-value {
+    font-size: var(--s0);
+    font-weight: 500;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    line-height: 1.5;
+  }
+  .result-note { font-size: var(--s-1); color: var(--muted); }
+  .derive-error { margin: var(--sp-3) 0 0; font-size: var(--s-1); color: var(--danger); }
+
+  /* ── cards ────────────────────────────────────────────────────────────── */
+
+  .cards { display: grid; gap: var(--sp-5); grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 40rem) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (min-width: 64rem) {
+    .cards-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cards-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   }
   .card {
-    background: var(--card);
+    display: grid;
+    gap: var(--sp-3);
+    align-content: start;
+    padding: var(--sp-6);
     border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: var(--sp-3);
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-    transition: border-color 160ms, transform 200ms var(--ease);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-1);
+    transition: transform var(--t-base) var(--ease), box-shadow var(--t-base) var(--ease), border-color var(--t-base);
   }
-  .card:hover { border-color: var(--line-2); }
-  .card p { margin: 0; color: var(--muted); font-size: var(--t-small); line-height: 1.6; max-width: none; }
-  .card h3 { color: var(--ink); }
-  /* A glyph per card, so a row of cards scans as a row of things rather than a row of text. */
+  .card:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); border-color: var(--line-strong); }
+  .card h3 { font-size: var(--s1); }
+  .card p { font-size: var(--s0); color: var(--muted); }
+  .card .btn { justify-self: start; margin-top: var(--sp-2); }
   .glyph {
-    width: 2.5rem;
-    height: 2.5rem;
-    flex: none;
     display: grid;
     place-items: center;
-    border-radius: var(--r-sm);
-    background: var(--lime-wash);
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: var(--r-md);
+    background: var(--accent-soft);
     color: var(--accent);
-    margin-bottom: 0.4rem;
+    margin-bottom: var(--sp-1);
   }
-  .glyph svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-
-  /**
-   * Two by two above the fold width, one column below.
-   *
-   * `auto-fit` gives three columns in this container, so the fourth card sits alone with two
-   * empty cells beside it — which reads as a section somebody abandoned halfway. Two columns
-   * fills exactly, and the cards are wide enough for a real sentence.
-   */
-  @media (min-width: 52rem) { .cards-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-
+  .glyph svg { width: 1.375rem; height: 1.375rem; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
   .cards-sub {
-    font-family: var(--mono);
-    font-size: var(--t-xs);
-    letter-spacing: 0.14em;
+    font-size: var(--s-1);
+    font-weight: 600;
+    letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
-    color: var(--faint);
-    margin-top: var(--sp-5) !important;
-    margin-bottom: 0;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
   }
-  .cards-sub + .cards { margin-top: var(--sp-2); }
+  .cards-sub::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 
-  /**
-   * The four steps in a row, because the payment genuinely is a sequence.
-   *
-   * A line runs along the top and each step hangs from it, numbered; nothing else on the page
-   * is numbered. Four across on a desktop, two by two on a tablet, one column on a phone.
-   */
+  /* ── steps ────────────────────────────────────────────────────────────── */
+
   .steps {
     list-style: none;
     margin: 0;
     padding: 0;
     display: grid;
-    gap: var(--sp-3) var(--sp-3);
+    gap: var(--sp-8) var(--sp-6);
+    grid-template-columns: minmax(0, 1fr);
+    counter-reset: step;
   }
   @media (min-width: 40rem) { .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  @media (min-width: 72rem) { .steps { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-  .step {
-    position: relative;
-    padding-top: var(--sp-3);
-    border-top: 1px solid var(--line-2);
-  }
-  .step::before {
-    content: '';
-    position: absolute;
-    top: -1px;
-    left: 0;
-    width: 3rem;
-    height: 2px;
-    background: var(--accent);
-  }
+  @media (min-width: 64rem) { .steps { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .step { position: relative; display: grid; gap: var(--sp-3); align-content: start; }
   .step-n {
+    display: grid;
+    place-items: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    background: var(--lime);
+    color: var(--lime-ink);
     font-family: var(--mono);
-    font-size: var(--t-small);
-    color: var(--accent);
-    display: block;
-    margin-bottom: 0.6rem;
+    font-size: var(--s-1);
+    font-weight: 600;
   }
-  .step h3 { font-size: var(--t-h3); }
-  /* Its column is the measure here, not the reading width the body prose uses. */
-  .step p { margin: 0.5rem 0 0; color: var(--muted); font-size: var(--t-small); max-width: none; }
+  /* The line between one step and the next, on the wide layout where they sit in a row. */
+  @media (min-width: 64rem) {
+    .step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 1.25rem;
+      left: 3rem;
+      right: calc(var(--sp-6) * -1 + 0.5rem);
+      border-top: 1px dashed var(--line-strong);
+    }
+  }
+  .step h3 { font-size: var(--s1); }
+  .step p { font-size: var(--s0); color: var(--muted); }
+
+  /* ── diagram ──────────────────────────────────────────────────────────── */
 
   figure { margin: 0; }
-  /**
-   * The diagram scrolls on a phone rather than shrinking.
-   *
-   * An 800-unit drawing squeezed into 320px puts its labels at four pixels. Holding it at a
-   * readable minimum and letting it scroll inside its own frame keeps the labels legible and
-   * the page from sliding sideways.
-   */
   .diagram {
     overflow-x: auto;
-    background: var(--card);
+    padding: var(--sp-5);
     border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: var(--sp-3) var(--sp-3) var(--sp-2);
+    border-radius: var(--r-xl);
+    background: var(--surface);
+    box-shadow: var(--shadow-1);
   }
-  .diagram svg { display: block; width: 100%; min-width: 40rem; height: auto; color: var(--muted); }
-  figcaption { font-size: var(--t-small); color: var(--faint); line-height: 1.55; margin-top: var(--sp-2); max-width: var(--measure); }
+  .diagram svg { width: 100%; min-width: 46rem; height: auto; }
+  .diagram text { font-family: var(--sans); font-size: 13px; fill: var(--ink); }
+  .diagram .mono { font-family: var(--mono); font-size: 12px; }
+  .diagram .small { font-size: 11.5px; }
+  .diagram .muted { fill: var(--muted); }
+  .diagram .acc { fill: var(--accent); }
+  .diagram .strong { font-weight: 600; }
+  .diagram .node { fill: var(--surface-2); stroke: var(--line-strong); }
+  .diagram .node-acc { fill: var(--accent-soft); stroke: var(--accent-edge); }
+  .diagram .node-hash { fill: var(--surface-3); stroke: var(--line-strong); }
+  .diagram .edge { stroke: var(--n400); stroke-width: 1.25; fill: none; }
+  .diagram .edge-acc { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+  .diagram .absent { stroke: var(--line-strong); stroke-dasharray: 3 5; }
+  figcaption { margin-top: var(--sp-4); font-size: var(--s0); color: var(--muted); max-width: 36rem; }
 
-  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--card); }
-  table { width: 100%; border-collapse: collapse; font-size: var(--t-small); min-width: 34rem; }
-  th, td {
-    text-align: start;
-    padding: 0.85rem 1rem;
-    border-bottom: 1px solid var(--line);
-    color: var(--muted);
-    vertical-align: baseline;
-    line-height: 1.5;
+  .note {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--sp-4);
+    max-width: 36rem;
+    padding: var(--sp-5);
+    border-radius: var(--r-lg);
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    font-size: var(--s0);
+    color: var(--ink-2);
   }
-  th {
-    font-family: var(--mono);
-    font-size: var(--t-xs);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--faint);
-    font-weight: 400;
-    white-space: nowrap;
+  .note svg { width: 1.25rem; height: 1.25rem; margin-top: 0.15rem; color: var(--warn); fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  .note strong { display: block; margin-bottom: 0.25rem; }
+
+  /* ── pricing ──────────────────────────────────────────────────────────── */
+
+  .plan {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    border: 1px solid var(--line);
+    border-radius: var(--r-xl);
+    background: var(--surface);
+    box-shadow: var(--shadow-2);
+    overflow: hidden;
   }
-  tr:last-child td { border-bottom: none; }
-  td.mono, td .mono { color: var(--ink); }
+  @media (min-width: 64rem) { .plan { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } }
+  .plan-lead {
+    display: grid;
+    gap: var(--sp-4);
+    align-content: start;
+    padding: clamp(1.5rem, 3vw, 3rem);
+    background: var(--ink);
+    color: var(--surface);
+  }
+  .plan-lead .eyebrow, .start .eyebrow { color: var(--accent-soft); }
+  .plan-lead h3 {
+    font-size: clamp(1.75rem, 1.2rem + 1.6vw, 2.5rem);
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    color: var(--surface);
+  }
+  .plan-lead p { color: var(--surface-3); font-size: var(--s1); max-width: 30rem; }
+  .plan-lead .btn { justify-self: start; margin-top: var(--sp-2); }
+  .plan-points {
+    list-style: none;
+    margin: 0;
+    padding: clamp(1.5rem, 3vw, 3rem);
+    display: grid;
+    gap: var(--sp-6) var(--sp-8);
+    grid-template-columns: minmax(0, 1fr);
+  }
+  @media (min-width: 40rem) { .plan-points { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .plan-points li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--sp-3); align-items: start; }
+  .plan-points svg { width: 1.5rem; height: 1.5rem; margin-top: 0.1rem; padding: 0.25rem; border-radius: 50%; background: var(--accent-soft); color: var(--accent); fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
+  .plan-points h3 { font-size: var(--s1); }
+  .plan-points p { font-size: var(--s0); color: var(--muted); margin-top: var(--sp-1); }
+
+  /* ── developers ───────────────────────────────────────────────────────── */
+
+  .pair { display: grid; gap: var(--sp-5); grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 48rem) { .pair { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+  .doc-block {
+    display: grid;
+    gap: var(--sp-6) var(--sp-12);
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    padding-top: clamp(2.5rem, 3vw + 1rem, 4rem);
+    border-top: 1px solid var(--line);
+  }
+  @media (min-width: 64rem) {
+    .doc-block { grid-template-columns: minmax(0, 22rem) minmax(0, 1fr); }
+    .doc-block.doc-wide { grid-template-columns: minmax(0, 1fr); }
+  }
+  .doc-copy { display: grid; gap: var(--sp-4); align-content: start; }
+  .doc-copy p { font-size: var(--s0); color: var(--ink-2); max-width: var(--measure); }
+  .doc-h { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+  .doc-h h3 { font-size: var(--s3); letter-spacing: -0.02em; }
+  .doc-wide .doc-copy { max-width: var(--measure); }
 
   .pill {
-    display: inline-block;
-    font-family: var(--mono);
-    font-size: var(--t-xs);
-    padding: 0.15rem 0.6rem;
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.5rem;
+    padding: 0 0.6rem;
     border-radius: var(--pill);
-    background: var(--card-3);
-    color: var(--muted);
+    background: var(--surface-3);
+    color: var(--ink-2);
+    font-family: var(--mono);
+    font-size: var(--s-2);
+    font-weight: 500;
     white-space: nowrap;
   }
-  .pill[data-tone="good"] { background: var(--teal-wash); color: var(--teal); }
-  .pill[data-tone="warn"] { background: var(--amber-wash); color: var(--amber); }
-  .pill[data-tone="lime"] { background: var(--lime-wash); color: var(--accent); }
+  .pill[data-tone="lime"] { background: var(--accent-soft); color: var(--ink); }
+  .pill[data-tone="warn"] { background: var(--warn-soft); color: var(--warn); }
 
-  /* A code sample in a frame: what it is, then the code. */
+  /**
+   * The terminal frame.
+   *
+   * Dark in both themes — `--n950` is a fixed neutral, not a surface — so the code reads the
+   * same way against a white page and a dark one. Tabs are real where there are two things to
+   * show (the request and what comes back); a single tab is a label.
+   */
   .code {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
+    min-width: 0;
+    border-radius: var(--r-lg);
+    background: var(--n950);
+    box-shadow: var(--shadow-2);
     overflow: hidden;
   }
   .code-head {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.6rem 1.1rem;
-    border-bottom: 1px solid var(--line);
+    gap: var(--sp-1);
+    padding: 0 var(--sp-3);
+    min-height: 2.75rem;
+    background: var(--n900);
+    border-bottom: 1px solid var(--n800);
+    color: var(--n300);
     font-family: var(--mono);
-    font-size: var(--t-xs);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--faint);
+    font-size: var(--s-2);
   }
-  .code-head::before {
-    content: '';
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--line-2);
-    box-shadow: 14px 0 0 var(--line-2), 28px 0 0 var(--line-2);
-    margin-inline-end: 1.5rem;
+  .dots { display: inline-flex; gap: 6px; margin-inline-end: var(--sp-3); }
+  .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--n700); }
+  .code-head [role="tab"], .code-head .tab {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    padding: 0 var(--sp-3);
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--n400);
+    font: inherit;
+    cursor: pointer;
   }
+  .code-head [role="tab"][aria-selected="true"], .code-head .tab { color: var(--n0); border-bottom-color: var(--lime); }
+  .code-head [role="tab"]:hover { color: var(--n100); }
+  .code-head [role="tab"]:focus-visible { outline-offset: -3px; border-radius: var(--r-sm); }
   pre {
     margin: 0;
-    padding: 1.1rem 1.25rem;
+    padding: var(--sp-5);
     overflow-x: auto;
-    font-family: var(--mono);
-    font-size: var(--t-small);
-    line-height: 1.7;
-    color: var(--ink);
+    font-size: var(--s-1);
+    line-height: 1.65;
+    color: var(--n100);
     tab-size: 2;
   }
-  pre .c { color: var(--faint); }
-  pre .k { color: var(--accent); }
-  pre .s { color: var(--teal); }
-  pre .v { color: var(--amber); }
+  pre .c { color: var(--n400); }
+  pre .k { color: var(--lime); }
+  pre .s { color: var(--n200); }
+  pre .v { color: var(--n0); font-weight: 600; }
 
-  .note {
-    background: var(--card-2);
-    border: 1px solid var(--line);
-    border-inline-start: 3px solid var(--accent);
-    border-radius: var(--r-md);
-    padding: var(--sp-2) var(--sp-3);
-    font-size: var(--t-small);
-    line-height: 1.6;
-    color: var(--muted);
-    max-width: 70ch;
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-1); }
+  table { width: 100%; min-width: 40rem; border-collapse: collapse; font-size: var(--s0); }
+  th, td { text-align: left; vertical-align: top; padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line); }
+  th { font-size: var(--s-1); font-weight: 600; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted); background: var(--surface-2); }
+  td { color: var(--ink-2); }
+  tr:last-child td { border-bottom: 0; }
+  td.mono { font-size: var(--s-1); color: var(--ink); white-space: nowrap; }
+
+  /* ── closing band ─────────────────────────────────────────────────────── */
+
+  .start {
+    background: var(--ink);
+    color: var(--surface);
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
   }
-  .note strong { color: var(--ink); font-weight: 500; }
-
-  /* ── docs ─────────────────────────────────────────────────────────────── */
-
-  /* Two doors into the developer section, side by side. */
-  .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: var(--sp-2); }
-  .pair .card { padding: var(--sp-4); gap: 0.75rem; }
-  .pair .card p { font-size: var(--t-body); }
-  .pair .card .btn { align-self: flex-start; margin-top: var(--sp-1); }
-
-  .doc-block > * + * { margin-top: var(--sp-2); }
-  .doc-block { margin-top: var(--sp-6) !important; padding-top: var(--sp-6); border-top: 1px solid var(--line); }
-  .doc-h {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-  .doc-h h3 { font-family: var(--display); font-size: 1.375rem; font-weight: 700; letter-spacing: -0.02em; }
-
-  /* ── the closing invitation ───────────────────────────────────────────── */
-
-  /**
-   * The one place the page asks for something, so it is the one place with no other content.
-   *
-   * Centred, which nothing else here is. The whole page reads as a left-aligned datasheet,
-   * and breaking that alignment exactly once is what makes this read as the end rather than
-   * as another section.
-   */
-  .start { position: relative; overflow: hidden; background: var(--card); }
   .start::before {
-    content: '';
+    content: "";
     position: absolute;
-    inset: auto -20% -60% -20%;
-    height: 120%;
-    background: radial-gradient(50% 50% at 50% 100%, var(--haze), transparent 70%);
+    z-index: -1;
+    inset: -30% -10%;
+    background:
+      radial-gradient(30% 50% at 85% 20%, var(--accent-edge) 0%, transparent 70%),
+      radial-gradient(30% 50% at 10% 90%, var(--n700) 0%, transparent 70%);
+    opacity: 0.35;
+    filter: blur(40px);
     pointer-events: none;
   }
-  .start-inner {
-    position: relative;
-    max-width: 44rem;
-    padding-block: var(--sp-section);
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--sp-2);
-  }
-  .start-inner h2 { max-width: none; }
-  .start-inner p { margin: 0; color: var(--muted); max-width: 52ch; font-size: var(--t-lede); line-height: 1.55; }
-  .start-form {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 0.75rem;
-    width: 100%;
-    margin-top: var(--sp-2);
-  }
+  .start-inner { display: grid; gap: var(--sp-6); justify-items: center; text-align: center; max-width: 46rem; }
+  .start-inner h2 { color: var(--surface); }
+  .start-inner > p { color: var(--surface-3); font-size: var(--s1); max-width: 36rem; }
+  .start-form { display: flex; gap: var(--sp-3); width: 100%; max-width: 32rem; }
   .start-form input {
-    flex: 1 1 16rem;
+    flex: 1 1 auto;
     min-width: 0;
-    min-height: 3rem;
-    font-family: var(--sans);
-    font-size: var(--t-body);
-    background: var(--input);
-    border: 1px solid var(--line-2);
+    min-height: 3.25rem;
+    padding: 0 var(--sp-4);
+    border: 1px solid var(--line-strong);
     border-radius: var(--pill);
+    background: var(--surface);
     color: var(--ink);
-    padding: 0 1.25rem;
+    font: inherit;
+    font-size: var(--s0);
   }
-  .start-form input::placeholder { color: var(--faint); }
-  .start-form input:focus-visible { outline-offset: 0; border-color: var(--focus); }
-  .start-note { font-size: var(--t-small) !important; color: var(--faint) !important; }
-  @media (max-width: 30rem) { .start-form .btn { flex: 1 1 100%; } }
-
-  /* Visible to a screen reader, absent from the layout. */
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-    border: 0;
+  .start-form input::placeholder { color: var(--muted); }
+  .start-form input:focus-visible { outline-color: var(--lime); }
+  .start-note { font-size: var(--s0); color: var(--surface-3); }
+  .start-note a { color: inherit; text-decoration: underline; text-underline-offset: 0.15em; }
+  .start .btn-lime:focus-visible { outline-color: var(--lime); }
+  @media (max-width: 30rem) {
+    .start-form { flex-direction: column; }
   }
 
-  footer { border-top: 1px solid var(--line); }
+  /* ── footer ───────────────────────────────────────────────────────────── */
+
+  footer { background: var(--surface-2); border-top: 1px solid var(--line); }
   .foot {
-    padding-block: var(--sp-8) var(--sp-4);
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr);
-    gap: var(--sp-6) clamp(2rem, 5vw, 5rem);
-    font-size: var(--t-small);
-    color: var(--faint);
+    gap: var(--sp-10) var(--sp-12);
+    grid-template-columns: minmax(0, 1fr);
+    padding-block: var(--sp-16) var(--sp-10);
   }
-  @media (max-width: 52rem) { .foot { grid-template-columns: minmax(0, 1fr); } }
-  .foot-brand p { margin: 0.75rem 0 0; color: var(--muted); max-width: 32ch; line-height: 1.6; }
-  .foot-cta { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: var(--sp-3); }
-  .foot-cols {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-    gap: var(--sp-4) var(--sp-3);
-  }
-  .foot-col { display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start; }
+  @media (min-width: 52rem) { .foot { grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr); } }
+  .foot-brand { display: grid; gap: var(--sp-4); justify-items: start; align-content: start; }
+  .foot-brand p { font-size: var(--s0); color: var(--muted); max-width: 22rem; }
+  .foot-cta { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+  .foot-cta .btn { min-height: var(--tap); }
+  .foot-cols { display: grid; gap: var(--sp-8) var(--sp-6); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (min-width: 40rem) { .foot-cols { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .foot-col { display: grid; gap: 0; align-content: start; }
   .foot-h {
-    font-family: var(--mono);
-    font-size: var(--t-xs);
-    letter-spacing: 0.1em;
+    font-size: var(--s-1);
+    font-weight: 600;
+    letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
-    color: var(--faint);
-    margin-bottom: 0.5rem;
+    color: var(--ink);
+    margin-bottom: var(--sp-2);
   }
-  .foot-col a { color: var(--muted); display: inline-flex; align-items: center; min-height: 2rem; }
+  .foot-col a { display: flex; align-items: center; min-height: var(--tap); font-size: var(--s0); color: var(--ink-2); }
   .foot-col a:hover { color: var(--ink); }
-  @media (max-width: 46rem) { .foot-col a, .foot-cta .btn { min-height: 2.75rem; } }
   .foot-end {
-    border-top: 1px solid var(--line);
-    padding-block: var(--sp-3);
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--sp-1) var(--sp-3);
     justify-content: space-between;
-    font-size: var(--t-small);
-    color: var(--faint);
+    gap: var(--sp-4);
+    flex-wrap: wrap;
+    padding-block: var(--sp-5);
+    border-top: 1px solid var(--line);
+    font-size: var(--s-1);
+    color: var(--muted);
   }
   .foot-end a { color: var(--muted); }
+  .foot-end a:hover { color: var(--ink); }
 
-  [hidden] { display: none !important; }
+  /* ── motion ───────────────────────────────────────────────────────────── */
 
-  /* One orchestrated entrance, and nothing else moves on its own. */
+  /* The hero rises once on load; everything below fades in as it enters the viewport. */
   @keyframes rise {
-    from { opacity: 0; transform: translateY(12px); }
+    from { opacity: 0; transform: translateY(14px); }
     to { opacity: 1; transform: none; }
   }
-  .rise { animation: rise 640ms var(--ease) both; }
-  .rise-2 { animation-delay: 100ms; }
+  .rise { animation: rise 0.7s var(--ease) both; }
+  .rise-2 { animation-delay: 120ms; }
+  .js .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.6s var(--ease), transform 0.6s var(--ease); }
+  .js .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .rise, .rise-2 { animation: none; }
+    .js .reveal { opacity: 1; transform: none; transition: none; }
+    .derive-live::before { animation: none; }
+    .card, .btn { transition: none; }
+  }
 </style>
 
 <a class="skip" href="#main">Skip to content</a>
@@ -980,20 +1076,20 @@
 <!-- ── hero ───────────────────────────────────────────────────────────── -->
 <section class="hero" aria-labelledby="hero-title">
   <div class="wrap hero-inner">
-    <div class="rise">
+    <div class="hero-copy rise">
       <span class="eyebrow">Payments infrastructure</span>
       <h1 id="hero-title">Take crypto payments.<br><em>Keep custody.</em></h1>
       <p class="hero-sub">
-        AVEX Pay is a <strong>non-custodial crypto payment gateway</strong>: one integration,
-        a hosted checkout your customer can pay from on a phone, and money that goes from
-        their transfer to your own wallet. We are never holding it, and there is no step
-        where we could.
+        A non-custodial crypto payment gateway: one integration, a hosted checkout your
+        customer can pay from on a phone, and money that goes from their transfer straight
+        to your own wallet.
       </p>
       <div class="hero-cta">
         <a class="btn btn-lime btn-lg" data-dash="up" href="/dashboard?signup=1">Create an account</a>
         <a class="btn btn-lg btn-ghost" href="#docs">Read the docs</a>
       </div>
       <p class="hero-hint">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
         Test mode works immediately — no faucet, no testnet, nothing to fund.
       </p>
     </div>
@@ -1041,19 +1137,94 @@
 
 <!-- ── how it works ───────────────────────────────────────────────────── -->
 <section id="how" aria-labelledby="how-title">
-  <div class="wrap grid">
-    <div class="rail">
-      <span class="rail-eyebrow">Custody</span>
-      <div class="rail-figure rail-word">none</div>
-      <p class="rail-note">We hold no balance at any point in this sequence.</p>
-    </div>
+  <div class="wrap">
     <div class="body">
-      <h2 id="how-title">The address is the guarantee</h2>
-      <p class="lede">
-        Most gateways ask you to trust that they will forward your money. There is nothing
-        to trust here, because there is no moment at which we have it.
-      </p>
-      <p>
+      <div class="sec-head reveal">
+        <div class="sec-copy">
+          <span class="eyebrow">How it works</span>
+          <h2 id="how-title">The address is the guarantee</h2>
+          <p class="lede">
+            Most gateways ask you to trust that they will forward your money. There is nothing
+            to trust here, because there is no moment at which we have it.
+          </p>
+        </div>
+        <div class="rail">
+          <span class="rail-eyebrow">Custody</span>
+          <div class="rail-figure rail-word">none</div>
+          <p class="rail-note">We hold no balance at any point in this sequence.</p>
+        </div>
+      </div>
+
+      <figure class="reveal">
+        <div class="diagram">
+        <svg viewBox="0 0 1040 352" role="img"
+             aria-label="A payer sends funds to a per-invoice address derived from the merchant's wallet and the fee. One settlement transaction creates the forwarder and splits the balance: the merchant's wallet receives the payment less the fee, AVEX receives the fee. AVEX holds no balance at any point.">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--n400)"></path>
+            </marker>
+            <marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"></path>
+            </marker>
+          </defs>
+
+          <!-- inputs to the hash -->
+          <rect class="node" x="20" y="36" width="200" height="48" rx="12"></rect>
+          <text class="mono" x="120" y="65" text-anchor="middle">your payout wallet</text>
+          <rect class="node" x="20" y="108" width="200" height="48" rx="12"></rect>
+          <text class="mono" x="120" y="137" text-anchor="middle">invoice + our fee</text>
+
+          <path class="edge" d="M220 60 C 250 60, 250 96, 270 96" marker-end="url(#ah)"></path>
+          <path class="edge" d="M220 132 C 250 132, 250 96, 270 96" marker-end="url(#ah)"></path>
+
+          <!-- the hash -->
+          <rect class="node-hash" x="276" y="76" width="112" height="40" rx="20"></rect>
+          <text class="mono strong" x="332" y="101" text-anchor="middle">keccak256</text>
+          <path class="edge" d="M388 96 H 424" marker-end="url(#ah)"></path>
+
+          <!-- the derived address -->
+          <rect class="node-acc" x="430" y="54" width="200" height="84" rx="14"></rect>
+          <text class="strong acc" x="530" y="90" text-anchor="middle">deposit address</text>
+          <text class="mono small muted" x="530" y="112" text-anchor="middle">nothing deployed here</text>
+
+          <!-- payer -->
+          <rect class="node" x="430" y="252" width="200" height="48" rx="12"></rect>
+          <text class="mono" x="530" y="281" text-anchor="middle">your customer</text>
+          <path class="edge" d="M530 252 V 146" marker-end="url(#ah)"></path>
+          <text class="small muted" x="544" y="204">sends the payment</text>
+
+          <!-- settlement -->
+          <path class="edge-acc" d="M630 96 H 676" marker-end="url(#ah-acc)"></path>
+          <text class="mono small acc" x="653" y="84" text-anchor="middle">sweep</text>
+
+          <rect class="node" x="682" y="46" width="176" height="100" rx="14"></rect>
+          <text class="strong" x="770" y="80" text-anchor="middle">one transaction</text>
+          <text class="small muted" x="770" y="102" text-anchor="middle">creates the contract,</text>
+          <text class="small muted" x="770" y="120" text-anchor="middle">empties it</text>
+
+          <path class="edge-acc" d="M858 80 C 880 80, 880 58, 896 58" marker-end="url(#ah-acc)"></path>
+          <path class="edge" d="M858 112 C 880 112, 880 148, 896 148" marker-end="url(#ah)"></path>
+
+          <rect class="node-acc" x="902" y="30" width="118" height="56" rx="12"></rect>
+          <text class="strong acc" x="961" y="53" text-anchor="middle">your wallet</text>
+          <text class="mono small muted" x="961" y="72" text-anchor="middle">payment − fee</text>
+          <rect class="node" x="902" y="120" width="118" height="56" rx="12"></rect>
+          <text class="strong" x="961" y="143" text-anchor="middle">AVEX</text>
+          <text class="mono small muted" x="961" y="162" text-anchor="middle">the fee</text>
+
+          <!-- what is absent -->
+          <line class="absent" x1="20" y1="320" x2="1020" y2="320"></line>
+          <text class="small muted" x="20" y="343">Absent from this diagram: an AVEX wallet holding your money. There is no step where it does.</text>
+        </svg>
+        </div>
+        <figcaption>
+          Our fee is a constructor argument, so it is part of the address too. Settling on
+          different terms would derive an address nobody funded — which is why the terms you
+          were quoted are the terms that settle.
+        </figcaption>
+      </figure>
+
+      <p class="reveal">
         A deposit address is computed from three things: the invoice, your payout wallet,
         and our fee. Nothing is deployed there — the contract that will live at that
         address does not exist yet, and when it is created it can do exactly one thing,
@@ -1062,7 +1233,7 @@
         producing an address your customer never funded.
       </p>
 
-      <ol class="steps">
+      <ol class="steps reveal">
         <li class="step">
           <span class="step-n">01</span>
           <h3>You open an invoice</h3>
@@ -1085,75 +1256,14 @@
         </li>
       </ol>
 
-      <figure>
-        <div class="diagram">
-        <svg viewBox="0 0 800 250" role="img"
-             aria-label="A payer sends funds to a per-invoice address derived from the merchant's wallet and the fee. One settlement transaction creates the forwarder and splits the balance: the merchant's wallet receives the payment less the fee, AVEX receives the fee. AVEX holds no balance at any point.">
-          <defs>
-            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
-            </marker>
-            <marker id="ah-lime" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"></path>
-            </marker>
-          </defs>
-
-          <!-- inputs to the hash -->
-          <rect x="1" y="16" width="150" height="30" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.35"></rect>
-          <text x="76" y="35" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">your payout wallet</text>
-          <rect x="1" y="54" width="150" height="30" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.35"></rect>
-          <text x="76" y="73" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">invoice + our fee</text>
-
-          <line x1="153" y1="31" x2="238" y2="52" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#ah)"></line>
-          <line x1="153" y1="69" x2="238" y2="58" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#ah)"></line>
-          <text x="196" y="30" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="currentColor" fill-opacity="0.75">hashed</text>
-
-          <!-- the derived address -->
-          <rect x="244" y="34" width="150" height="44" rx="10" fill="none" stroke="var(--accent)" stroke-width="1.5"></rect>
-          <text x="319" y="52" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--accent)">deposit address</text>
-          <text x="319" y="68" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--accent)" fill-opacity="0.8">nothing deployed</text>
-
-          <!-- payer -->
-          <rect x="244" y="128" width="150" height="30" rx="8" fill="none" stroke="currentColor" stroke-opacity="0.35"></rect>
-          <text x="319" y="147" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">your customer</text>
-          <line x1="319" y1="126" x2="319" y2="84" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#ah)"></line>
-          <text x="330" y="108" font-family="IBM Plex Mono, monospace" font-size="10" fill="currentColor" fill-opacity="0.75">sends the payment</text>
-
-          <!-- settlement -->
-          <line x1="398" y1="56" x2="470" y2="56" stroke="var(--accent)" stroke-opacity="0.9" marker-end="url(#ah-lime)"></line>
-          <text x="434" y="46" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--accent)">sweep</text>
-
-          <rect x="476" y="20" width="158" height="72" rx="10" fill="none" stroke="currentColor" stroke-opacity="0.35"></rect>
-          <text x="555" y="44" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">one transaction</text>
-          <text x="555" y="60" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="currentColor" fill-opacity="0.75">creates the contract,</text>
-          <text x="555" y="74" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="currentColor" fill-opacity="0.75">empties it</text>
-
-          <line x1="636" y1="42" x2="686" y2="26" stroke="var(--accent)" stroke-opacity="0.9" marker-end="url(#ah-lime)"></line>
-          <line x1="636" y1="70" x2="686" y2="86" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#ah)"></line>
-
-          <text x="692" y="24" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--accent)">your wallet</text>
-          <text x="692" y="38" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--accent)" fill-opacity="0.8">the payment,</text>
-          <text x="692" y="51" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--accent)" fill-opacity="0.8">less our fee</text>
-          <text x="692" y="88" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">AVEX</text>
-          <text x="692" y="102" font-family="IBM Plex Mono, monospace" font-size="10" fill="currentColor" fill-opacity="0.75">our fee</text>
-
-          <!-- what is absent -->
-          <line x1="20" y1="196" x2="760" y2="196" stroke="currentColor" stroke-opacity="0.18" stroke-dasharray="3 4"></line>
-          <text x="20" y="220" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" fill-opacity="0.6">Absent from this diagram: an AVEX wallet holding your money. There is no step where it does.</text>
-        </svg>
+      <div class="note reveal">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 9v4M12 17h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>
+        <div>
+          <strong>What this does not protect you from.</strong> Stablecoins are freezable by the
+          company that issues them — Tether and Circle can both blacklist an address, and no
+          gateway changes that. What non-custodial removes is us: we cannot hold your money,
+          delay it, or send it elsewhere.
         </div>
-        <figcaption>
-          Our fee is a constructor argument, so it is part of the address too. Settling on
-          different terms would derive an address nobody funded — which is why the terms you
-          were quoted are the terms that settle.
-        </figcaption>
-      </figure>
-
-      <div class="note">
-        <strong>What this does not protect you from.</strong> Stablecoins are freezable by the
-        company that issues them — Tether and Circle can both blacklist an address, and no
-        gateway changes that. What non-custodial removes is us: we cannot hold your money,
-        delay it, or send it elsewhere.
       </div>
     </div>
   </div>
@@ -1161,21 +1271,26 @@
 
 <!-- ── products ───────────────────────────────────────────────────────── -->
 <section id="products">
-  <div class="wrap grid">
-    <div class="rail">
-      <span class="rail-eyebrow">Products</span>
-      <div class="rail-figure">4</div>
-      <p class="rail-note">Ways to get paid, sharing one account and one set of keys.</p>
-    </div>
+  <div class="wrap">
     <div class="body">
-      <h2 id="products-title">However you sell</h2>
-      <p class="lede">
-        A hosted page, a link you send, an invoice inside your own app, or a plugin that needs
-        no code at all. Every one of them settles the same way and reports through the same
-        webhook, so adding a second is configuration rather than a second integration.
-      </p>
+      <div class="sec-head reveal">
+        <div class="sec-copy">
+          <span class="eyebrow">Products</span>
+          <h2 id="products-title">However you sell</h2>
+          <p class="lede">
+            A hosted page, a link you send, an invoice inside your own app, or a plugin that needs
+            no code at all. Every one of them settles the same way and reports through the same
+            webhook, so adding a second is configuration rather than a second integration.
+          </p>
+        </div>
+        <div class="rail">
+          <span class="rail-eyebrow">Ways to get paid</span>
+          <div class="rail-figure">4</div>
+          <p class="rail-note">Sharing one account and one set of keys.</p>
+        </div>
+      </div>
 
-      <div class="cards cards-pair">
+      <div class="cards cards-4 reveal">
         <article class="card">
           <span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"></rect><path d="M3 9h18M8 21h8M7 14h4"></path></svg></span>
           <h3>Hosted checkout</h3>
@@ -1212,7 +1327,7 @@
 
       <p class="cards-sub">And all four come with</p>
 
-      <div class="cards cards-pair">
+      <div class="cards cards-4 reveal">
         <article class="card">
           <span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3zM9 8h6M9 12h6M9 16h4"></path></svg></span>
           <h3>Receipts your customer keeps</h3>
@@ -1252,21 +1367,26 @@
 
 <!-- ── networks ───────────────────────────────────────────────────────── -->
 <section id="networks" aria-labelledby="networks-title">
-  <div class="wrap grid">
-    <div class="rail">
-      <span class="rail-eyebrow">Networks</span>
-      <div class="rail-figure" id="fact-chains">6</div>
-      <p class="rail-note">Networks a merchant can be paid on, through one API.</p>
-    </div>
+  <div class="wrap">
     <div class="body">
-      <h2 id="networks-title">Every network we carry, one integration</h2>
-      <p class="lede">
-        Your customer picks the currency and the network on the hosted page. Your payout
-        wallet for that network is where the money lands, and nothing about your code changes
-        from one network to the next.
-      </p>
+      <div class="sec-head reveal">
+        <div class="sec-copy">
+          <span class="eyebrow">Networks</span>
+          <h2 id="networks-title">Every network we carry, one integration</h2>
+          <p class="lede">
+            Your customer picks the currency and the network on the hosted page. Your payout
+            wallet for that network is where the money lands, and nothing about your code changes
+            from one network to the next.
+          </p>
+        </div>
+        <div class="rail">
+          <span class="rail-eyebrow">Networks</span>
+          <div class="rail-figure" id="fact-chains">6</div>
+          <p class="rail-note">A merchant can be paid on, through one API.</p>
+        </div>
+      </div>
 
-      <div class="cards cards-pair">
+      <div class="cards cards-4 reveal">
         <article class="card">
           <span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"></path></svg></span>
           <h3>Chosen in the dashboard</h3>
@@ -1306,55 +1426,66 @@
 </section>
 
 <!-- ── pricing ────────────────────────────────────────────────────────── -->
-<section id="pricing" aria-labelledby="pricing-title">
-  <div class="wrap grid">
-    <div class="rail">
-      <span class="rail-eyebrow">Pricing</span>
-      <div class="rail-figure rail-word">on chain</div>
-      <p class="rail-note">The fee is taken inside the settlement transaction, not from a balance of yours.</p>
-    </div>
+<section id="pricing" class="band" aria-labelledby="pricing-title">
+  <div class="wrap">
     <div class="body">
-      <h2 id="pricing-title">Priced into the address</h2>
-      <p class="lede">
-        Our fee is a constructor argument of your deposit address. Settling on different terms
-        would derive an address nobody funded, so the terms you were quoted are the terms
-        that settle.
-      </p>
+      <div class="sec-head reveal">
+        <div class="sec-copy">
+          <span class="eyebrow">Pricing</span>
+          <h2 id="pricing-title">One fee, priced into the address</h2>
+          <p class="lede">
+            Our fee is a constructor argument of your deposit address. Settling on different terms
+            would derive an address nobody funded, so the terms you were quoted are the terms
+            that settle.
+          </p>
+        </div>
+        <div class="rail">
+          <span class="rail-eyebrow">Where it is taken</span>
+          <div class="rail-figure rail-word">on chain</div>
+          <p class="rail-note">Inside the settlement transaction, not from a balance of yours.</p>
+        </div>
+      </div>
 
-      <div class="cards cards-pair">
-        <article class="card">
-          <span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"></path></svg></span>
-          <h3>Taken in the settlement</h3>
+      <div class="plan reveal">
+        <div class="plan-lead">
+          <span class="eyebrow">The whole price list</span>
+          <h3>One fee, taken in the settlement.</h3>
           <p>
-            Your wallet gets the payment less our fee, and we get the fee — in the same
-            transaction, with no intermediate balance anywhere.
+            No monthly charge, no setup, nothing to top up. Your rate is on your dashboard,
+            current, beside the volume it is drawn from.
           </p>
-        </article>
-        <article class="card">
-          <span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11V4h7l10 10-7 7L3 11z"></path><circle cx="7.5" cy="8.5" r="1.2"></circle></svg></span>
-          <h3>Your rate is on your dashboard</h3>
-          <p>
-            Current, beside the volume it is drawn from. Not on this page, where a figure printed
-            today would be argued from next year.
-          </p>
-        </article>
-        <article class="card">
-          <span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5.5 9.5A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-2.5L14 9V3M7.5 15h9"></path></svg></span>
-          <h3>Test mode costs nothing</h3>
-          <p>
-            Drive your own handler end to end without spending anything, then swap the key for
-            a live one. Nothing else in your code changes.
-          </p>
-        </article>
-        <article class="card">
-          <span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span>
-          <h3>One narrow exception</h3>
-          <p>
-            On the one network where the payment lands straight in your own wallet, nothing of
-            ours is in the path — so the fee is charged to a balance instead, and the balance and
-            its limit are on your dashboard.
-          </p>
-        </article>
+          <a class="btn btn-lime" data-dash="up" href="/dashboard?signup=1">See your rate</a>
+        </div>
+        <ul class="plan-points">
+          <li>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"></path></svg>
+            <div>
+              <h3>Taken in the settlement</h3>
+              <p>Your wallet gets the payment less our fee, and we get the fee — in the same transaction, with no intermediate balance anywhere.</p>
+            </div>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"></path></svg>
+            <div>
+              <h3>Your rate is on your dashboard</h3>
+              <p>Not on this page, where a figure printed today would be argued from next year.</p>
+            </div>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"></path></svg>
+            <div>
+              <h3>Test mode costs nothing</h3>
+              <p>Drive your own handler end to end without spending anything, then swap the key for a live one. Nothing else in your code changes.</p>
+            </div>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"></path></svg>
+            <div>
+              <h3>One narrow exception</h3>
+              <p>On the one network where the payment lands straight in your own wallet, nothing of ours is in the path — so the fee is charged to a balance instead, and the balance and its limit are on your dashboard.</p>
+            </div>
+          </li>
+        </ul>
       </div>
     </div>
   </div>
@@ -1362,22 +1493,27 @@
 
 <!-- ── docs ───────────────────────────────────────────────────────────── -->
 <section id="docs" aria-labelledby="docs-title">
-  <div class="wrap grid">
-    <div class="rail">
-      <span class="rail-eyebrow">Integration</span>
-      <div class="rail-figure">~15</div>
-      <p class="rail-note">Lines of code for a working checkout, including the webhook.</p>
-    </div>
+  <div class="wrap">
     <div class="body">
-      <h2 id="docs-title">Built for developers</h2>
-      <p class="lede">
-        Two ways in. Open a <strong>checkout</strong> and send your customer a link — we
-        handle the currency choice, the address, the QR and the waiting. Or open an
-        <strong>invoice</strong> yourself when you already know which coin they are paying in
-        and want to render the payment page inside your own app.
-      </p>
+      <div class="sec-head reveal">
+        <div class="sec-copy">
+          <span class="eyebrow">Developers</span>
+          <h2 id="docs-title">Built for developers</h2>
+          <p class="lede">
+            Two ways in. Open a <strong>checkout</strong> and send your customer a link — we
+            handle the currency choice, the address, the QR and the waiting. Or open an
+            <strong>invoice</strong> yourself when you already know which coin they are paying in
+            and want to render the payment page inside your own app.
+          </p>
+        </div>
+        <div class="rail">
+          <span class="rail-eyebrow">Integration</span>
+          <div class="rail-figure">~15</div>
+          <p class="rail-note">Lines of code for a working checkout, including the webhook.</p>
+        </div>
+      </div>
 
-      <div class="pair">
+      <div class="pair reveal">
         <article class="card">
           <span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 5l-3 14"></path></svg></span>
           <h3>The REST API</h3>
@@ -1399,24 +1535,34 @@
         </article>
       </div>
 
-      <div class="doc-block">
-        <div class="doc-h">
-          <h3>Quickstart</h3>
-          <span class="pill" data-tone="lime">start here</span>
+      <div class="doc-block reveal">
+        <div class="doc-copy">
+          <div class="doc-h">
+            <h3>Quickstart</h3>
+            <span class="pill" data-tone="lime">start here</span>
+          </div>
+          <p>
+            One request, one link. Amounts are strings of micro-dollars — never floats, because
+            19.99 has no exact binary representation and a shop at that price would be a cent out.
+          </p>
+          <p>
+            Send them <code>url</code>. File <code>receiptUrl</code> with the order — it answers
+            <code>409 not_paid</code> until the money lands, then becomes the receipt your
+            customer keeps.
+          </p>
         </div>
-        <p>
-          One request, one link. Amounts are strings of micro-dollars — never floats, because
-          19.99 has no exact binary representation and a shop at that price would be a cent out.
-        </p>
-        <div class="code">
-          <div class="code-head">bash</div>
-        <pre><span class="c"># Ask for $19.99, and get a link to send your customer</span>
+        <div class="code" data-tabs>
+          <div class="code-head" role="tablist" aria-label="Quickstart">
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <button type="button" role="tab" id="tab-q-request" aria-selected="true" aria-controls="panel-q-request">request.sh</button>
+            <button type="button" role="tab" id="tab-q-response" aria-selected="false" aria-controls="panel-q-response" tabindex="-1">response.json</button>
+          </div>
+        <pre id="panel-q-request" role="tabpanel" aria-labelledby="tab-q-request"><span class="c"># Ask for $19.99, and get a link to send your customer</span>
 curl -X POST https://api.avexpay.net/v1/organizations/<span class="v">$ORG</span>/checkouts \
   -H <span class="s">"Authorization: Bearer $AVEX_KEY"</span> \
   -H <span class="s">"Content-Type: application/json"</span> \
-  -d <span class="s">'{"amountFiatMicros":"19990000","reference":"order-1042"}'</span>
-
-<span class="c"># 201 Created</span>
+  -d <span class="s">'{"amountFiatMicros":"19990000","reference":"order-1042"}'</span></pre>
+        <pre id="panel-q-response" role="tabpanel" aria-labelledby="tab-q-response" hidden><span class="c"># 201 Created</span>
 {
   <span class="k">"id"</span>: <span class="s">"c0ffee00-…"</span>,
   <span class="k">"url"</span>: <span class="s">"https://avexpay.net/pay/c0ffee00-…"</span>,
@@ -1424,48 +1570,58 @@ curl -X POST https://api.avexpay.net/v1/organizations/<span class="v">$ORG</span
   <span class="k">"mode"</span>: <span class="s">"live"</span>
 }</pre>
         </div>
-        <p>
-          Send them <code>url</code>. File <code>receiptUrl</code> with the order — it answers
-          <code>409 not_paid</code> until the money lands, then becomes the receipt your
-          customer keeps.
-        </p>
       </div>
 
-      <div class="doc-block">
-        <div class="doc-h">
-          <h3>Test mode</h3>
-          <span class="pill">no faucet, no testnet</span>
+      <div class="doc-block reveal">
+        <div class="doc-copy">
+          <div class="doc-h">
+            <h3>Test mode</h3>
+            <span class="pill">no faucet, no testnet</span>
+          </div>
+          <p>
+            Start with a key whose prefix is <code>ak_test_</code>. Everything behaves the same,
+            except the deposit addresses are <strong>not valid on any chain</strong> — nothing can
+            be sent to one by accident. Pay them from the API and your webhook handler runs
+            exactly as it would for real money.
+          </p>
+          <p>
+            A test key cannot open a live invoice however it asks, and a live key cannot opt into
+            test mode. Every invoice and every webhook says which it is, so a key shipped to
+            production by mistake is visible in your own logs.
+          </p>
         </div>
-        <p>
-          Start with a key whose prefix is <code>ak_test_</code>. Everything behaves the same,
-          except the deposit addresses are <strong>not valid on any chain</strong> — nothing can
-          be sent to one by accident. Pay them from the API and your webhook handler runs
-          exactly as it would for real money.
-        </p>
         <div class="code">
-          <div class="code-head">bash</div>
+          <div class="code-head">
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="tab">simulate.sh</span>
+          </div>
         <pre><span class="c"># Drive your own handler end to end without spending anything</span>
 curl -X POST https://api.avexpay.net/v1/organizations/<span class="v">$ORG</span>/invoices/<span class="v">$ID</span>/simulate-payment \
   -H <span class="s">"Authorization: Bearer $AVEX_TEST_KEY"</span></pre>
         </div>
-        <p>
-          A test key cannot open a live invoice however it asks, and a live key cannot opt into
-          test mode. Every invoice and every webhook says which it is, so a key shipped to
-          production by mistake is visible in your own logs.
-        </p>
       </div>
 
-      <div class="doc-block">
-        <div class="doc-h">
-          <h3>Webhooks</h3>
-          <span class="pill" data-tone="warn">verify before you act</span>
+      <div class="doc-block reveal">
+        <div class="doc-copy">
+          <div class="doc-h">
+            <h3>Webhooks</h3>
+            <span class="pill" data-tone="warn">verify before you act</span>
+          </div>
+          <p>
+            Only a signed webhook should complete an order. The page your customer returns to is
+            a URL anybody can visit, so it must never change an order's status.
+          </p>
+          <p>
+            Compare the whole string in constant time — <code>==</code> on a signature leaks how
+            much of a guess was right. Retries are signed afresh, so a replayed old delivery
+            fails the timestamp check rather than the signature one.
+          </p>
         </div>
-        <p>
-          Only a signed webhook should complete an order. The page your customer returns to is
-          a URL anybody can visit, so it must never change an order's status.
-        </p>
         <div class="code">
-          <div class="code-head">python</div>
+          <div class="code-head">
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="tab">verify.py</span>
+          </div>
         <pre><span class="c"># avex-signature: t=1787048882,v1=9f2c41ab…</span>
 <span class="c"># Sign "&lt;t&gt;.&lt;raw body&gt;" with your endpoint secret, compare in constant time,</span>
 <span class="c"># and reject a timestamp more than <span id="doc-window">300</span> seconds old.</span>
@@ -1474,22 +1630,19 @@ signed = <span class="s">f"{t}.{raw_body}"</span>
 expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
 <span class="k">if not</span> hmac.compare_digest(expected, v1): <span class="k">return</span> <span class="v">400</span></pre>
         </div>
-        <p>
-          Compare the whole string in constant time — <code>==</code> on a signature leaks how
-          much of a guess was right. Retries are signed afresh, so a replayed old delivery
-          fails the timestamp check rather than the signature one.
-        </p>
       </div>
 
-      <div class="doc-block">
-        <div class="doc-h">
-          <h3>What to expect back</h3>
+      <div class="doc-block doc-wide reveal">
+        <div class="doc-copy">
+          <div class="doc-h">
+            <h3>What to expect back</h3>
+          </div>
+          <p>
+            Every failure is <code>{ "error": "code", "message": "…" }</code>. Branch on
+            <code>error</code>; show <code>message</code> to a person. The status says which of us
+            has to act.
+          </p>
         </div>
-        <p>
-          Every failure is <code>{ "error": "code", "message": "…" }</code>. Branch on
-          <code>error</code>; show <code>message</code> to a person. The status says which of us
-          has to act.
-        </p>
         <div class="scroll">
           <table>
             <thead>
@@ -1519,16 +1672,18 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
             </tbody>
           </table>
         </div>
-        <p>
-          There is one <code>402</code>, and it is narrow. On the networks where our commission
-          is taken out of the payment itself, nothing about your account with us can refuse you
-          an invoice. On the one network where the payment goes straight into your own wallet,
-          there is nothing of ours in the path to take a commission from — so it is charged to a
-          balance instead, and past a limit new invoices on that network wait until the balance
-          is settled. Every other network keeps working, and those invoices are what clear it.
-          The balance and the limit are on your dashboard, current, rather than in a page
-          somebody would have to remember to update.
-        </p>
+        <div class="doc-copy">
+          <p>
+            There is one <code>402</code>, and it is narrow. On the networks where our commission
+            is taken out of the payment itself, nothing about your account with us can refuse you
+            an invoice. On the one network where the payment goes straight into your own wallet,
+            there is nothing of ours in the path to take a commission from — so it is charged to a
+            balance instead, and past a limit new invoices on that network wait until the balance
+            is settled. Every other network keeps working, and those invoices are what clear it.
+            The balance and the limit are on your dashboard, current, rather than in a page
+            somebody would have to remember to update.
+          </p>
+        </div>
       </div>
     </div>
   </div>
@@ -1537,6 +1692,7 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
 <!-- ── start ──────────────────────────────────────────────────────────── -->
 <section id="start" class="start" aria-labelledby="start-title">
   <div class="wrap start-inner">
+    <span class="eyebrow">Get started</span>
     <h2 id="start-title">Start in test mode, today</h2>
     <p>
       Create an account and you have a test key immediately. Drive your own webhook handler
@@ -1593,24 +1749,33 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
         <a href="#pricing">Pricing</a>
         <a href="#docs">Errors</a>
       </div>
+      <div class="foot-col">
+        <span class="foot-h">Account</span>
+        <a data-dash="in" href="/dashboard">Sign in</a>
+        <a data-dash="up" href="/dashboard?signup=1">Create an account</a>
+        <a href="#start">Start in test mode</a>
+      </div>
     </nav>
   </div>
   <div class="wrap foot-end">
-    <span>AVEX Pay</span>
+    <span>AVEX Pay · Non-custodial payments infrastructure</span>
     <span><a href="#main">Back to top</a></span>
   </div>
 </footer>
 
 <!--
-  The menu, in its own script.
+  The chrome, in its own script: the menu, the code tabs and the entrance of each section.
 
   The page's main script inlines four of the product's modules, and a collision between them
   is a SyntaxError that takes that whole script down. The menu is the one thing on the page a
-  phone reader cannot do without, so it does not share that fate.
+  phone reader cannot do without, so it does not share that fate — and neither does the
+  reveal, which would otherwise leave every section below the hero invisible.
 -->
 <script>
 (() => {
   'use strict';
+  document.documentElement.classList.add('js');
+
   const bar = document.querySelector('.bar');
   const toggle = bar.querySelector('.nav-toggle');
   const links = document.getElementById('nav-links');
@@ -1634,6 +1799,54 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
   matchMedia('(min-width: 46.01rem)').addEventListener('change', (event) => {
     if (event.matches) set(false);
   });
+
+  /**
+   * Code tabs: the request and the response of one call, in one frame.
+   *
+   * WAI-ARIA tabs: click or arrow keys select, the selected tab is the only one in the tab
+   * order, and the panel it controls is the only one shown.
+   */
+  for (const frame of document.querySelectorAll('[data-tabs]')) {
+    const tabs = [...frame.querySelectorAll('[role="tab"]')];
+    const select = (tab) => {
+      for (const other of tabs) {
+        const on = other === tab;
+        other.setAttribute('aria-selected', String(on));
+        other.tabIndex = on ? 0 : -1;
+        document.getElementById(other.getAttribute('aria-controls')).hidden = !on;
+      }
+    };
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => select(tab));
+      tab.addEventListener('keydown', (event) => {
+        const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+        if (!step) return;
+        event.preventDefault();
+        const next = tabs[(index + step + tabs.length) % tabs.length];
+        select(next);
+        next.focus();
+      });
+    });
+  }
+
+  /**
+   * Each section fades in as it reaches the viewport. Not for anybody who has asked for no
+   * motion — for them, and for a browser without the observer, everything is simply there.
+   */
+  const revealed = document.querySelectorAll('.reveal');
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (still || !('IntersectionObserver' in window)) {
+    for (const node of revealed) node.classList.add('in');
+  } else {
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        entry.target.classList.add('in');
+        observer.unobserve(entry.target);
+      }
+    }, { rootMargin: '0px 0px -10% 0px', threshold: 0.05 });
+    for (const node of revealed) observer.observe(node);
+  }
 })();
 </script>
 

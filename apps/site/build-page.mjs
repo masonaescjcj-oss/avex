@@ -27,11 +27,15 @@ const MODULES = [
   join(here, 'dist', 'facts.js'),
 ];
 const MARKER = '/* @inject:modules */';
+const TOKENS_MARKER = '/* @inject:tokens */';
+const TOKENS = join(here, '..', '..', 'packages', 'design', 'tokens.css');
 
 const template = readFileSync(join(here, 'public', 'site.template.html'), 'utf8');
-if (!template.includes(MARKER)) {
-  console.error(`template is missing the ${MARKER} marker`);
-  process.exit(1);
+for (const marker of [MARKER, TOKENS_MARKER]) {
+  if (!template.includes(marker)) {
+    console.error(`template is missing the ${marker} marker`);
+    process.exit(1);
+  }
 }
 
 /** Strip module syntax so the code runs in a plain classic script. */
@@ -83,6 +87,20 @@ const inlined = stripped.map((entry) => entry.source).join('\n\n');
 let output = template.replace(MARKER, () => inlined);
 if (!output.includes(inlined)) {
   console.error('inlining altered the injected source; refusing to write a corrupt page');
+  process.exit(1);
+}
+
+/**
+ * The design tokens, from the one file every surface shares.
+ *
+ * The page's stylesheet starts from `packages/design/tokens.css` and extends it; it never
+ * carries a palette of its own. Inlined the same guarded way as the modules, because a
+ * `$` in a token value would otherwise be read as a substitution pattern too.
+ */
+const tokens = readFileSync(TOKENS, 'utf8').trim();
+output = output.replace(TOKENS_MARKER, () => tokens);
+if (!output.includes(tokens)) {
+  console.error('inlining altered the design tokens; refusing to write a corrupt page');
   process.exit(1);
 }
 

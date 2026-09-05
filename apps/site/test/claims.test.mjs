@@ -319,9 +319,9 @@ describe('the page holds together', () => {
 
   test('the body paints its own background', () => {
     /**
-     * The artifact composites over a ground the viewer paints in *its* theme. A transparent
-     * body would borrow that, and this page is committed to black — light-mode viewers would
-     * get white text on white.
+     * A host may composite the page over a ground of its own. A transparent body would borrow
+     * that ground, so the body names its own — `--void`, the page's alias for the surface the
+     * tokens define in each theme.
      */
     assert.match(page, /body \{[^}]*background: var\(--void\)/);
   });

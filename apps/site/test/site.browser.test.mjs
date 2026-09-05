@@ -385,13 +385,15 @@ describe('avex.pay', { skip: playwright ? false : 'playwright is not installed' 
 
   test('the ground is painted, so the page holds on any host', async () => {
     /**
-     * The artifact composites over a ground the viewer paints in *its* theme. This page is
-     * committed to black — a transparent body would put white text on a white ground for
-     * every light-mode reader.
+     * A host may composite the page over a ground of its own. The body paints its own — the
+     * light surface the tokens name — so a transparent body never borrows a dark host's
+     * ground and puts dark ink on it.
      */
     const { page, context } = await open();
     const background = await page.$eval('body', (node) => getComputedStyle(node).backgroundColor);
-    assert.equal(background, 'rgb(0, 0, 0)');
+    const [r, g, b, a = '1'] = background.match(/[\d.]+/g);
+    assert.equal(Number(a), 1, `the body is translucent: ${background}`);
+    assert.ok(Number(r) > 240 && Number(g) > 240 && Number(b) > 240, `the default ground is ${background}, not light`);
     await context.close();
   });
 });

@@ -293,7 +293,7 @@ describe('the site as a layout', { skip: playwright ? false : 'playwright is not
      * as the presence of a CSS rule, because the rule was there when a `border-radius` reset
      * on `.btn` swallowed it once.
      */
-    for (const theme of [undefined, 'light']) {
+    for (const theme of [undefined, 'dark']) {
       const { tab, context } = await open(1440, { theme });
       for (const selector of ['.bar nav a.btn', '.hero-cta a.btn-ghost', '#d-payout', '#start-email']) {
         await tab.focus(selector);
@@ -301,7 +301,7 @@ describe('the site as a layout', { skip: playwright ? false : 'playwright is not
           const style = getComputedStyle(node);
           return { width: parseFloat(style.outlineWidth), style: style.outlineStyle, color: style.outlineColor };
         });
-        assert.ok(outline.width >= 2 && outline.style !== 'none', `${selector} shows no focus ring (${theme ?? 'dark'})`);
+        assert.ok(outline.width >= 2 && outline.style !== 'none', `${selector} shows no focus ring (${theme ?? 'light'})`);
         assert.notEqual(outline.color, 'rgba(0, 0, 0, 0)', `${selector} has a transparent focus ring`);
       }
       await context.close();
@@ -325,18 +325,23 @@ describe('the site as a layout', { skip: playwright ? false : 'playwright is not
    * The text a person reads as text, against whatever is painted behind it.
    *
    * Labels set in small caps and the code sample's comments are read too, so they are in the
-   * list. What is left out is the primary button's ink on lime (checked separately, it is
-   * black on near-white) and anything over the blurred bar, whose ground is translucent.
+   * list, and so is everything on the two inverted bands (pricing's lead panel and the closing
+   * call to action), which swap ink and surface and are where a token chosen for one theme
+   * fails in the other. What is left out is the primary button's ink on lime (checked
+   * separately) and anything over the blurred bar, whose ground is translucent.
    */
   const READABLE = [
     '.hero-sub', '.hero-hint', '.body p', '.lede', '.card p', '.step p', '.step-n', 'figcaption',
     '.rail-note', '.rail-eyebrow', '.field label', '.result-note', '.result-value', '.start-note',
     '.foot-brand p', '.foot-col a', '.foot-h', 'td', 'th', 'pre .c', 'pre .k', 'pre .s', 'pre .v',
     '.pill', '.derive-live', '.eyebrow', '.code-head', 'p code',
+    '.derive-title', '.result-label', '.card h3', '.step h3', '.cards-sub', '.doc-copy p', 'td.mono',
+    '.plan-lead p', '.plan-lead h3', '.plan-lead .eyebrow', '.plan-points p', '.plan-points h3',
+    '.start-inner > p', '.start-inner h2', '.start .eyebrow', '.rail-figure', '.foot-end a',
   ];
 
-  for (const theme of [undefined, 'light']) {
-    test(`body text reaches 4.5:1 against its ground (${theme ?? 'dark'})`, async () => {
+  for (const theme of [undefined, 'dark']) {
+    test(`body text reaches 4.5:1 against its ground (${theme ?? 'light'})`, async () => {
       const { tab, context } = await open(1440, { theme });
       const failures = await tab.evaluate((selectors) => {
         const opaque = (node) => {
@@ -378,60 +383,89 @@ describe('the site as a layout', { skip: playwright ? false : 'playwright is not
     });
   }
 
-  test('the light palette redefines every colour the dark one sets', () => {
+  test('the page paints only with the shared tokens, and every token it uses exists in both themes', () => {
     /**
-     * Dark is the default and light is opt-in, but a token that only exists in the dark block
-     * is a colour that survives the switch — lime text on a white ground, say. Read statically:
-     * every dark token whose value is a colour has a light counterpart, and nothing on the page
-     * reaches for a token neither block defines.
+     * The stylesheet starts from `packages/design/tokens.css`, inlined at build time, and
+     * extends it. Three things keep that true rather than nominal. Every colour the dark
+     * palette sets has a light definition, so no token survives the switch as the wrong
+     * theme's value. Every `var(--x)` the page reaches for is defined — by the tokens or by the
+     * page's own alias block, which may define measures and faces but no colour of its own.
+     * And no colour is written out by hand anywhere else, in the CSS or in an SVG attribute.
      */
     const [, style] = page.match(/<style>([\s\S]*?)<\/style>/);
-    const block = (selector) => {
-      const match = style.match(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([\\s\\S]*?)\\n  \\}`));
-      assert.ok(match, `no ${selector} block`);
-      return new Map([...match[1].matchAll(/^\s*(--[\w-]+):\s*([^;]+);/gm)].map(([, name, value]) => [name, value.trim()]));
-    };
-    const dark = block(':root');
-    const light = block(':root[data-theme="light"]');
+    const tokens = readFileSync(join(repo, 'packages', 'design', 'tokens.css'), 'utf8').trim();
+    assert.ok(style.includes(tokens), 'the design tokens are not inlined into the stylesheet');
+    assert.ok(!page.includes('/* @inject:tokens */'), 'the tokens marker was left in the page');
 
-    const colours = [...dark].filter(([, value]) => /#|rgb/.test(value)).map(([name]) => name);
-    assert.ok(colours.length >= 20, `read only ${colours.length} colour tokens; the parser is stale`);
-    for (const name of colours) {
+    const declarations = (block) =>
+      new Map([...block.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [name, value.trim()]));
+    const blockOf = (source, selector) => {
+      const match = source.match(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`));
+      assert.ok(match, `no ${selector} block`);
+      return match[1];
+    };
+    const light = declarations(blockOf(tokens, ':root'));
+    const darkSystem = declarations(blockOf(tokens, ':root:not([data-theme="light"])'));
+    const darkForced = declarations(blockOf(tokens, ':root[data-theme="dark"]'));
+
+    const isColour = (value) => /#|rgb/.test(value);
+    const darkColours = [...darkSystem].filter(([, value]) => isColour(value)).map(([name]) => name);
+    assert.ok(darkColours.length >= 20, `read only ${darkColours.length} colour tokens; the parser is stale`);
+    for (const name of darkColours) {
       assert.ok(light.has(name), `${name} is a colour in the dark palette and undefined in the light one`);
     }
-    for (const name of light.keys()) {
-      assert.ok(dark.has(name), `${name} exists only in the light palette`);
+    assert.deepEqual([...darkForced.keys()].sort(), [...darkSystem.keys()].sort(), 'the two dark blocks disagree');
+
+    // The page's own block: the `:root` after the tokens. Aliases and measures only.
+    const own = style.slice(style.indexOf(tokens) + tokens.length);
+    const extension = declarations(blockOf(own, ':root'));
+    assert.ok(extension.has('--void'), 'the page no longer names its ground');
+    for (const [name, value] of extension) {
+      assert.ok(!isColour(value), `${name}: ${value} defines a colour outside the tokens`);
     }
 
+    const defined = new Set([...light.keys(), ...extension.keys()]);
     const used = new Set([...page.matchAll(/var\((--[\w-]+)\)/g)].map(([, name]) => name));
+    assert.ok(used.size >= 30, `only ${used.size} tokens are used; the page is not built on them`);
     for (const name of used) {
-      assert.ok(dark.has(name), `${name} is used but never defined`);
+      assert.ok(defined.has(name), `${name} is used but never defined`);
     }
 
-    // And no colour is written out by hand where a token should be, outside the two palettes.
-    const outside = style
-      .replace(/:root(\[data-theme="light"\])?\s*\{[\s\S]*?\n  \}/g, '')
-      .match(/#[0-9a-fA-F]{3,8}\b|rgba?\(/g);
-    assert.deepEqual(outside ?? [], [], 'a colour is hard-coded outside the palette blocks');
-    const inSvg = page.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '').match(/(?:fill|stroke)="#[^"]*"/g);
+    // Outside the token palettes, no colour is written out by hand.
+    const outside = own.replace(/:root\s*\{[^}]*\}/, '').match(/#[0-9a-fA-F]{3,8}\b|rgba?\(/g);
+    assert.deepEqual(outside ?? [], [], 'a colour is hard-coded outside the tokens');
+    const inSvg = page
+      .replace(/<script[\s\S]*?<\/script>/g, '')
+      .replace(/<style[\s\S]*?<\/style>/g, '')
+      .match(/(?:fill|stroke)="#[^"]*"/g);
     assert.deepEqual(inSvg ?? [], [], 'an SVG paints a colour that is not a token');
   });
 
-  test('the light theme paints a light ground and dark ink, and dark stays the default', async () => {
+  test('light is the default, and data-theme="dark" paints a dark ground with light ink', async () => {
+    /**
+     * The tokens are light-first and the page follows them: a reader with no preference gets
+     * a white ground. Dark is a palette in its own right, reached by the system preference or
+     * by the attribute — and it has to be dark, not a light page with a dark token or two.
+     */
     const { tab, context } = await open(1440);
-    const dark = await tab.$eval('body', (node) => getComputedStyle(node).backgroundColor);
-    assert.equal(dark, 'rgb(0, 0, 0)');
-
-    await tab.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
     const light = await tab.$eval('body', (node) => ({
       bg: getComputedStyle(node).backgroundColor,
       ink: getComputedStyle(node).color,
     }));
-    assert.ok(luminance(light.bg) > 0.8, `the light ground is ${light.bg}`);
-    assert.ok(luminance(light.ink) < 0.05, `the light ink is ${light.ink}`);
-    // Links are not lime on white.
-    const link = await tab.$eval('.foot-end a', (node) => getComputedStyle(node).color);
-    assert.ok(contrast(link, light.bg) >= 4.5, `a link is ${link} on ${light.bg}`);
+    assert.ok(luminance(light.bg) > 0.8, `the default ground is ${light.bg}`);
+    assert.ok(luminance(light.ink) < 0.05, `the default ink is ${light.ink}`);
+    const linkOnLight = await tab.$eval('.foot-end a', (node) => getComputedStyle(node).color);
+    assert.ok(contrast(linkOnLight, light.bg) >= 4.5, `a link is ${linkOnLight} on ${light.bg}`);
+
+    await tab.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+    const dark = await tab.$eval('body', (node) => ({
+      bg: getComputedStyle(node).backgroundColor,
+      ink: getComputedStyle(node).color,
+    }));
+    assert.ok(luminance(dark.bg) < 0.05, `the dark ground is ${dark.bg}`);
+    assert.ok(luminance(dark.ink) > 0.8, `the dark ink is ${dark.ink}`);
+    const linkOnDark = await tab.$eval('.foot-end a', (node) => getComputedStyle(node).color);
+    assert.ok(contrast(linkOnDark, dark.bg) >= 4.5, `a link is ${linkOnDark} on ${dark.bg}`);
     await context.close();
   });
 
