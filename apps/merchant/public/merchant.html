@@ -314,6 +314,13 @@
     min-width: 0;
   }
   .panel-head h2 { font-size: var(--s1); font-weight: 600; letter-spacing: -0.01em; line-height: var(--lh-tight); min-width: 0; }
+  /* The balance card's state as a dot before its headline, from the tone the script sets on the card. */
+  .panel[data-tone] .panel-head h2::before {
+    content: ''; display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%;
+    margin-right: var(--sp-2); vertical-align: 0.1em; background: var(--ok);
+  }
+  .panel[data-tone="owed"] .panel-head h2::before { background: var(--warn); }
+  .panel[data-tone="blocked"] .panel-head h2::before { background: var(--danger); }
   .panel-head > .note { flex: 0 1 auto; text-align: right; }
   .panel-body { padding: 0 var(--pad) var(--pad); display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
 
@@ -329,7 +336,8 @@
   .cols > .panel { margin-bottom: 0; }
   /* The checklist card leaves once everything is done; the chart then takes the row. */
   .cols:has(> .panel[hidden]) { grid-template-columns: minmax(0, 1fr); }
-  @media (max-width: 63.99em) { .cols { grid-template-columns: minmax(0, 1fr); } }
+  /* Under 1200px the checklist column would be narrower than its sentences; the cards stack. */
+  @media (max-width: 74.99em) { .cols { grid-template-columns: minmax(0, 1fr); } }
 
   /* ── sign-in ──────────────────────────────────────────────────────────── */
 
@@ -347,7 +355,9 @@
   /* ── stats ────────────────────────────────────────────────────────────── */
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: var(--gap); }
-  .kpi { margin-bottom: var(--gap); }
+  /* Four KPI cards in one row only where a figure like $18,420.00 fits each of them; two by two below that. */
+  .kpi { margin-bottom: var(--gap); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (min-width: 75em) { .kpi { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
   /*
     A KPI card: label in small caps, the figure large, a qualifier beneath. Standing on the
@@ -5471,8 +5481,8 @@ function matchPreview(method, url, routes = previewRoutes()) {
      * colour for the case that is.
      */
     panel.setAttribute('data-tone', view.tone);
-    el('balance-headline').textContent =
-      (view.tone === 'blocked' ? '⛔ ' : view.tone === 'owed' ? '📉 ' : '✅ ') + view.headline;
+    // The tone is drawn from `data-tone` on the card; the words carry the state exactly.
+    el('balance-headline').textContent = view.headline;
 
     fill(el('balance-stats'), [
       stat('Balance', view.amount, view.tone === 'clear' ? 'nothing to settle' : 'owed to us'),
