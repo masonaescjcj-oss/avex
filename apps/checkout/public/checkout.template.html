@@ -944,7 +944,7 @@
     <!-- ══ main: the action ══════════════════════════════════════════════ -->
     <main class="panel">
       <div class="panel-head">
-        <h1>Pay Example Store</h1>
+        <h1 id="pay-heading">Pay Example Store</h1>
         <p class="eyebrow">Step <span class="eyebrow-mono" id="step-of">2</span> of 3</p>
       </div>
 
@@ -1883,6 +1883,18 @@
       return;
     }
 
+    /**
+     * Whose page this is, from the session.
+     *
+     * The heading was hard-coded "Pay Example Store" and nothing ever wrote the real name
+     * into it, so every live merchant's payers were told they were paying an example. The
+     * live tests passed because their stub merchant happened to be called Example Store
+     * too — which is exactly the kind of agreement between a page and a fixture that this
+     * repository has been bitten by before.
+     */
+    if (typeof view.merchantName === 'string' && view.merchantName.trim() !== '') {
+      el('pay-heading').textContent = 'Pay ' + view.merchantName.trim();
+    }
     el('amount').textContent = (Number(view.amountFiatMicros) / 1e6).toFixed(2);
     el('amount-unit').textContent = 'USD';
     if (view.description) {

@@ -207,6 +207,26 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
   const list = (page, selector) =>
     page.$$eval(selector, (nodes) => nodes.map((n) => n.textContent.trim()));
 
+  test('the heading names the merchant being paid, not an example', async () => {
+    /**
+     * It said "Pay Example Store" to every payer of every merchant. The heading was
+     * hard-coded and `loadLive` never wrote the session's `merchantName` into it — and the
+     * tests here passed because the stub merchant was also called Example Store. A stub
+     * that agrees with a hard-coded page tests nothing, so this one is called something
+     * else.
+     */
+    const { page, context } = await open({ session: { merchantName: 'Kian Digital' } });
+    await page.waitForFunction(
+      () => document.getElementById('pay-heading')?.textContent?.includes('Kian Digital'),
+      { timeout: 5000 },
+    );
+    assert.equal(
+      (await page.$eval('#pay-heading', (node) => node.textContent)).trim(),
+      'Pay Kian Digital',
+    );
+    await context.close();
+  });
+
   test('the session id comes from the query string and drives the requests', async () => {
     const { page, context, requests } = await open();
     // Both loads, in order: the session first, then what it may be paid in.
