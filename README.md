@@ -35,10 +35,12 @@ integrations        the WooCommerce plugin
 
 `apps/site` is the one surface nobody would think to test against reality, which makes it
 the one where a claim quietly stops being true. So it holds no numbers of its own: the
-chain table is built from `CURATED_ASSETS`, the commission ladder is compared against
-`FEE_TIERS` in the API by a test, the on-chain ceiling comes from `Forwarder.sol`, and the
-webhook window comes from the plugin that enforces it. Reprice the commission and the site
-fails its own suite rather than quoting last month's rate.
+network count is read from the chain registry at build time, the on-chain ceiling comes from
+`Forwarder.sol`, and the webhook window comes from the plugin that enforces it. The rate and
+the commission ladder are deliberately *not* on the page — `apps/site/test/claims.test.mjs`
+forbids a percentage or a ticker there — because a page quoting them has to be redeployed in
+step with `FEE_TIERS`, and the version a visitor is reading is whichever was deployed last.
+They are shown on the dashboard, which reads them live.
 
 The hero derives a real CREATE2 address in the browser using the same `keccak256` and
 `predictForwarder` the gateway calls. That is not a flourish: the page's central claim is
