@@ -13,301 +13,283 @@
 <meta name="avex-api" content="">
 <title>AVEX Pay — Dashboard</title>
 <style>
+  /* @inject:tokens */
+
   /**
    * AVEX Pay merchant dashboard.
    *
-   * The same design language as the checkout and the staff panel: pure black ground,
-   * acid lime spent on the one thing that matters per view, dark cards at a 14-20px
-   * radius, and monospace for every number, address and identifier so figures line up
-   * under each other and can be read digit by digit. Dark only, because AVEX has no
-   * light theme — so every colour is painted explicitly and `color-scheme: dark` tells
-   * the browser to draw its own widgets (selects, scrollbars) to match.
+   * Everything visual is decided in `packages/design/tokens.css`, inlined above at build
+   * time: two palettes (light first, dark by preference), one type scale, the 8px grid,
+   * radii, shadows and motion. This sheet only arranges them. It never redefines a token, so
+   * the dashboard, the checkout and the site are one product by construction.
    *
-   * Rhythm: every spacing value is a multiple of 4px and the panel padding sits on the
-   * 8px grid (16px on a phone, 24px from a tablet up). One radius scale — panels at
-   * `--r-lg`, tiles and rows at `--r-md`, inputs and banners at `--r-sm`, pills round.
-   * One type scale, `--s-2` to `--s3`. Anything that moves respects reduced motion.
+   * The shape is the one every payments dashboard has settled on, because it is the one that
+   * works for hours of reading: a fixed sidebar carrying the wordmark, the sections and the
+   * account; a content column that never grows past 1200px; cards on a tinted ground; one
+   * accent spent on the current section and the primary action. Below 1024px the sidebar
+   * folds to an icon rail with tooltips; below 640px it becomes a bottom bar with the four
+   * most-used sections and a "More" sheet for the rest. The section buttons are the same
+   * `nav.tabs button` elements in every layout — that is how they are found.
+   *
+   * Monospace is for addresses, identifiers and amounts in tables, where digits have to
+   * line up and be read one at a time. Headline figures use the text face with tabular
+   * numerals. Every colour is a token in both themes, and body text is kept at or above
+   * 4.5:1 against the surface it is actually painted on — a browser test measures it.
    */
   :root {
-    color-scheme: dark;
-
-    --void: #000000;
-    --card: #121212;
-    --card-2: #1A1A1A;
-    --card-3: #242424;
-    --line: #262626;
-    --line-2: #333333;
-
-    --ink: #FFFFFF;
-    /* 6.9:1 on --card-2, 5.4:1 on --card-3. The previous #8B8B8B fell to 4.6:1 on the tiles. */
-    --muted: #A3A3A3;
-    /* Labels and disabled controls only, never body copy: 4.6:1 on --card. */
-    --faint: #7D7D7D;
-
-    --lime: #C6F73F;
-    --lime-ink: #0A0A0A;
-    --lime-wash: rgba(198, 247, 63, 0.10);
-    --lime-edge: rgba(198, 247, 63, 0.28);
-    --lime-dim: #7C9C26;
-
-    --teal: #2ED3A0;
-    --teal-wash: rgba(46, 211, 160, 0.12);
-    --amber: #F5A623;
-    --amber-wash: rgba(245, 166, 35, 0.14);
-    --coral: #FF5A4E;
-    --coral-wash: rgba(255, 90, 78, 0.14);
-
-    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif;
-    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-
-    --r-lg: 20px;
-    --r-md: 14px;
-    --r-sm: 10px;
-    --pill: 999px;
-
-    --s-2: 0.6875rem;
-    --s-1: 0.8125rem;
-    --s0: 0.9375rem;
-    --s1: 1.0625rem;
-    --s2: 1.375rem;
-    --s3: 1.875rem;
-
-    /* The 8px grid. */
-    --sp-1: 0.25rem;
-    --sp-2: 0.5rem;
-    --sp-3: 0.75rem;
-    --sp-4: 1rem;
-    --sp-5: 1.5rem;
-    --sp-6: 2rem;
-    --sp-8: 3rem;
-
-    /* Panel padding and the gap between panels, both stepped up once on a tablet. */
-    --pad: var(--sp-4);
-    --gap: var(--sp-3);
-
-    /* Control heights: 44px touch targets on a phone, 40px with a mouse. */
-    --control: 2.75rem;
-    --control-sm: 2.25rem;
-
-    --focus: 0 0 0 2px var(--void), 0 0 0 4px var(--lime);
-    --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px -16px rgba(0, 0, 0, 0.8);
+    /* Page-level layout, extending the tokens rather than redefining any. */
+    --side-w: 15rem;              /* 240px sidebar */
+    --rail-w: 4.5rem;             /* 72px icon rail */
+    --dock-h: 4rem;               /* 64px bottom bar */
+    --topbar-h: 3.5rem;           /* 56px phone header */
+    --content-max: 75rem;         /* 1200px */
+    --control: var(--tap);        /* 44px inputs and primary buttons */
+    --control-sm: 2.25rem;        /* 36px in-table controls */
+    --pad: var(--sp-5);           /* card padding: 20px on a phone, 24px from a tablet */
+    --gap: var(--sp-4);
   }
-
   @media (min-width: 48em) {
-    :root { --pad: var(--sp-5); --gap: var(--sp-4); }
-  }
-  @media (min-width: 48em) and (pointer: fine) {
-    :root { --control: 2.5rem; --control-sm: 2rem; }
+    :root { --pad: var(--sp-6); --gap: var(--sp-5); }
   }
 
   *, *::before, *::after { box-sizing: border-box; }
 
-  html { background: var(--void); -webkit-text-size-adjust: 100%; }
+  html { background: var(--bg); -webkit-text-size-adjust: 100%; }
 
   body {
     margin: 0;
-    background: var(--void);
+    min-height: 100vh;
+    background: var(--bg);
     color: var(--ink);
-    font-family: var(--sans);
+    font-family: var(--font);
     font-size: var(--s0);
-    line-height: 1.5;
+    line-height: var(--lh);
     -webkit-font-smoothing: antialiased;
     /* The page never scrolls sideways; anything wider than it scrolls inside its own `.scroll`. */
     overflow-x: hidden;
   }
 
-  .page {
-    max-width: 78rem;
-    margin: 0 auto;
-    padding: var(--sp-3) var(--sp-4) var(--sp-8);
-  }
-  @media (min-width: 48em) { .page { padding: var(--sp-4) var(--sp-5) var(--sp-8); } }
+  h1, h2, h3, p { margin: 0; }
+  svg { display: block; }
 
-  /* ── chrome ───────────────────────────────────────────────────────────── */
+  /* ── wordmark ─────────────────────────────────────────────────────────── */
 
-  .top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--sp-2) var(--sp-4);
-    flex-wrap: wrap;
-    min-height: 3.5rem;
-    margin-bottom: var(--sp-4);
-    padding-bottom: var(--sp-3);
-    border-bottom: 1px solid var(--line);
-  }
-  .brand {
-    display: flex; align-items: center; gap: var(--sp-2);
-    font-weight: 800; font-size: var(--s1); letter-spacing: -0.01em; white-space: nowrap;
-  }
   /**
    * The mark, drawn rather than fetched.
    *
    * This page reaches no host at all — it is one file — so a logo has to be inline. Two arches
    * is less markup than the base64 of a picture of two arches, and it stays sharp at any size.
    */
-  .brand-mark { width: 1.75rem; height: 1.75rem; flex: none; display: block; }
-  .brand-pay { color: var(--lime); }
+  .brand {
+    display: flex; align-items: center; gap: var(--sp-3);
+    font-weight: 700; font-size: var(--s1); letter-spacing: -0.02em; white-space: nowrap;
+    color: var(--ink); min-height: 2.25rem;
+  }
+  .brand-mark { width: 2rem; height: 2rem; flex: none; }
+  .brand-pay { color: var(--accent); }
+
+  /* ── the shell: sidebar and content ───────────────────────────────────── */
+
+  .shell {
+    display: grid;
+    grid-template-columns: var(--side-w) minmax(0, 1fr);
+    min-height: 100vh;
+  }
 
   /*
-    Who is signed in, as one compact group that fits beside the mark at 360px: the
-    organisation is allowed to wrap, the address truncates, the button never shrinks.
+    Sticky, and exactly as tall as the viewport below the preview strip. `--strip-h` is the
+    strip's rendered height, written by the script, and 0 when there is no strip — without it
+    the sidebar's bottom, where the account block is, was clipped by the strip's height.
   */
-  .whoami {
-    display: flex; align-items: center; gap: var(--sp-2) var(--sp-3);
-    font-size: var(--s-1); color: var(--muted);
-    min-width: 0; max-width: 100%;
+  .side {
+    position: sticky; top: var(--strip-h, 0px); z-index: 20;
+    height: calc(100vh - var(--strip-h, 0px));
+    display: flex; flex-direction: column; gap: var(--sp-6);
+    padding: var(--sp-5) var(--sp-3) var(--sp-3);
+    background: var(--surface);
+    border-right: 1px solid var(--line);
   }
-  .whoami > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .whoami code {
-    flex: 1 1 auto;
-    font-family: var(--mono); font-size: var(--s-2); color: var(--ink);
-    background: var(--card-2); border: 1px solid var(--line); border-radius: var(--pill);
-    padding: 0.2rem 0.6rem; line-height: 1.4;
-    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  /* Specific enough to beat `button.ghost` below: the one control in the header is a tap target. */
-  .whoami button.ghost { flex: none; min-height: var(--control); }
+  .side .brand { padding: 0 var(--sp-3); }
 
-  /*
-    One strip of tabs, never a stack of them.
-
-    Wrapped, ten tabs took four lines of a phone screen before any figure appeared. Now the
-    row scrolls sideways and the edges fade where there is more — `data-edge` is set by the
-    script from the scroll position, so the fade is only drawn on a side that has anything
-    behind it. The buttons stay `nav.tabs button` with their labels: that is how they are found.
-  */
-  nav.tabs {
-    display: flex; gap: var(--sp-1);
-    flex-wrap: nowrap;
-    /* So a button's `offsetLeft` is measured from the strip, which is what scrolls it into view. */
-    position: relative;
-    overflow-x: auto; overflow-y: hidden;
-    scrollbar-width: none;
-    scroll-snap-type: x proximity;
-    -webkit-overflow-scrolling: touch;
-    margin: 0 calc(-1 * var(--sp-4)) var(--sp-4);
-    padding: var(--sp-1) var(--sp-4);
-    --fade-l: 0px; --fade-r: 0px;
-    -webkit-mask-image: linear-gradient(90deg, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent);
-    mask-image: linear-gradient(90deg, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent);
-  }
-  nav.tabs::-webkit-scrollbar { display: none; }
-  nav.tabs[data-edge="right"], nav.tabs[data-edge="both"] { --fade-r: 2.5rem; }
-  nav.tabs[data-edge="left"], nav.tabs[data-edge="both"] { --fade-l: 2.5rem; }
-  @media (min-width: 48em) { nav.tabs { margin-left: calc(-1 * var(--sp-5)); margin-right: calc(-1 * var(--sp-5)); padding-left: var(--sp-5); padding-right: var(--sp-5); } }
+  /* The section list. One column of icon-and-label rows; the open one on a soft accent field. */
+  nav.tabs { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; }
   nav.tabs button {
-    font: inherit; font-size: var(--s-1); font-weight: 600; line-height: 1;
-    flex: none; scroll-snap-align: start;
-    min-height: var(--control-sm);
-    padding: 0 0.9rem; border-radius: var(--pill);
-    background: transparent; color: var(--muted);
-    border: 1px solid transparent; cursor: pointer;
-    white-space: nowrap;
-    transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+    display: flex; align-items: center; gap: var(--sp-3);
+    width: 100%; min-height: 2.5rem; padding: 0 var(--sp-3);
+    border: 0; border-radius: var(--r-sm);
+    background: transparent; color: var(--ink-2);
+    font: inherit; font-size: var(--s-1); font-weight: 500; line-height: 1.2; text-align: left;
+    cursor: pointer; position: relative; white-space: nowrap;
+    transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
   }
-  nav.tabs button:hover { color: var(--ink); background: var(--card-2); }
-  nav.tabs button[aria-current="page"] {
-    background: var(--lime); color: var(--lime-ink); border-color: var(--lime); font-weight: 700;
-  }
+  nav.tabs button svg { width: 1.125rem; height: 1.125rem; flex: none; color: var(--faint); transition: color var(--t-fast) var(--ease); }
+  nav.tabs button:hover { background: var(--surface-2); color: var(--ink); }
+  nav.tabs button:hover svg { color: var(--ink-2); }
+  nav.tabs button[aria-current="page"] { background: var(--accent-soft); color: var(--ink); font-weight: 600; }
+  nav.tabs button[aria-current="page"] svg { color: var(--accent); }
+  .tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
-  /* ── panels ───────────────────────────────────────────────────────────── */
+  /* "More" exists only for the bottom bar. */
+  .more { display: none; }
+
+  /* Who is signed in: an initial, the organisation, the address, and the way out. */
+  .whoami {
+    display: grid; grid-template-columns: 2.25rem minmax(0, 1fr); grid-template-rows: auto auto; column-gap: var(--sp-3); row-gap: 0;
+    align-items: center;
+    padding: var(--sp-4) var(--sp-3) 0;
+    border-top: 1px solid var(--line);
+    font-size: var(--s-1); color: var(--muted);
+  }
+  .whoami::before {
+    content: attr(data-initial);
+    grid-row: 1 / 3;
+    width: 2.25rem; height: 2.25rem; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent);
+    font-weight: 700; font-size: var(--s0);
+  }
+  .whoami > span { grid-column: 2; color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .whoami code {
+    grid-column: 2; font-family: var(--font); font-size: var(--s-2); color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .whoami button.ghost { grid-column: 1 / 3; margin-top: var(--sp-3); width: 100%; min-height: var(--control-sm); }
+
+  .main { min-width: 0; padding: var(--sp-8) var(--sp-8) var(--sp-16); }
+  .main > * { max-width: var(--content-max); margin-left: auto; margin-right: auto; }
+
+  /* ── page heads ───────────────────────────────────────────────────────── */
+
+  .page-head {
+    display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
+    gap: var(--sp-2) var(--sp-4);
+    margin-bottom: var(--sp-6);
+  }
+  .page-head > div { min-width: 0; }
+  .page-title { font-size: var(--s4); font-weight: 700; letter-spacing: -0.02em; line-height: var(--lh-tight); }
+  .page-desc { margin-top: var(--sp-2); color: var(--muted); max-width: 62ch; }
+  .page-head > .note { flex: 0 1 auto; }
+
+  /* ── cards ────────────────────────────────────────────────────────────── */
 
   .panel {
-    background: var(--card);
+    background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
+    box-shadow: var(--shadow-1);
     margin-bottom: var(--gap);
-    overflow: hidden;
-    box-shadow: var(--shadow);
+    min-width: 0;
   }
   .panel-head {
     padding: var(--pad) var(--pad) 0;
-    margin-bottom: var(--sp-3);
+    margin-bottom: var(--sp-4);
     display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap;
     min-width: 0;
   }
-  .panel-head h2 {
-    margin: 0; font-size: var(--s1); font-weight: 700; letter-spacing: -0.01em;
-    display: flex; align-items: center; gap: 0.4rem; min-width: 0;
-  }
+  .panel-head h2 { font-size: var(--s1); font-weight: 600; letter-spacing: -0.01em; line-height: var(--lh-tight); min-width: 0; }
   .panel-head > .note { flex: 0 1 auto; text-align: right; }
   .panel-body { padding: 0 var(--pad) var(--pad); display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
 
-  h1 { font-size: var(--s2); font-weight: 800; margin: 0; letter-spacing: -0.015em; line-height: 1.2; }
-  p { margin: 0; }
   .note { font-size: var(--s-1); color: var(--muted); line-height: 1.6; }
-  .warn-note { font-size: var(--s-1); color: var(--amber); line-height: 1.6; }
+  .warn-note {
+    font-size: var(--s-1); color: var(--ink-2); line-height: 1.6;
+    padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm);
+    background: var(--warn-soft); border-left: 3px solid var(--warn);
+  }
+
+  /* Two cards side by side on a desktop, one under the other everywhere else. */
+  .cols { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--gap); align-items: start; margin-bottom: var(--gap); }
+  .cols > .panel { margin-bottom: 0; }
+  /* The checklist card leaves once everything is done; the chart then takes the row. */
+  .cols:has(> .panel[hidden]) { grid-template-columns: minmax(0, 1fr); }
+  @media (max-width: 63.99em) { .cols { grid-template-columns: minmax(0, 1fr); } }
+
+  /* ── sign-in ──────────────────────────────────────────────────────────── */
 
   /*
-    The sign-in card stands alone in the middle of the page rather than stretching across it:
-    a form three fields long has no business being 78rem wide.
+    The sign-in card stands alone in the middle of the ground rather than stretching across it:
+    a form three fields long has no business being 1200px wide.
   */
-  #auth-panel { max-width: 30rem; margin: var(--sp-6) auto; }
-  #auth-panel .panel-head { align-items: center; }
+  #auth-panel { max-width: 27rem; margin: 10vh auto var(--sp-8); }
+  #auth-panel .auth-brand { padding: var(--pad) var(--pad) 0; margin-bottom: var(--sp-4); }
+  #auth-panel .panel-head { align-items: center; margin-bottom: var(--sp-5); }
+  #auth-panel .panel-head h1 { font-size: var(--s3); font-weight: 700; letter-spacing: -0.02em; line-height: var(--lh-tight); }
   #auth-panel .row > button.primary { flex: 1 1 auto; }
-  @media (min-width: 48em) { #auth-panel { margin-top: var(--sp-8); } }
-
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--sp-3); }
+  @media (max-width: 39.99em) { #auth-panel { margin: var(--sp-6) var(--sp-4) var(--sp-8); } }
 
   /* ── stats ────────────────────────────────────────────────────────────── */
 
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: var(--gap); }
+  .kpi { margin-bottom: var(--gap); }
+
   /*
-    A KPI row. Label above, figure large, qualifier beneath, and the same padding as every
-    other tile — four of these in one line on a desktop, two by two on a tablet, stacked on
-    a phone, always the same tile.
+    A KPI card: label in small caps, the figure large, a qualifier beneath. Standing on the
+    ground they are cards of their own; inside another card they sit on the tinted surface.
   */
   .stat {
-    background: var(--card-2);
+    background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: var(--sp-4) var(--sp-4) var(--sp-3);
-    display: flex; flex-direction: column; gap: var(--sp-1);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-1);
+    padding: var(--sp-5);
+    display: flex; flex-direction: column; gap: var(--sp-2);
     min-width: 0;
   }
-  .stat-label { font-size: var(--s-2); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .panel .stat { background: var(--surface-2); box-shadow: none; border-radius: var(--r-md); padding: var(--sp-4) var(--sp-5); }
+  .stat-label { font-size: var(--s-2); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted); font-weight: 600; }
   .stat-value {
-    font-family: var(--mono); font-size: clamp(1.5rem, 1.1rem + 1.2vw, var(--s3)); font-weight: 700;
-    font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1.15;
-    overflow-wrap: anywhere;
+    font-size: var(--s4); font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
+    font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
   }
-  .stat-value.lime { color: var(--lime); }
+  .stat-value.lime { color: var(--accent); }
   .stat-sub { font-size: var(--s-1); color: var(--muted); }
 
-  /* ── free tier bar ────────────────────────────────────────────────────── */
+  /* ── volume chart ─────────────────────────────────────────────────────── */
 
-  .bar-track { height: 0.375rem; border-radius: var(--pill); background: var(--card-3); overflow: hidden; margin-bottom: var(--sp-2); }
-  .bar-fill { height: 100%; background: var(--lime); border-radius: var(--pill); transition: width 240ms ease; }
-  /* Part-filled is dimmer than earned: reaching the rung is the good state. */
-  .bar-fill[data-earned="false"] { background: var(--lime-dim); }
+  .chart { min-width: 0; }
+  .chart svg { width: 100%; height: auto; overflow: visible; font-family: var(--font); }
+  .chart-label { fill: var(--ink); font-size: 13px; font-weight: 500; }
+  .chart-value { fill: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .chart-track { fill: var(--surface-3); }
+  .chart-bar { fill: var(--accent); }
+  .chart-foot { display: flex; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); }
+
+  /* ── tier bar ─────────────────────────────────────────────────────────── */
+
+  .tier { border-top: 1px solid var(--line); padding-top: var(--sp-4); }
+  .tier .stat-label { display: block; margin-bottom: var(--sp-3); }
+  .bar-track { height: 0.5rem; border-radius: var(--pill); background: var(--surface-3); overflow: hidden; margin-bottom: var(--sp-2); }
+  .bar-fill { height: 100%; background: var(--accent); border-radius: var(--pill); transition: width var(--t-base) var(--ease); }
+  /* Part-filled is quieter than earned: reaching the rung is the good state. */
+  .bar-fill[data-earned="false"] { background: var(--accent-edge); }
 
   /* ── checklist ────────────────────────────────────────────────────────── */
 
   ol.checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
   .check {
-    display: grid; grid-template-columns: 1.5rem 1fr; gap: var(--sp-3); align-items: start;
+    display: grid; grid-template-columns: 1.375rem 1fr; gap: var(--sp-3); align-items: start;
     padding: var(--sp-3) 0;
     border-top: 1px solid var(--line);
   }
   .check:first-child { border-top: 0; padding-top: 0; }
   .check:last-child { padding-bottom: 0; }
   .check-mark {
-    width: 1.5rem; height: 1.5rem; border-radius: 50%;
+    width: 1.375rem; height: 1.375rem; border-radius: 50%; margin-top: 1px;
     display: grid; place-items: center; flex: none;
-    font-family: var(--mono); font-size: var(--s-2); font-weight: 700;
-    background: var(--card-3); color: var(--muted);
-    border: 1px solid var(--line-2);
+    font-size: var(--s-2); font-weight: 700; line-height: 1;
+    background: var(--surface); color: var(--faint);
+    border: 1.5px solid var(--line-strong);
   }
-  .check[data-done="true"] .check-mark { background: var(--lime); color: var(--lime-ink); border-color: var(--lime); }
-  .check-title { font-weight: 600; }
-  .check[data-done="true"] .check-title { color: var(--muted); text-decoration: line-through; }
-  .check-why { font-size: var(--s-1); color: var(--muted); line-height: 1.6; }
+  .check[data-done="true"] .check-mark { background: var(--ok); color: #fff; border-color: var(--ok); }
+  .check-title { font-weight: 600; font-size: var(--s-1); }
+  .check[data-done="true"] .check-title { color: var(--muted); text-decoration: line-through; font-weight: 500; }
+  .check-why { font-size: var(--s-1); color: var(--muted); line-height: 1.6; margin-top: 2px; }
 
   /* ── tables ───────────────────────────────────────────────────────────── */
 
   /*
-    A table wider than the panel scrolls here, never the page. The fade at an edge is drawn
-    only when there is content behind it, from the same `data-edge` the tab strip uses.
+    A table wider than the card scrolls here, never the page. The fade at an edge is drawn
+    only when there is content behind it, from `data-edge` set by the script.
   */
   .scroll {
     overflow-x: auto; overflow-y: hidden;
@@ -321,72 +303,91 @@
   .scroll[data-edge="right"], .scroll[data-edge="both"] { --fade-r: 3rem; }
   .scroll[data-edge="left"], .scroll[data-edge="both"] { --fade-l: 3rem; }
   .scroll:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--r-sm); }
-  table { width: 100%; border-collapse: collapse; font-size: var(--s-1); }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--s-1); }
   th {
+    position: sticky; top: 0; z-index: 1;
     text-align: left; padding: var(--sp-2) var(--sp-3);
-    font-size: var(--s-2); letter-spacing: 0.06em; text-transform: uppercase;
+    font-size: var(--s-2); letter-spacing: var(--tracking-caps); text-transform: uppercase;
     color: var(--muted); font-weight: 600; white-space: nowrap;
-    border-bottom: 1px solid var(--line-2);
+    background: var(--surface);
+    border-bottom: 1px solid var(--line-strong);
   }
-  td { padding: var(--sp-3); border-bottom: 1px solid var(--line); vertical-align: middle; }
+  td { padding: var(--sp-3); border-bottom: 1px solid var(--line); vertical-align: middle; line-height: 1.45; }
   tr:last-child td { border-bottom: 0; }
-  tbody tr { transition: background-color 120ms ease; }
-  tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+  tbody tr { transition: background-color var(--t-fast) var(--ease); }
+  tbody tr:hover { background: var(--surface-2); }
   /* Identifiers, addresses and amounts never break across lines: the row scrolls instead. */
-  td.mono, th.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.mono, th.mono { font-family: var(--mono); font-size: var(--s-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.right, th.right { text-align: right; }
-  tr[data-attention="true"] { background: var(--amber-wash); }
-  tr[data-attention="true"]:hover { background: var(--amber-wash); }
+  /*
+    A header sits over its column's numbers. The renderers build headers from plain labels, so
+    the alignment is read off the cells beneath: a column whose cells are right-aligned gets a
+    right-aligned header, however many columns the table has.
+  */
+  table:has(tbody td:nth-child(1).right) th:nth-child(1),
+  table:has(tbody td:nth-child(2).right) th:nth-child(2),
+  table:has(tbody td:nth-child(3).right) th:nth-child(3),
+  table:has(tbody td:nth-child(4).right) th:nth-child(4),
+  table:has(tbody td:nth-child(5).right) th:nth-child(5),
+  table:has(tbody td:nth-child(6).right) th:nth-child(6),
+  table:has(tbody td:nth-child(7).right) th:nth-child(7) { text-align: right; }
+  tr[data-attention="true"] { background: var(--warn-soft); }
+  tr[data-attention="true"]:hover { background: var(--warn-soft); }
   td:first-child, th:first-child { padding-left: 0; }
   td:last-child, th:last-child { padding-right: 0; }
+  td:last-child { text-align: right; }
   /* A sentence in a cell gets room to be read as one, rather than a sliver of wrapped words. */
-  td.prose { min-width: 18rem; white-space: normal; line-height: 1.5; }
+  td.prose { min-width: 18rem; white-space: normal; line-height: 1.5; text-align: left; }
   td select, td input { width: auto; min-width: 9rem; min-height: var(--control-sm); padding-top: 0; padding-bottom: 0; font-size: var(--s-1); }
-  td button.ghost { min-height: var(--control-sm); }
+  td button.ghost { min-height: var(--control-sm); padding: 0 var(--sp-3); font-size: var(--s-2); }
 
   /* ── pills ────────────────────────────────────────────────────────────── */
 
   .pill {
-    display: inline-flex; align-items: center; font-size: var(--s-2); font-weight: 700; line-height: 1;
+    display: inline-flex; align-items: center; gap: 0.35em;
+    font-size: var(--s-2); font-weight: 600; line-height: 1;
     padding: 0.3rem 0.55rem; border-radius: var(--pill);
-    background: var(--card-3); color: var(--muted); white-space: nowrap;
+    background: var(--surface-3); color: var(--ink-2); white-space: nowrap;
     vertical-align: middle;
   }
-  .pill[data-tone="good"] { background: var(--teal-wash); color: var(--teal); }
-  .pill[data-tone="wait"] { background: var(--card-3); color: var(--muted); }
-  .pill[data-tone="warn"] { background: var(--amber-wash); color: var(--amber); }
-  .pill[data-tone="bad"] { background: var(--coral-wash); color: var(--coral); }
-  .pill[data-tone="dead"] { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-2); }
-  .pill[data-mode="test"] { background: var(--amber-wash); color: var(--amber); }
-  .pill[data-mode="live"] { background: var(--teal-wash); color: var(--teal); }
+  .pill[data-tone="good"] { background: var(--ok-soft); color: var(--ok); }
+  .pill[data-tone="wait"] { background: var(--info-soft); color: var(--info); }
+  .pill[data-tone="warn"], .pill[data-kind="warn"] { background: var(--warn-soft); color: var(--warn); }
+  .pill[data-tone="bad"] { background: var(--danger-soft); color: var(--danger); }
+  .pill[data-tone="dead"] { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); }
+  .pill[data-mode="test"] { background: var(--warn-soft); color: var(--warn); }
+  .pill[data-mode="live"] { background: var(--ok-soft); color: var(--ok); }
 
   /* ── forms ────────────────────────────────────────────────────────────── */
 
-  form { display: flex; flex-direction: column; gap: var(--sp-3); }
+  form { display: flex; flex-direction: column; gap: var(--sp-4); }
   .row { display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: flex-end; }
   label {
-    display: flex; flex-direction: column; gap: var(--sp-1);
-    font-size: var(--s-1); font-weight: 500; color: var(--muted);
+    display: flex; flex-direction: column; gap: var(--sp-2);
+    font-size: var(--s-1); font-weight: 500; color: var(--ink-2);
     flex: 1 1 12rem; min-width: 0;
   }
   input, select, textarea {
     font: inherit; font-size: var(--s0);
     width: 100%; min-height: var(--control);
     padding: 0 var(--sp-3); border-radius: var(--r-sm);
-    background: var(--card-2); color: var(--ink); border: 1px solid var(--line-2);
-    transition: border-color 120ms ease, box-shadow 120ms ease;
+    background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong);
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
   }
   textarea { padding: var(--sp-2) var(--sp-3); }
   input::placeholder, textarea::placeholder { color: var(--faint); }
-  input:hover, select:hover, textarea:hover { border-color: #444444; }
-  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--lime); box-shadow: 0 0 0 3px var(--lime-edge); }
-  input.mono { font-family: var(--mono); }
-  select { padding-right: 2.25rem; appearance: none; -webkit-appearance: none;
-    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
-    background-position: calc(100% - 1.05rem) 50%, calc(100% - 0.7rem) 50%;
-    background-size: 0.35rem 0.35rem, 0.35rem 0.35rem;
+  input:hover, select:hover, textarea:hover { border-color: var(--n400); }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus); }
+  input.mono { font-family: var(--mono); font-size: var(--s-1); }
+  select {
+    padding-right: 2.5rem; appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235b6370' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+    background-position: right 0.75rem center;
     background-repeat: no-repeat;
+    background-size: 1rem 1rem;
   }
+  select:disabled { opacity: 0.6; }
   /* A button standing in a row of fields sits on the same baseline and the same height. */
   .row > button { flex: none; }
   @media (max-width: 30em) {
@@ -394,117 +395,100 @@
     label { flex-basis: 100%; }
   }
 
-  button.primary {
-    font: inherit; font-weight: 700; cursor: pointer; line-height: 1;
-    min-height: var(--control); padding: 0 1.25rem; border-radius: var(--pill);
-    background: var(--lime); color: var(--lime-ink); border: 1px solid var(--lime);
-    transition: filter 120ms ease, transform 120ms ease;
+  /* One button system: primary fill, secondary outline, quiet text, and the red outline. */
+  button.primary, button.ghost, button.quiet {
+    font: inherit; font-weight: 600; cursor: pointer; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+    min-height: var(--control); padding: 0 var(--sp-4); border-radius: var(--r-sm);
+    white-space: nowrap;
+    transition: background-color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease), filter var(--t-fast) var(--ease);
   }
-  button.primary:hover:not(:disabled) { filter: brightness(1.06); }
+  button.primary { background: var(--lime); color: var(--lime-ink); border: 1px solid var(--lime); box-shadow: var(--shadow-1); }
+  button.primary:hover:not(:disabled) { filter: brightness(0.96); }
   button.primary:active:not(:disabled) { transform: translateY(1px); }
-  button.primary:disabled { background: var(--card-3); color: var(--faint); border-color: var(--card-3); cursor: default; }
-  button.ghost {
-    font: inherit; font-size: var(--s-1); font-weight: 600; cursor: pointer; line-height: 1;
-    min-height: var(--control-sm); padding: 0 0.9rem; border-radius: var(--pill);
-    background: var(--card-2); color: var(--muted); border: 1px solid var(--line-2);
-    transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
-  }
-  .row > button.ghost, form button.ghost { min-height: var(--control); }
-  button.ghost:hover:not(:disabled) { color: var(--ink); border-color: #444444; }
-  button.ghost:disabled { opacity: 0.45; cursor: default; }
-  button.danger { color: var(--coral); border-color: rgba(255, 90, 78, 0.35); }
-  button.danger:hover:not(:disabled) { color: var(--coral); background: var(--coral-wash); border-color: var(--coral); }
+  button.primary:disabled { background: var(--surface-3); color: var(--faint); border-color: var(--surface-3); box-shadow: none; cursor: default; }
+  button.ghost { font-size: var(--s-1); background: var(--surface); color: var(--ink-2); border: 1px solid var(--line-strong); box-shadow: var(--shadow-1); }
+  button.ghost:hover:not(:disabled) { color: var(--ink); background: var(--surface-2); border-color: var(--n400); }
+  button.ghost:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
+  button.quiet { font-size: var(--s-1); background: transparent; color: var(--accent); border: 1px solid transparent; padding: 0 var(--sp-3); }
+  button.quiet:hover:not(:disabled) { background: var(--accent-soft); }
+  button.danger { color: var(--danger); border-color: var(--danger-soft); }
+  button.danger:hover:not(:disabled) { color: var(--danger); background: var(--danger-soft); border-color: var(--danger); }
 
   /* Every interactive thing shows the same ring when reached from the keyboard. */
   button:focus-visible, .choice:focus-visible, a:focus-visible { outline: none; box-shadow: var(--focus); }
 
-  .banner {
-    padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm);
-    font-size: var(--s-1); line-height: 1.6; border: 1px solid var(--line);
-    background: var(--card-2); color: var(--ink);
-  }
-  .banner[data-kind="error"] { background: var(--coral-wash); border-color: var(--coral); color: var(--ink); }
-  .banner[data-kind="ok"] { background: var(--teal-wash); border-color: var(--teal); color: var(--ink); }
-  .banner[data-kind="warn"] { background: var(--amber-wash); border-color: var(--amber); color: var(--ink); }
-  #preview-banner, #flash { margin-bottom: var(--sp-4); }
-  #submit-result { white-space: pre-wrap; }
+  /* ── banners ──────────────────────────────────────────────────────────── */
 
-  .group-head {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-3);
-    margin: var(--sp-5) 0 var(--sp-2);
+  .banner {
+    padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md);
+    font-size: var(--s-1); line-height: 1.6;
+    border: 1px solid var(--line); border-left-width: 3px;
+    background: var(--surface); color: var(--ink);
   }
+  .banner[data-kind="error"] { background: var(--danger-soft); border-color: var(--danger); color: var(--ink); }
+  .banner[data-kind="ok"] { background: var(--ok-soft); border-color: var(--ok); color: var(--ink); }
+  .banner[data-kind="warn"] { background: var(--warn-soft); border-color: var(--warn); color: var(--ink); }
+  #flash { margin-bottom: var(--sp-5); }
+  #submit-result { white-space: pre-wrap; }
+  /* The preview notice is a strip across the whole top of the page, not a card among cards. */
+  .banner.strip { position: sticky; top: 0; z-index: 40; border-radius: 0; border-width: 0 0 1px; text-align: center; padding: var(--sp-2) var(--sp-4); }
+
+  /* ── currencies ───────────────────────────────────────────────────────── */
+
+  .group-head { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-6) 0 var(--sp-3); }
   .group-head:first-child { margin-top: 0; }
   .group-chain {
-    font-family: var(--mono);
-    font-size: var(--s-2);
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--faint);
+    font-family: var(--mono); font-size: var(--s-2); font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
   }
-
   .asset-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--sp-3);
-    align-items: flex-start;
-    justify-content: space-between;
-    padding: var(--sp-4);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    background: var(--card-2);
+    display: flex; flex-wrap: wrap; gap: var(--sp-3);
+    align-items: flex-start; justify-content: space-between;
+    padding: var(--sp-4) var(--sp-5);
+    border: 1px solid var(--line); border-radius: var(--r-md);
+    background: var(--surface);
+    transition: border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
   }
   .asset-row + .asset-row { margin-top: var(--sp-2); }
+  .asset-row:hover { background: var(--surface-2); }
   /* Something on but refusing invoices is the only genuinely urgent row. */
-  .asset-row[data-state="needs_payout"], .asset-row[data-state="needs_rate"] {
-    border-color: var(--amber);
-  }
-  .asset-row[data-state="accepting"] { border-color: var(--lime-edge); }
+  .asset-row[data-state="needs_payout"], .asset-row[data-state="needs_rate"] { border-color: var(--warn); }
+  .asset-row[data-state="accepting"] { border-color: var(--line); }
   .asset-main { flex: 1 1 16rem; min-width: 0; }
   .asset-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
-  .asset-symbol { font-weight: 700; font-size: var(--s0); }
+  .asset-symbol { font-weight: 700; font-size: var(--s0); font-family: var(--font); }
   .asset-hint { margin: var(--sp-1) 0 0; }
-  .asset-contract { margin: var(--sp-1) 0 0; overflow-wrap: anywhere; font-size: var(--s-2); color: var(--faint); }
+  /* `--muted`, not `--faint`: an address is read, and faint is 3.9:1 on white. */
+  .asset-contract { margin: var(--sp-1) 0 0; overflow-wrap: anywhere; font-size: var(--s-2); color: var(--muted); }
+  .asset-contract.mono { font-family: var(--mono); }
   .asset-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
-  .asset-actions button { min-height: var(--control-sm); }
-  @media (max-width: 30em) { .asset-actions { width: 100%; } .asset-actions button { flex: 1 1 auto; } }
+  .asset-actions button { min-height: var(--control-sm); font-size: var(--s-1); }
+  @media (max-width: 30em) { .asset-actions { width: 100%; } .asset-actions button { flex: 1 1 auto; min-height: var(--control); } }
 
   /* The who-pays pair. Two buttons rather than a toggle, so neither state is unstated. */
   #fee-payer-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: var(--sp-3); }
   .choice {
-    display: flex;
-    flex-direction: column;
-    gap: var(--sp-1);
-    width: 100%;
-    text-align: left;
-    background: var(--card-2);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: var(--sp-4);
-    color: var(--ink);
-    font: inherit;
-    cursor: pointer;
-    transition: border-color 120ms ease, background-color 120ms ease;
+    display: flex; flex-direction: column; gap: var(--sp-1);
+    width: 100%; text-align: left;
+    background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md);
+    padding: var(--sp-4) var(--sp-5); color: var(--ink);
+    font: inherit; cursor: pointer;
+    transition: border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
   }
-  .choice:hover:not([aria-pressed="true"]) { border-color: var(--line-2); background: var(--card-3); }
-  .choice[aria-pressed="true"] {
-    border-color: var(--lime-edge);
-    background: var(--lime-wash);
-    cursor: default;
-  }
-  .choice-label { font-weight: 700; }
-  .choice[aria-pressed="true"] .choice-label { color: var(--lime); }
+  .choice:hover:not([aria-pressed="true"]) { background: var(--surface-2); }
+  .choice[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); cursor: default; box-shadow: inset 0 0 0 1px var(--accent); }
+  .choice-label { font-weight: 600; }
+  .choice[aria-pressed="true"] .choice-label { color: var(--accent); }
   .choice-detail { font-size: var(--s-1); color: var(--muted); line-height: 1.6; }
 
   /* ── QR ───────────────────────────────────────────────────────────────── */
 
   /*
-    A white ground under the symbol, on a dark page. A QR drawn dark-on-dark is not a
+    A white ground under the symbol whatever the theme. A QR drawn dark-on-dark is not a
     QR — and the quiet zone is part of the symbol, so the padding here is not decoration.
   */
-  .qr-frame { background: #fff; padding: var(--sp-2); border-radius: var(--r-sm); line-height: 0; flex: none; }
+  .qr-frame { background: #fff; padding: var(--sp-2); border-radius: var(--r-sm); border: 1px solid var(--line); line-height: 0; flex: none; }
   .qr-frame svg { width: 10.5rem; height: 10.5rem; display: block; }
 
   /*
@@ -517,27 +501,31 @@
   .copyable { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
   .copyable code {
     font-family: var(--mono); font-size: var(--s-1); word-break: break-all; line-height: 1.5;
-    background: var(--card); border: 1px solid var(--line); color: var(--ink);
+    background: var(--surface); border: 1px solid var(--line); color: var(--ink);
     padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm); flex: 1 1 12rem; min-width: 0;
   }
   .copyable button { min-height: var(--control-sm); }
 
+  /* ── empty states ─────────────────────────────────────────────────────── */
+
   /*
     An empty table is a designed state, not a missing one: the single cell every renderer
-    puts there is drawn as a centred notice on a dashed field, so "nothing yet" reads as a
+    puts there is drawn as a centred notice with a small glyph, so "nothing yet" reads as a
     fact about the account rather than as a table that failed to load.
   */
-  .empty {
-    color: var(--muted); font-size: var(--s-1); padding: var(--sp-3) 0;
-  }
+  .empty { color: var(--muted); font-size: var(--s-1); padding: var(--sp-3) 0; }
   td.empty {
-    text-align: center;
-    padding: var(--sp-6) var(--sp-4);
-    border: 1px dashed var(--line-2);
-    border-radius: var(--r-md);
-    background: var(--card-2);
+    display: block; text-align: center;
+    padding: var(--sp-8) var(--sp-4);
+    border: 1px dashed var(--line-strong); border-radius: var(--r-md);
+    background: var(--surface-2);
     white-space: normal;
-    display: block;
+  }
+  td.empty::before {
+    content: ''; display: block; width: 1.75rem; height: 1.75rem; margin: 0 auto var(--sp-3);
+    background: var(--faint);
+    -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'><path d='M4 8.5 12 4l8 4.5v7L12 20l-8-4.5z'/><path d='M4 8.5 12 13l8-4.5M12 13v7'/></svg>") center / contain no-repeat;
+    mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'><path d='M4 8.5 12 4l8 4.5v7L12 20l-8-4.5z'/><path d='M4 8.5 12 13l8-4.5M12 13v7'/></svg>") center / contain no-repeat;
   }
   /*
     The cell has no `colspan`, so under a header row it would occupy the first column only.
@@ -547,23 +535,126 @@
   table:has(td.empty), table:has(td.empty) tbody, table:has(td.empty) tr { display: block; width: 100%; }
   table:has(td.empty) thead { display: none; }
   table:has(td.empty) tbody tr:hover { background: transparent; }
+  /* The chart's empty state, the same shape. */
+  .empty-state {
+    text-align: center; color: var(--muted); font-size: var(--s-1);
+    padding: var(--sp-8) var(--sp-4);
+    border: 1px dashed var(--line-strong); border-radius: var(--r-md); background: var(--surface-2);
+  }
+  .empty-state svg { width: 1.75rem; height: 1.75rem; margin: 0 auto var(--sp-3); color: var(--faint); }
 
-  /* Anything that moves stays still for people who asked it to. */
+  /* ── motion ───────────────────────────────────────────────────────────── */
+
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  .view { display: flex; flex-direction: column; animation: rise var(--t-base) var(--ease); }
+
+  /* ── tablet: the sidebar folds to an icon rail ────────────────────────── */
+
+  @media (min-width: 40em) and (max-width: 63.99em) {
+    .shell { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
+    .side { padding: var(--sp-4) var(--sp-2) var(--sp-3); align-items: stretch; }
+    .side .brand { justify-content: center; padding: 0; }
+    .side .brand-text { display: none; }
+    nav.tabs button { justify-content: center; padding: 0; min-height: 2.75rem; }
+    nav.tabs button svg { width: 1.25rem; height: 1.25rem; }
+    /* The label becomes a tooltip: kept in the document, shown beside the rail on hover or focus. */
+    .tab-label {
+      position: absolute; left: calc(100% + 0.75rem); top: 50%; transform: translateY(-50%);
+      background: var(--ink); color: var(--bg);
+      padding: 0.35rem 0.6rem; border-radius: var(--r-sm); font-size: var(--s-2); font-weight: 600;
+      box-shadow: var(--shadow-2); pointer-events: none; opacity: 0; overflow: visible;
+      transition: opacity var(--t-fast) var(--ease);
+    }
+    nav.tabs button:hover .tab-label, nav.tabs button:focus-visible .tab-label { opacity: 1; }
+    .whoami { grid-template-columns: 1fr; padding: var(--sp-3) 0 0; justify-items: center; }
+    .whoami::before { grid-row: auto; }
+    .whoami > span, .whoami code { display: none; }
+    .whoami button.ghost { grid-column: 1; font-size: var(--s-2); padding: 0 var(--sp-2); }
+    .main { padding: var(--sp-6) var(--sp-6) var(--sp-16); }
+  }
+
+  /* ── phone: a header on top, a bar along the bottom ───────────────────── */
+
+  @media (max-width: 39.99em) {
+    .shell { display: block; }
+    /* The strip scrolls away on a phone: four lines of it pinned to the top would be most of the screen. */
+    .banner.strip { position: static; font-size: var(--s-2); }
+    .side {
+      top: 0; height: var(--topbar-h);
+      flex-direction: row; align-items: center; justify-content: space-between; gap: var(--sp-3);
+      padding: 0 var(--sp-4);
+      border-right: 0; border-bottom: 1px solid var(--line);
+    }
+    .side .brand { padding: 0; font-size: var(--s0); }
+    .brand-mark { width: 1.75rem; height: 1.75rem; }
+
+    /* The bar. Four sections in four fifths of it; the fifth column belongs to "More". */
+    nav.tabs {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+      display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0;
+      padding: 0 0 env(safe-area-inset-bottom);
+      background: var(--surface);
+      border-top: 1px solid var(--line);
+      box-shadow: 0 -8px 24px rgba(16, 24, 40, 0.08);
+    }
+    nav.tabs button {
+      flex-direction: column; justify-content: center; gap: 0.3rem;
+      min-height: var(--dock-h); padding: var(--sp-1) 2px;
+      border-radius: 0; font-size: 0.6875rem; font-weight: 500; line-height: 1.1;
+      white-space: normal; text-align: center; overflow: hidden;
+    }
+    nav.tabs button svg { width: 1.375rem; height: 1.375rem; }
+    nav.tabs button[aria-current="page"] { background: transparent; color: var(--accent); }
+    nav.tabs button[aria-current="page"] svg { color: var(--accent); }
+    .tab-label { white-space: normal; overflow: visible; }
+    /* The six that do not fit are in the sheet, which grows out of the bar when it is open. */
+    nav.tabs button[data-dock="sheet"] { display: none; }
+    nav.tabs[data-sheet="open"] button[data-dock="sheet"] {
+      display: flex; flex-direction: row; justify-content: flex-start; gap: var(--sp-4);
+      grid-column: 1 / -1; order: -1;
+      min-height: 3.25rem; padding: 0 var(--sp-5);
+      font-size: var(--s0); text-align: left;
+      border-bottom: 1px solid var(--line);
+    }
+    nav.tabs[data-sheet="open"] button[data-dock="sheet"][aria-current="page"] { background: var(--accent-soft); color: var(--ink); }
+    nav.tabs[data-sheet="open"] { box-shadow: var(--shadow-3); border-top-left-radius: var(--r-lg); border-top-right-radius: var(--r-lg); }
+    nav.tabs[data-sheet="open"] button[data-dock="sheet"]:first-of-type { border-top-left-radius: var(--r-lg); border-top-right-radius: var(--r-lg); }
+    nav.tabs[data-sheet="open"] button[data-dock="bar"] { border-top: 1px solid var(--line-strong); }
+
+    .more {
+      position: fixed; right: 0; bottom: 0; z-index: 31;
+      width: 20%; min-height: var(--dock-h); margin-bottom: env(safe-area-inset-bottom);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.3rem;
+      padding: var(--sp-1) 2px; border: 0; border-top: 1px solid var(--line);
+      background: var(--surface); color: var(--ink-2);
+      font: inherit; font-size: 0.6875rem; font-weight: 500; line-height: 1.1; cursor: pointer;
+      transition: color var(--t-fast) var(--ease);
+    }
+    .more svg { width: 1.375rem; height: 1.375rem; color: var(--faint); }
+    .more[data-active="true"], .more[aria-expanded="true"] { color: var(--accent); }
+    .more[data-active="true"] svg, .more[aria-expanded="true"] svg { color: var(--accent); }
+    nav.tabs[data-sheet="open"] ~ .more { border-top-color: var(--line-strong); }
+    /* Beneath the header, which holds the bar and the sheet: the header is its own stacking context. */
+    .backdrop { position: fixed; inset: 0; z-index: 19; background: rgba(15, 17, 20, 0.45); }
+
+    .whoami { display: flex; align-items: center; gap: var(--sp-2); padding: 0; border-top: 0; min-width: 0; }
+    .whoami::before { display: none; }
+    .whoami > span { flex: 1 1 auto; font-size: var(--s-1); max-width: 10rem; }
+    .whoami code { display: none; }
+    .whoami button.ghost { margin: 0; width: auto; min-height: var(--control); padding: 0 var(--sp-3); font-size: var(--s-2); }
+
+    .main { padding: var(--sp-5) var(--sp-4) calc(var(--dock-h) + var(--sp-10)); }
+    .page-head { margin-bottom: var(--sp-5); }
+    .page-title { font-size: var(--s3); }
+    .kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); }
+    .kpi .stat { padding: var(--sp-4); }
+    .stat-value { font-size: var(--s2); }
+  }
+
+  /* Anything that moves stays still for people who asked it to. The tokens zero the durations. */
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; scroll-behavior: auto !important; }
   }
-
-  /**
-   * Author `display` beats the user-agent `[hidden]` rule, so a `hidden` attribute on
-   * anything this stylesheet gives a display to does nothing at all.
-   *
-   * A bare attribute selector, declared after every rule that sets a display: same
-   * specificity as a single class, so it wins on order — and the next element to be hidden is
-   * covered without anybody remembering to add it to a list. The enumerated version this
-   * replaces had already missed `.whoami`, which put a "Sign out" button on the sign-in
-   * screen of a page nobody was signed in to.
-   */
-  .view { display: flex; flex-direction: column; }
 
   /**
    * Last rule in the stylesheet, and it has to stay last.
@@ -571,109 +662,140 @@
    * A bare attribute selector has the same specificity as a single class, so it wins only on
    * order — put it before `.view { display: flex }` and every hidden view is visible again. It
    * was, for one commit: the dashboard opened on the payouts tab with the overview still
-   * stacked underneath it.
+   * stacked underneath it. For the same reason nothing above sets `display` through an id.
    */
   [hidden] { display: none; }
 </style>
 
-<div class="page">
-  <header class="top">
-    <div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--void)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>AVEX <span class="brand-pay">Pay</span></div>
-    <div class="whoami" id="whoami" hidden>
+<!--
+  First on the page, before even the sign-in form, and not dismissible.
+
+  A dashboard full of plausible figures that somebody takes for their own account is worse
+  than no preview — and a preview reached from the landing page opens on the form, so a
+  warning placed after it would arrive after the decision it is warning about.
+-->
+<div class="banner strip" id="preview-banner" data-kind="warn" hidden>
+  <strong>Preview.</strong>
+  Every figure on this page is made up and nothing can be changed. It is the real
+  dashboard driven by canned answers instead of a server, so what you click is what
+  ships — but this is not an account.
+</div>
+
+<!--
+  ── sign in, or start ──────────────────────────────────────────────────
+
+  One form for both, because they ask for almost the same things and two forms is two
+  places for the session handling to diverge. The mode is a variable the site can set:
+  `?signup=1` opens on "create an account", and `?email=` fills the address the visitor
+  already typed there so nobody types it twice.
+-->
+<section class="panel" id="auth-panel">
+  <div class="brand auth-brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg><span class="brand-text">AVEX <span class="brand-pay">Pay</span></span></div>
+  <div class="panel-head">
+    <h1 id="auth-title">Sign in</h1>
+    <button class="quiet" type="button" id="auth-switch">Create an account</button>
+  </div>
+  <div class="panel-body">
+    <div class="banner" id="auth-error" data-kind="error" hidden></div>
+    <form id="auth-form">
+      <div class="row" id="auth-org-row" hidden>
+        <label>Business name<input id="auth-org" autocomplete="organization" maxlength="120"></label>
+      </div>
+      <div class="row">
+        <label>Email<input type="email" id="auth-email" autocomplete="username" required></label>
+      </div>
+      <div class="row">
+        <label>Password<input type="password" id="auth-password" autocomplete="current-password" required></label>
+      </div>
+      <div class="row" id="auth-mfa-row" hidden>
+        <label>Authenticator code<input class="mono" id="auth-code" inputmode="numeric" autocomplete="one-time-code"></label>
+      </div>
+      <div class="row"><button class="primary" type="submit" id="auth-submit">Sign in</button></div>
+    </form>
+    <p class="note" id="auth-note">
+      This dashboard holds your session in memory only, so closing the tab signs you
+      out. That is deliberate: a token in browser storage survives an XSS.
+    </p>
+  </div>
+</section>
+
+<!-- ── the dashboard ────────────────────────────────────────────────── -->
+<div id="app" class="shell" hidden>
+  <aside class="side">
+    <div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg><span class="brand-text">AVEX <span class="brand-pay">Pay</span></span></div>
+    <!--
+      The sections. Filled by the script: one button per view, icon and label, the open one
+      marked `aria-current="page"`. A sidebar on a desktop, a rail on a tablet, a bottom bar
+      on a phone — the same buttons in each.
+    -->
+    <nav class="tabs" id="tabs" aria-label="Dashboard sections" data-sheet="closed"></nav>
+    <!-- The fifth slot of the bottom bar: opens the sheet holding the sections that do not fit. -->
+    <button class="more" type="button" id="tabs-more" aria-expanded="false" aria-controls="tabs" data-active="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="currentColor"><circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="19" cy="12" r="2"></circle></svg>
+      <span>More</span>
+    </button>
+    <div class="whoami" id="whoami" data-initial="" hidden>
       <span id="whoami-org"></span>
       <code id="whoami-mode"></code>
       <button class="ghost" type="button" id="sign-out">Sign out</button>
     </div>
-  </header>
+  </aside>
+  <div class="backdrop" id="tabs-backdrop" hidden></div>
 
-  <!--
-    First on the page, before even the sign-in form, and not dismissible.
-
-    A dashboard full of plausible figures that somebody takes for their own account is worse
-    than no preview — and a preview reached from the landing page opens on the form, so a
-    warning placed after it would arrive after the decision it is warning about.
-  -->
-  <div class="banner" id="preview-banner" data-kind="warn" hidden>
-    <strong>Preview.</strong>
-    Every figure on this page is made up and nothing can be changed. It is the real
-    dashboard driven by canned answers instead of a server, so what you click is what
-    ships — but this is not an account.
-  </div>
-
-  <!--
-    ── sign in, or start ──────────────────────────────────────────────────
-
-    One form for both, because they ask for almost the same things and two forms is two
-    places for the session handling to diverge. The mode is a variable the site can set:
-    `?signup=1` opens on "create an account", and `?email=` fills the address the visitor
-    already typed there so nobody types it twice.
-  -->
-  <section class="panel" id="auth-panel">
-    <div class="panel-head">
-      <h1 id="auth-title">Sign in</h1>
-      <button class="ghost" type="button" id="auth-switch">Create an account</button>
-    </div>
-    <div class="panel-body">
-      <div class="banner" id="auth-error" data-kind="error" hidden></div>
-      <form id="auth-form">
-        <div class="row" id="auth-org-row" hidden>
-          <label>Business name<input id="auth-org" autocomplete="organization" maxlength="120"></label>
-        </div>
-        <div class="row">
-          <label>Email<input type="email" id="auth-email" autocomplete="username" required></label>
-          <label>Password<input type="password" id="auth-password" autocomplete="current-password" required></label>
-        </div>
-        <div class="row" id="auth-mfa-row" hidden>
-          <label>Authenticator code<input class="mono" id="auth-code" inputmode="numeric" autocomplete="one-time-code"></label>
-        </div>
-        <div class="row"><button class="primary" type="submit" id="auth-submit">Sign in</button></div>
-      </form>
-      <p class="note" id="auth-note">
-        This dashboard holds your session in memory only, so closing the tab signs you
-        out. That is deliberate: a token in browser storage survives an XSS.
-      </p>
-    </div>
-  </section>
-
-
-  <!-- ── the dashboard ────────────────────────────────────────────────── -->
-  <div id="app" hidden>
-    <nav class="tabs" id="tabs"></nav>
+  <main class="main">
     <div class="banner" id="flash" hidden></div>
 
     <!-- overview -->
     <section class="view" id="view-overview">
-      <div class="panel">
-        <div class="panel-head"><h2>📊 This period</h2><span class="note" id="period-note"></span></div>
-        <div class="panel-body">
-          <div class="grid" id="overview-stats"></div>
-          <div>
-            <div class="bar-track"><div class="bar-fill" id="tier-bar" style="width:0%"></div></div>
-            <p class="note" id="tier-note"></p>
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">Overview</h1>
+          <p class="page-desc">What has come in, what is set up, and what needs a look.</p>
+        </div>
+        <span class="note" id="period-note"></span>
+      </header>
+
+      <div class="grid kpi" id="overview-stats"></div>
+
+      <div class="cols">
+        <div class="panel">
+          <div class="panel-head"><h2>Payments by currency</h2><span class="note">live, credited and unreversed</span></div>
+          <div class="panel-body">
+            <div class="chart" id="volume-chart"></div>
+            <div class="tier">
+              <span class="stat-label">Towards the next rate</span>
+              <div class="bar-track"><div class="bar-fill" id="tier-bar" style="width:0%"></div></div>
+              <p class="note" id="tier-note"></p>
+            </div>
           </div>
+        </div>
+
+        <div class="panel" id="setup-panel">
+          <div class="panel-head"><h2>Before your first live payment</h2><span class="note" id="setup-progress"></span></div>
+          <div class="panel-body"><ol class="checklist" id="checklist"></ol></div>
         </div>
       </div>
 
-      <div class="panel" id="setup-panel">
-        <div class="panel-head"><h2>🚦 Before your first live payment</h2></div>
-        <div class="panel-body"><ol class="checklist" id="checklist"></ol></div>
-      </div>
-
       <div class="panel">
-        <div class="panel-head"><h2>⚠️ Needs a look</h2><span class="note" id="attention-note"></span></div>
+        <div class="panel-head"><h2>Needs a look</h2><span class="note" id="attention-note"></span></div>
         <div class="panel-body"><div class="scroll"><table id="attention-table"></table></div></div>
       </div>
     </section>
 
     <!-- new payment -->
     <section class="view" id="view-new" hidden>
-      <div class="panel">
-        <div class="panel-head"><h2>➕ Take a payment</h2></div>
-        <div class="panel-body">
-          <p class="note">
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">Take a payment</h1>
+          <p class="page-desc">
             Creates a checkout and gives you a link. Your customer picks the coin and
             network there — you do not have to know which one they hold.
           </p>
+        </div>
+      </header>
+      <div class="panel">
+        <div class="panel-head"><h2>New payment link</h2></div>
+        <div class="panel-body">
           <form id="new-form">
             <div class="row">
               <label>Amount in USD<input class="mono" id="new-amount" inputmode="decimal" placeholder="25.00" required></label>
@@ -709,8 +831,15 @@
 
     <!-- invoices -->
     <section class="view" id="view-invoices" hidden>
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">Invoices</h1>
+          <p class="page-desc">Every checkout you have issued, newest first, with what was paid against it.</p>
+        </div>
+        <span class="note" id="invoice-count"></span>
+      </header>
       <div class="panel">
-        <div class="panel-head"><h2>🧾 Invoices</h2><span class="note" id="invoice-count"></span></div>
+        <div class="panel-head"><h2>All invoices</h2></div>
         <div class="panel-body">
           <form id="invoice-filters">
             <div class="row">
@@ -735,20 +864,25 @@
 
     <!-- currencies -->
     <section class="view" id="view-assets" hidden>
-      <div class="panel">
-        <div class="panel-head"><h2>💰 What you accept</h2></div>
-        <div class="panel-body">
-          <p class="note">
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">Currencies</h1>
+          <p class="page-desc">
             Turn on the currencies you want to take. Each one needs a payout address on its
             chain — the money goes straight to your own wallet, so without an address there is
             nowhere for it to go and invoices are refused.
           </p>
+        </div>
+      </header>
+      <div class="panel">
+        <div class="panel-head"><h2>What you accept</h2></div>
+        <div class="panel-body">
           <div id="asset-groups"></div>
         </div>
       </div>
 
       <div class="panel">
-        <div class="panel-head"><h2>➕ Your own token</h2></div>
+        <div class="panel-head"><h2>Your own token</h2></div>
         <div class="panel-body">
           <p class="note">
             Issued your own token? Submit its contract and we will check it. Approval is not
@@ -779,8 +913,14 @@
 
     <!-- payouts -->
     <section class="view" id="view-payouts" hidden>
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">Payouts</h1>
+          <p class="page-desc">Where the money lands: your own wallets on each chain, and the addresses we settle to.</p>
+        </div>
+      </header>
       <div class="panel" id="wallets-panel" hidden>
-        <div class="panel-head"><h2>👛 Your own wallets</h2><span class="note" id="wallet-count"></span></div>
+        <div class="panel-head"><h2>Your own wallets</h2><span class="note" id="wallet-count"></span></div>
         <div class="panel-body">
           <p class="note">
             Your customers pay straight into a wallet of yours, on any chain — no contract of ours
@@ -807,7 +947,7 @@
         </div>
       </div>
       <div class="panel">
-        <div class="panel-head"><h2>🏦 Payout addresses</h2></div>
+        <div class="panel-head"><h2>Payout addresses</h2></div>
         <div class="panel-body">
           <p class="warn-note">
             A change here is scheduled rather than immediate, and we email you when it is
@@ -829,8 +969,14 @@
 
     <!-- webhooks -->
     <section class="view" id="view-webhooks" hidden>
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">Webhooks</h1>
+          <p class="page-desc">How your own system hears that a payment landed, and what we tried to deliver.</p>
+        </div>
+      </header>
       <div class="panel">
-        <div class="panel-head"><h2>🔔 Webhook endpoints</h2></div>
+        <div class="panel-head"><h2>Webhook endpoints</h2></div>
         <div class="panel-body">
           <div class="scroll"><table id="endpoint-table"></table></div>
           <form id="endpoint-form">
@@ -850,19 +996,22 @@
       </div>
 
       <div class="panel">
-        <div class="panel-head"><h2>📨 Recent deliveries</h2></div>
+        <div class="panel-head"><h2>Recent deliveries</h2></div>
         <div class="panel-body"><div class="scroll"><table id="delivery-table"></table></div></div>
       </div>
     </section>
 
     <!-- keys -->
     <section class="view" id="view-keys" hidden>
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">API keys</h1>
+          <p class="page-desc">A test key cannot move real money, whatever it is asked to do. Start with one.</p>
+        </div>
+      </header>
       <div class="panel">
-        <div class="panel-head"><h2>🔑 API keys</h2></div>
+        <div class="panel-head"><h2>Your keys</h2></div>
         <div class="panel-body">
-          <p class="note">
-            A test key cannot move real money, whatever it is asked to do. Start with one.
-          </p>
           <div class="scroll"><table id="key-table"></table></div>
           <div class="banner" id="key-secret" data-kind="warn" hidden>
             <p><strong>Copy this key now — it is shown once and stored only as a hash.</strong></p>
@@ -877,8 +1026,14 @@
 
     <!-- team -->
     <section class="view" id="view-team" hidden>
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">Team</h1>
+          <p class="page-desc">Who can get in, what each of them can do, and who has been invited.</p>
+        </div>
+      </header>
       <div class="panel">
-        <div class="panel-head"><h2>👥 Who can get in</h2></div>
+        <div class="panel-head"><h2>Who can get in</h2></div>
         <div class="panel-body">
           <div class="scroll"><table id="member-table"></table></div>
           <p class="note">
@@ -891,7 +1046,7 @@
 
       <div class="panel">
         <div class="panel-head">
-          <h2>✉️ Invitations</h2>
+          <h2>Invitations</h2>
           <span class="note" id="invite-count"></span>
         </div>
         <div class="panel-body">
@@ -915,9 +1070,15 @@
 
     <!-- security -->
     <section class="view" id="view-security" hidden>
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">Security</h1>
+          <p class="page-desc">A second factor for anything that moves money or grants access, and the sessions that hold it.</p>
+        </div>
+      </header>
       <div class="panel">
         <div class="panel-head">
-          <h2>🔐 Two-factor authentication</h2>
+          <h2>Two-factor authentication</h2>
           <span class="pill" id="totp-state"></span>
         </div>
         <div class="panel-body">
@@ -983,7 +1144,7 @@
         included — so the panel that appears right after setting it up is this one.
       -->
       <div class="panel" id="elevate-panel" hidden>
-        <div class="panel-head"><h2>🔓 Unlock this session</h2></div>
+        <div class="panel-head"><h2>Unlock this session</h2></div>
         <div class="panel-body">
           <p class="note">
             This browser has not shown a code yet, so anything that moves money is refused.
@@ -1000,7 +1161,7 @@
       </div>
 
       <div class="panel">
-        <div class="panel-head"><h2>💻 Other sessions</h2></div>
+        <div class="panel-head"><h2>Other sessions</h2></div>
         <div class="panel-body">
           <p class="note" id="revoke-note"></p>
           <div class="row">
@@ -1012,6 +1173,12 @@
 
     <!-- commission -->
     <section class="view" id="view-commission" hidden>
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">Commission</h1>
+          <p class="page-desc">What you pay us, who pays it, and anything outstanding between us.</p>
+        </div>
+      </header>
       <div class="panel" id="balance-panel" hidden>
         <div class="panel-head"><h2 id="balance-headline">Your balance</h2></div>
         <div class="panel-body">
@@ -1022,7 +1189,7 @@
       </div>
 
       <div class="panel">
-        <div class="panel-head"><h2>💳 What you pay</h2></div>
+        <div class="panel-head"><h2>What you pay</h2></div>
         <div class="panel-body">
           <p class="note">
             A percentage of what you process, and nothing else. No monthly fee, no minimum,
@@ -1035,7 +1202,7 @@
       </div>
 
       <div class="panel">
-        <div class="panel-head"><h2>🧮 Who pays it</h2></div>
+        <div class="panel-head"><h2>Who pays it</h2></div>
         <div class="panel-body">
           <p class="note">
             Our cut is taken on chain, out of the payment, in the same transaction that pays
@@ -1048,7 +1215,7 @@
         </div>
       </div>
     </section>
-  </div>
+  </main>
 </div>
 
 <script>
@@ -1457,6 +1624,48 @@
     ['commission', 'Commission'],
   ];
 
+  /**
+   * The four sections that fit in a phone's bottom bar. The other six are in the sheet
+   * behind "More". On a desktop and a tablet the distinction does nothing: every section
+   * is in the sidebar.
+   */
+  const DOCK = new Set(['overview', 'new', 'invoices', 'payouts']);
+
+  /**
+   * One icon per section, drawn inline.
+   *
+   * Static markup, not data: nothing here comes from a response. Stroke icons at 24 units,
+   * coloured by `currentColor` so the stylesheet decides — the current section's icon takes
+   * the accent, the rest are quiet.
+   */
+  const ICONS = {
+    overview: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+    new: '<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
+    invoices: '<path d="M5 3h14v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>',
+    assets: '<circle cx="12" cy="12" r="9"/><path d="M14.8 9.6c-.5-1-1.6-1.6-2.8-1.6-1.8 0-3 .9-3 2s1.2 2 3 2 3 .9 3 2-1.2 2-3 2c-1.2 0-2.3-.6-2.8-1.6M12 6v2M12 16v2"/>',
+    payouts: '<path d="M3 8V7a2 2 0 0 1 2-2h12"/><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M16 14h.01"/>',
+    webhooks: '<path d="M6 9a6 6 0 0 1 12 0v5l2 3H4l2-3z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+    keys: '<circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M16 4l3 3"/>',
+    team: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M21.5 20a6.5 6.5 0 0 0-4.5-6.2"/>',
+    security: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+    commission: '<path d="M19 5 5 19"/><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/>',
+  };
+
+  function icon(id) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.75');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.innerHTML = ICONS[id] || '';
+    return svg;
+  }
+
   let current = 'overview';
 
   function renderTabs() {
@@ -1466,42 +1675,42 @@
       VIEWS.map(([id, label]) =>
         h('button', {
           type: 'button',
-          text: label,
+          'data-view': id,
+          'data-dock': DOCK.has(id) ? 'bar' : 'sheet',
           'aria-current': id === current ? 'page' : null,
           onclick: () => show(id),
-        }),
+        }, [icon(id), h('span', { class: 'tab-label', text: label })]),
       ),
     );
-    /**
-     * The open tab is brought into view in the strip, which scrolls sideways on a phone.
-     *
-     * The strip's own scroll position, not `scrollIntoView`: that would also scroll the page
-     * vertically to wherever the strip happens to be, and a tab opened from a link — `?tab=`
-     * — would land the reader halfway down the page. Instant rather than smooth, so nothing
-     * is moving under a finger that is about to tap the next tab.
-     */
-    const active = nav.querySelector('[aria-current="page"]');
-    if (active && nav.scrollWidth > nav.clientWidth) {
-      // Moved only when it is not already fully in view, and by the least that brings it in —
-      // clear of the strip's padding and of the fade drawn over an edge with more behind it,
-      // so the open tab is never the one half-faded.
-      const pad = (parseFloat(getComputedStyle(nav).paddingLeft) || 0) + 40;
-      const left = active.offsetLeft - pad;
-      const right = active.offsetLeft + active.offsetWidth + pad;
-      if (left < nav.scrollLeft) nav.scrollLeft = left;
-      else if (right > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = right - nav.clientWidth;
-    }
-    markEdges(nav);
+    // "More" lights up when the open section is one of the ones behind it.
+    el('tabs-more').dataset.active = String(!DOCK.has(current));
   }
+
+  /**
+   * The sheet behind "More" on a phone: the six sections the bottom bar has no room for.
+   *
+   * Open and closed are attributes the stylesheet reads, so on a desktop — where every
+   * section is in the sidebar — the state exists and does nothing.
+   */
+  function setSheet(open) {
+    el('tabs').dataset.sheet = open ? 'open' : 'closed';
+    el('tabs-more').setAttribute('aria-expanded', String(open));
+    el('tabs-backdrop').hidden = !open;
+  }
+  el('tabs-more').addEventListener('click', () => setSheet(el('tabs').dataset.sheet !== 'open'));
+  el('tabs-backdrop').addEventListener('click', () => setSheet(false));
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && el('tabs').dataset.sheet === 'open') setSheet(false);
+  });
 
   /**
    * Which sides of a sideways scroller have more behind them.
    *
    * Written to `data-edge` as `left`, `right`, `both` or `none`, and the stylesheet fades
    * only the side that has anything there — a fade on an edge with nothing behind it reads
-   * as a cut-off, which is the thing it is meant to prevent. Used by the tab strip and by
-   * every `.scroll` wrapper around a table, which is what keeps a wide table scrolling
-   * inside its panel rather than the page scrolling under it.
+   * as a cut-off, which is the thing it is meant to prevent. Used by every `.scroll` wrapper
+   * around a table, which is what keeps a wide table scrolling inside its card rather than
+   * the page scrolling under it.
    */
   function markEdges(scroller) {
     const more = scroller.scrollWidth - scroller.clientWidth;
@@ -1510,7 +1719,7 @@
     scroller.dataset.edge = left && right ? 'both' : left ? 'left' : right ? 'right' : 'none';
   }
 
-  for (const scroller of [el('tabs'), ...document.querySelectorAll('.scroll')]) {
+  for (const scroller of document.querySelectorAll('.scroll')) {
     scroller.addEventListener('scroll', () => markEdges(scroller), { passive: true });
     // Content changes size when a table is (re)drawn and when the viewport does; both
     // change which edges have more behind them.
@@ -1522,7 +1731,7 @@
     markEdges(scroller);
   }
   window.addEventListener('resize', () => {
-    for (const scroller of [el('tabs'), ...document.querySelectorAll('.scroll')]) markEdges(scroller);
+    for (const scroller of document.querySelectorAll('.scroll')) markEdges(scroller);
   });
 
   /**
@@ -1544,6 +1753,7 @@
     current = id;
     for (const [viewId] of VIEWS) el('view-' + viewId).hidden = viewId !== id;
     renderTabs();
+    setSheet(false);
     void refresh(id);
   }
 
@@ -1564,6 +1774,7 @@
      */
     renderChecklist();
     renderAttention();
+    renderVolumeChart();
 
     if (!commission || !report) return;
 
@@ -1608,6 +1819,96 @@
       : '';
   }
 
+  /**
+   * Payments by currency, as horizontal bars in one inline SVG.
+   *
+   * The report groups credited, unreversed live payments by chain and asset — there is no
+   * per-day series in it, so this is not drawn as one. Bar length is the number of payments,
+   * which is the one figure comparable across currencies; the amount beside each bar is in
+   * that currency's own units, because 17,920 USDT and 182 TON are not the same kind of
+   * number and a bar that pretended otherwise would mislead.
+   *
+   * Drawn in pixels at the card's current width and redrawn when that changes: an SVG scaled
+   * from a fixed viewBox shrinks its text with it, and 7px labels on a phone are not labels.
+   */
+  function renderVolumeChart() {
+    const host = el('volume-chart');
+    const rows = (cache.report && cache.report.volume) || [];
+    const NS = 'http://www.w3.org/2000/svg';
+
+    if (rows.length === 0) {
+      const glyph = document.createElementNS(NS, 'svg');
+      glyph.setAttribute('viewBox', '0 0 24 24');
+      glyph.setAttribute('fill', 'none');
+      glyph.setAttribute('stroke', 'currentColor');
+      glyph.setAttribute('stroke-width', '1.75');
+      glyph.setAttribute('stroke-linecap', 'round');
+      glyph.setAttribute('aria-hidden', 'true');
+      glyph.innerHTML = '<path d="M4 19h16"/><path d="M7 15v-4M12 15V7M17 15v-6"/>';
+      fill(host, [
+        h('div', { class: 'empty-state' }, [
+          glyph,
+          h('p', { text: cache.report ? 'No live payments yet. Volume appears here as customers pay.' : 'The volume report did not load.' }),
+        ]),
+      ]);
+      return;
+    }
+
+    const width = host.clientWidth;
+    if (width < 40) return; // Not laid out yet; the observer below draws it when it is.
+
+    const rowHeight = 46;
+    const labelHeight = 18;
+    const barHeight = 8;
+    const height = rows.length * rowHeight;
+    const max = Math.max(...rows.map((row) => Number(row.paymentCount) || 0), 1);
+
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+    svg.setAttribute('width', String(width));
+    svg.setAttribute('height', String(height));
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Payments by currency');
+
+    const node = (tag, attrs, content) => {
+      const element = document.createElementNS(NS, tag);
+      for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, String(value));
+      if (content !== undefined) element.textContent = String(content);
+      return element;
+    };
+
+    rows.forEach((row, index) => {
+      const top = index * rowHeight;
+      const count = Number(row.paymentCount) || 0;
+      const amount = formatUnitsGrouped(String(row.total ?? '0'), Number(row.assetDecimals) || 0);
+      svg.append(
+        node('text', { x: 0, y: top + 13, class: 'chart-label' }, (row.assetSymbol || '?') + ' · ' + (row.chain || '')),
+        node('text', { x: width, y: top + 13, class: 'chart-value', 'text-anchor': 'end' },
+          amount + ' ' + (row.assetSymbol || '') + ' · ' + count + (count === 1 ? ' payment' : ' payments')),
+        node('rect', { x: 0, y: top + labelHeight + 8, width, height: barHeight, rx: barHeight / 2, class: 'chart-track' }),
+        node('rect', {
+          x: 0, y: top + labelHeight + 8,
+          width: Math.max(barHeight, Math.round((count / max) * width)), height: barHeight, rx: barHeight / 2,
+          class: 'chart-bar',
+        }),
+      );
+    });
+
+    fill(host, [svg]);
+  }
+
+  // Redrawn at the width it actually has, which changes with the viewport and with the tab.
+  if (typeof ResizeObserver === 'function') {
+    let drawnAt = 0;
+    new ResizeObserver((entries) => {
+      const width = Math.round(entries[0].contentRect.width);
+      if (width > 0 && width !== drawnAt) {
+        drawnAt = width;
+        renderVolumeChart();
+      }
+    }).observe(el('volume-chart'));
+  }
+
   function stat(label, value, sub, lime) {
     return h('div', { class: 'stat' }, [
       h('div', { class: 'stat-label', text: label }),
@@ -1649,6 +1950,8 @@
     // Hidden once everything is done: a checklist of ticks is furniture, and this panel
     // is the first thing on the page.
     el('setup-panel').hidden = steps.every((step) => step.done);
+    const done = steps.filter((step) => step.done).length;
+    el('setup-progress').textContent = done + ' of ' + steps.length + ' done';
 
     fill(
       el('checklist'),
@@ -3287,6 +3590,7 @@
     orgName = first.name || '';
     myRole = first.role || null;
     el('whoami-org').textContent = orgName;
+    el('whoami').dataset.initial = (orgName.trim().charAt(0) || '?').toUpperCase();
     // Kept, not refetched: the overview and the security tab both ask what this session
     // is, and it is the same answer the door already gave.
     cache.me = me;
@@ -3345,6 +3649,20 @@
   }
 
   renderTabs();
+
+  /**
+   * How tall the preview strip is, for the sidebar to start beneath it.
+   *
+   * The strip wraps to more lines as the page narrows, so the height is measured rather than
+   * declared. Zero when it is hidden, which is every page that is not a preview.
+   */
+  {
+    const strip = el('preview-banner');
+    const measure = () =>
+      document.documentElement.style.setProperty('--strip-h', strip.hidden ? '0px' : strip.offsetHeight + 'px');
+    if (typeof ResizeObserver === 'function') new ResizeObserver(measure).observe(strip);
+    measure();
+  }
 
   // Last, so a preview has already replaced `fetch` and this goes to the stub.
   if (verification) {

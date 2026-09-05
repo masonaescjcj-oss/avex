@@ -40,11 +40,22 @@ const MODULES = [
   join(here, 'dist', 'preview.js'),
 ];
 const MARKER = '/* @inject:modules */';
+/**
+ * The design tokens, inlined at the top of the stylesheet.
+ *
+ * `packages/design/tokens.css` is the one place colour, type, spacing and motion are decided
+ * for every page. The stylesheet below the marker only extends them — a page that redefined
+ * `--surface` would look like a different product from the checkout it links to.
+ */
+const TOKENS_MARKER = '/* @inject:tokens */';
+const TOKENS = join(here, '..', '..', 'packages', 'design', 'tokens.css');
 
 const template = readFileSync(join(here, 'public', 'merchant.template.html'), 'utf8');
-if (!template.includes(MARKER)) {
-  console.error(`template is missing the ${MARKER} marker`);
-  process.exit(1);
+for (const marker of [MARKER, TOKENS_MARKER]) {
+  if (!template.includes(marker)) {
+    console.error(`template is missing the ${marker} marker`);
+    process.exit(1);
+  }
 }
 
 /** Strip module syntax so the code runs in a plain classic script. */
@@ -65,8 +76,9 @@ const inlined = MODULES.map((path) => strip(readFileSync(path, 'utf8'))).join('\
  * staff panel once, while the module's own tests kept passing — the module was fine and
  * only the copy was corrupt. The assertion afterwards is what would have caught it.
  */
-const output = template.replace(MARKER, () => inlined);
-if (!output.includes(inlined)) {
+const tokens = readFileSync(TOKENS, 'utf8').trim();
+const output = template.replace(MARKER, () => inlined).replace(TOKENS_MARKER, () => tokens);
+if (!output.includes(inlined) || !output.includes(tokens)) {
   console.error('inlining altered the injected source; refusing to write a corrupt page');
   process.exit(1);
 }
@@ -75,5 +87,5 @@ const target = join(here, 'public', 'merchant.html');
 writeFileSync(target, output);
 
 console.log(
-  `wrote ${target} (${(output.length / 1024).toFixed(1)} KB, modules ${(inlined.length / 1024).toFixed(1)} KB)`,
+  `wrote ${target} (${(output.length / 1024).toFixed(1)} KB, modules ${(inlined.length / 1024).toFixed(1)} KB, tokens ${(tokens.length / 1024).toFixed(1)} KB)`,
 );
