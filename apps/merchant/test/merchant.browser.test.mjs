@@ -212,7 +212,10 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
    */
   async function open(overrides = {}) {
     // A desktop unless a test says otherwise; the layout tests open a phone.
-    const context = await browser.newContext({ viewport: overrides.viewport ?? { width: 1100, height: 900 } });
+    const context = await browser.newContext({
+      viewport: overrides.viewport ?? { width: 1100, height: 900 },
+      colorScheme: overrides.colorScheme,
+    });
     const page = await context.newPage();
     const errors = [];
     const seen = [];
@@ -413,6 +416,24 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   const shown = (page, selector) =>
     page.$eval(selector, (node) => node.getBoundingClientRect().height > 0).catch(() => false);
+
+  /**
+   * Open a section by its label.
+   *
+   * The sections are `nav.tabs button` elements in every layout — a sidebar on a desktop, a
+   * bottom bar on a phone. A phone's bar has room for four of them; the other six are in a
+   * sheet behind "More", which a real thumb has to open first. So does this: if the button is
+   * not on screen, "More" is pressed, then the button. On a desktop the first branch is never
+   * taken.
+   */
+  async function openTab(page, label) {
+    const tab = page.locator(`nav.tabs button:has-text("${label}")`).first();
+    if (!(await tab.isVisible())) {
+      await page.click('#tabs-more');
+      await page.waitForTimeout(60);
+    }
+    await tab.click();
+  }
   const text = (page, selector) => page.$eval(selector, (node) => node.textContent.trim());
   const all = (page, selector) => page.$$eval(selector, (nodes) => nodes.map((n) => n.textContent.trim()));
 
@@ -1158,9 +1179,9 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     // It is a bearer token in a URL that stays in the address bar. Re-posting it on each
     // reload would turn a stale tab into a stream of failures.
     const { page, context, posts } = await open({ query: 'invite=tok_team' });
-    await page.click('nav.tabs button:has-text("Invoices")');
+    await openTab(page, 'Invoices');
     await page.waitForTimeout(200);
-    await page.click('nav.tabs button:has-text("Overview")');
+    await openTab(page, 'Overview');
     await page.waitForTimeout(200);
 
     const attempts = posts.filter((post) => post.path.endsWith('/v1/invites/accept'));
@@ -1334,7 +1355,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * is what reaches the API.
      */
     const { page, context, posts } = await open();
-    await page.click('nav.tabs button:has-text("Take a payment")');
+    await openTab(page, 'Take a payment');
     await page.fill('#new-amount', '19.99');
     await page.fill('#new-reference', 'order-1042');
     await page.click('#new-submit');
@@ -1356,7 +1377,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * paid when they had not.
      */
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Take a payment")');
+    await openTab(page, 'Take a payment');
     await page.fill('#new-amount', '19.99');
     await page.click('#new-submit');
     await page.waitForFunction(() => document.getElementById('new-result')?.hidden === false, { timeout: 5000 });
@@ -1372,7 +1393,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     // AVEX's refusals are written for a merchant to act on — "no currency is payable
     // yet" is more useful than a generic failure.
     const { page, context } = await open({ checkoutFails: true });
-    await page.click('nav.tabs button:has-text("Take a payment")');
+    await openTab(page, 'Take a payment');
     await page.fill('#new-amount', '25');
     await page.click('#new-submit');
     await page.waitForFunction(
@@ -1388,7 +1409,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   test('invoice amounts are shown in the asset precision, not rounded', async () => {
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Invoices")');
+    await openTab(page, 'Invoices');
     await page.waitForTimeout(150);
     // 20100502512562814071 at 18 decimals, which no double holds.
     assert.match(await text(page, '#invoice-table'), /20\.100502512562814071/);
@@ -1397,7 +1418,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   test('a status filter reaches the API as a query parameter', async () => {
     const { page, context, seen } = await open();
-    await page.click('nav.tabs button:has-text("Invoices")');
+    await openTab(page, 'Invoices');
     await page.selectOption('#filter-status', 'underpaid');
     await page.click('#invoice-filters button[type="submit"]');
     await page.waitForTimeout(200);
@@ -1418,7 +1439,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * on it failed.
      */
     const { page, context, errors } = await open();
-    await page.click('nav.tabs button:has-text("Payouts")');
+    await openTab(page, 'Payouts');
     await page.waitForTimeout(250);
 
     assert.equal(await shown(page, '#flash'), false, await text(page, '#flash').catch(() => ''));
@@ -1456,7 +1477,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         ],
       },
     });
-    await page.click('nav.tabs button:has-text("Payouts")');
+    await openTab(page, 'Payouts');
     await page.waitForTimeout(250);
 
     const table = await text(page, '#payout-table');
@@ -1477,7 +1498,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     // The same wrong-key bug, quieter: the page read `keys`, the API answers `data`, and a
     // merchant with keys was told they had none.
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("API keys")');
+    await openTab(page, 'API keys');
     await page.waitForTimeout(250);
 
     const table = await text(page, '#key-table');
@@ -1493,7 +1514,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * address is per.
      */
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Currencies")');
+    await openTab(page, 'Currencies');
     await page.waitForTimeout(200);
     const body = await text(page, '#asset-groups');
     assert.match(body, /payout address set/);
@@ -1507,7 +1528,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * they believe they are accepting it, and every invoice is being refused.
      */
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Currencies")');
+    await openTab(page, 'Currencies');
     await page.waitForTimeout(200);
 
     const row = await page.$eval('.asset-row[data-state="needs_payout"]', (node) =>
@@ -1523,7 +1544,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     // The whole point of the tab. It was read-only before, so a merchant had no way to say
     // which currencies they accept.
     const { page, context, posts } = await open();
-    await page.click('nav.tabs button:has-text("Currencies")');
+    await openTab(page, 'Currencies');
     await page.waitForTimeout(200);
 
     await page.click('.asset-row[data-state="accepting"] button:has-text("Turn off")');
@@ -1544,7 +1565,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * The row still explains itself.
      */
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Currencies")');
+    await openTab(page, 'Currencies');
     await page.waitForTimeout(200);
 
     const row = await page.$('.asset-row[data-state="in_review"]');
@@ -1561,7 +1582,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     // Approval is neither automatic nor instant, and the response says so rather than
     // reading as "ready".
     const { page, context, posts } = await open();
-    await page.click('nav.tabs button:has-text("Currencies")');
+    await openTab(page, 'Currencies');
     await page.waitForTimeout(200);
 
     await page.fill('#submit-contract', '0x1234567890abcdef1234567890abcdef12345678');
@@ -1582,7 +1603,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * instant would not check their email.
      */
     const { page, context, posts } = await open();
-    await page.click('nav.tabs button:has-text("Payouts")');
+    await openTab(page, 'Payouts');
     await page.waitForTimeout(150);
     assert.match(await text(page, '#view-payouts'), /scheduled rather than immediate/);
 
@@ -1598,7 +1619,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   test('no endpoint is called out as a problem, not left blank', async () => {
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Webhooks")');
+    await openTab(page, 'Webhooks');
     await page.waitForTimeout(150);
     assert.match(await text(page, '#endpoint-table'), /nothing telling your system/);
     await context.close();
@@ -1608,7 +1629,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     // The secret cannot be recovered, so the page has to say so at the moment it is
     // shown rather than in documentation somewhere else.
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Webhooks")');
+    await openTab(page, 'Webhooks');
     await page.fill('#endpoint-url', 'https://store.test/avex');
     await page.click('#endpoint-form button[type="submit"]');
     await page.waitForFunction(() => document.getElementById('endpoint-secret')?.hidden === false, { timeout: 5000 });
@@ -1623,7 +1644,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
   test('a key is labelled by the mode its prefix implies', async () => {
     // The prefix is what the API enforces, so it is what the page reads.
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("API keys")');
+    await openTab(page, 'API keys');
     await page.waitForTimeout(150);
     const modes = await page.$$eval('#key-table .pill', (nodes) => nodes.map((n) => n.dataset.mode));
     assert.deepEqual(modes, ['test']);
@@ -1634,7 +1655,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   test('the commission tab shows the rate in money and names the next rung', async () => {
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Commission")');
+    await openTab(page, 'Commission');
     await page.waitForTimeout(150);
     const body = await text(page, '#view-commission');
     assert.match(body, /\$5 per \$1,000/);
@@ -1649,7 +1670,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * indistinguishable from a fee we have not mentioned yet.
      */
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Commission")');
+    await openTab(page, 'Commission');
     await page.waitForTimeout(150);
     const body = await text(page, '#view-commission');
     assert.match(body, /No monthly fee|no subscription/i);
@@ -1664,7 +1685,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * of the two to be in by accident.
      */
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Commission")');
+    await openTab(page, 'Commission');
     await page.waitForTimeout(150);
 
     const choices = await all(page, '#fee-payer-options .choice');
@@ -1680,7 +1701,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     // Pressing the state you are already in should not fire a request that changes
     // nothing, and a merchant should be able to see which one they are in at a glance.
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Commission")');
+    await openTab(page, 'Commission');
     await page.waitForTimeout(150);
 
     const pressed = await page.$$eval('#fee-payer-options .choice', (nodes) =>
@@ -1693,7 +1714,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
   test('the published ladder is shown with the merchant own rung marked', async () => {
     // A volume discount a merchant has to ask about is not a published ladder.
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Commission")');
+    await openTab(page, 'Commission');
     await page.waitForTimeout(150);
     const rows = await all(page, '#ladder-table tbody tr');
     assert.equal(rows.length, 3);
@@ -1714,7 +1735,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * not request it rather than buried under wallets that already work.
      */
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Payouts")');
+    await openTab(page, 'Payouts');
     await page.waitForTimeout(200);
 
     const body = await text(page, '#wallets-panel');
@@ -1735,7 +1756,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * with three scheduled wallets they did not want.
      */
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Payouts")');
+    await openTab(page, 'Payouts');
     await page.waitForTimeout(200);
     const body = await text(page, '#wallets-panel');
     assert.match(body, /first wallet on a chain is usable at once/);
@@ -1752,7 +1773,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * first on the tab because it is the path that costs nobody any gas.
      */
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Payouts")');
+    await openTab(page, 'Payouts');
     await page.waitForTimeout(200);
 
     const chains = await page.$$eval('#wallet-chain option', (nodes) => nodes.map((n) => n.value));
@@ -1770,7 +1791,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
   test('a merchant with no currency at all is shown no pool', async () => {
     // Nothing to register a wallet for, so nothing to explain.
     const { page, context } = await open({ assets: { data: [] } });
-    await page.click('nav.tabs button:has-text("Payouts")');
+    await openTab(page, 'Payouts');
     await page.waitForTimeout(200);
     assert.equal(await page.$eval('#wallets-panel', (node) => node.hidden), true);
     await context.close();
@@ -1786,7 +1807,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * and that their customers are not involved.
      */
     const { page, context } = await open();
-    await page.click('nav.tabs button:has-text("Commission")');
+    await openTab(page, 'Commission');
     await page.waitForTimeout(150);
 
     const body = await text(page, '#balance-panel');
@@ -1813,7 +1834,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         entries: [],
       },
     });
-    await page.click('nav.tabs button:has-text("Commission")');
+    await openTab(page, 'Commission');
     await page.waitForTimeout(150);
     assert.equal(await page.$eval('#balance-panel', (node) => node.hidden), true);
     await context.close();
@@ -1835,7 +1856,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         ],
       },
     });
-    await page.click('nav.tabs button:has-text("Commission")');
+    await openTab(page, 'Commission');
     await page.waitForTimeout(150);
 
     const panel = await page.$eval('#balance-panel', (node) => node.dataset.tone);
@@ -1851,7 +1872,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   /** Open the tab and wait for it to have loaded. */
   const openSecurity = async (page) => {
-    await page.click('nav.tabs button:has-text("Security")');
+    await openTab(page, 'Security');
     await page.waitForFunction(
       () => document.getElementById('view-security')?.hidden === false,
       { timeout: 5000 },
@@ -1952,7 +1973,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * They are stored as hashes and cannot be shown again, so a panel that redrew them on
      * every visit would be promising something it cannot keep.
      */
-    await page.click('nav.tabs button:has-text("Overview")');
+    await openTab(page, 'Overview');
     await page.waitForTimeout(150);
     await openSecurity(page);
     assert.equal(await shown(page, '#totp-codes'), false);
@@ -2088,7 +2109,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       });
     });
 
-    await page.click('nav.tabs button:has-text("Payouts")');
+    await openTab(page, 'Payouts');
     await page.waitForTimeout(200);
     await page.fill('#payout-address', '0x55d398326f99059fF775485246999027B3197955');
     await page.click('#payout-form button[type="submit"]');
@@ -2180,7 +2201,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
     // Every tab renders rather than half of them.
     for (const label of ['Take a payment', 'Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Team', 'Security', 'Commission', 'Overview']) {
-      await page.click(`nav.tabs button:has-text("${label}")`);
+      await openTab(page, label);
       await page.waitForTimeout(120);
       assert.equal(await shown(page, '#flash'), false, `${label} flashed an error`);
     }
@@ -2278,7 +2299,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       .waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 6000 })
       .catch(() => {});
 
-    await page.click('nav.tabs button:has-text("Currencies")');
+    await openTab(page, 'Currencies');
     await page.waitForTimeout(250);
 
     const states = await page.$$eval('.asset-row', (rows) =>
@@ -2317,7 +2338,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       .waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 6000 })
       .catch(() => {});
 
-    await page.click('nav.tabs button:has-text("Currencies")');
+    await openTab(page, 'Currencies');
     await page.waitForTimeout(250);
 
     const badged = await page.$$eval('.asset-row', (rows) =>
@@ -2352,7 +2373,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       .waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 6000 })
       .catch(() => {});
 
-    await page.click('nav.tabs button:has-text("Commission")');
+    await openTab(page, 'Commission');
     await page.waitForTimeout(150);
     // The second option is the one not in force, so it is the clickable one.
     await page.click('#fee-payer-options .choice:not([disabled])');
@@ -2369,56 +2390,198 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
   const PHONE = { width: 360, height: 740 };
   const EVERY_TAB = ['Overview', 'Take a payment', 'Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Team', 'Security', 'Commission'];
 
-  test('no tab makes a phone scroll sideways', async () => {
+  test('no tab makes a phone scroll sideways, in either theme', async () => {
     /**
      * Measured on the document, not on any one element: a page that scrolls sideways has
      * something wider than the viewport in it somewhere, and this is the assertion that finds
-     * it wherever it is. Every tab, because each draws a different table.
+     * it wherever it is. Every tab, because each draws a different table; both themes, because
+     * the dark palette is its own set of rules and a border that exists in only one of them
+     * has already been enough to push a card past the edge.
      */
-    const { page, context } = await open({ viewport: PHONE });
-    for (const label of EVERY_TAB) {
-      await page.click(`nav.tabs button:has-text("${label}")`);
-      await page.waitForTimeout(120);
-      const { scrollWidth, clientWidth } = await page.evaluate(() => ({
-        scrollWidth: document.documentElement.scrollWidth,
-        clientWidth: document.documentElement.clientWidth,
-      }));
-      assert.ok(
-        scrollWidth <= clientWidth,
-        `${label}: the page is ${scrollWidth}px wide in a ${clientWidth}px viewport`,
-      );
+    for (const colorScheme of ['light', 'dark']) {
+      const { page, context } = await open({ viewport: PHONE, colorScheme });
+      for (const label of EVERY_TAB) {
+        await openTab(page, label);
+        await page.waitForTimeout(120);
+        const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+          scrollWidth: document.documentElement.scrollWidth,
+          clientWidth: document.documentElement.clientWidth,
+        }));
+        assert.ok(
+          scrollWidth <= clientWidth,
+          `${colorScheme}, ${label}: the page is ${scrollWidth}px wide in a ${clientWidth}px viewport`,
+        );
+      }
+      await context.close();
     }
-    await context.close();
   });
 
-  test('the tab strip is one scrolling row on a phone, and every tab on it can still be opened', async () => {
+  test('on a phone the sections are a bar along the bottom, and every one can still be opened', async () => {
     /**
-     * Ten tabs do not fit in 360px. Wrapped, they took four lines of the screen before the
-     * first figure; now the row scrolls sideways. The buttons are still `nav.tabs button` with
-     * their labels — that is how every other test here finds them — and opening one brings
-     * it into view by moving the strip, not the page.
+     * Ten sections do not fit in 360px. The bar holds the four most used, at thumb size, and
+     * "More" opens a sheet with the other six. Measured as drawn — where the boxes are — rather
+     * than by class name: a bar is a thing pinned to the bottom edge of the viewport, one row
+     * high, the full width of the screen.
      */
     const { page, context } = await open({ viewport: PHONE });
-    const strip = await page.$eval('nav.tabs', (node) => ({
-      scrollWidth: node.scrollWidth,
-      clientWidth: node.clientWidth,
-      rows: new Set([...node.children].map((button) => Math.round(button.getBoundingClientRect().top))).size,
-    }));
-    assert.ok(strip.scrollWidth > strip.clientWidth, 'ten tabs in 360px have to scroll');
-    assert.equal(strip.rows, 1, 'one row, not a stack');
 
+    const bar = await page.$eval('nav.tabs', (nav) => {
+      const box = nav.getBoundingClientRect();
+      const buttons = [...nav.querySelectorAll('button')].map((button) => ({
+        label: button.textContent.trim(),
+        box: button.getBoundingClientRect(),
+      }));
+      const visible = buttons.filter(({ box }) => box.height > 0);
+      return {
+        left: box.left, right: box.right, top: box.top, bottom: box.bottom, height: box.height,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        visible: visible.map(({ label }) => label),
+        heights: visible.map(({ box }) => box.height),
+        rows: new Set(visible.map(({ box }) => Math.round(box.top))).size,
+        hidden: buttons.filter(({ box }) => box.height === 0).map(({ label }) => label),
+        more: document.getElementById('tabs-more').getBoundingClientRect(),
+      };
+    });
+    assert.ok(Math.abs(bar.bottom - bar.viewport.height) <= 1, `the bar ends at ${bar.bottom}px in a ${bar.viewport.height}px viewport`);
+    assert.ok(bar.left <= 1 && bar.right >= bar.viewport.width - 1, 'the bar spans the screen');
+    assert.ok(bar.height >= 48 && bar.height <= 100, `a bar, not a sheet: ${bar.height}px tall`);
+    assert.deepEqual(bar.visible, ['Overview', 'Take a payment', 'Invoices', 'Payouts']);
+    assert.equal(bar.rows, 1, 'one row');
+    assert.ok(bar.heights.every((height) => height >= 44), `tap targets: ${bar.heights.join(', ')}`);
+    assert.deepEqual(bar.hidden, ['Currencies', 'Webhooks', 'API keys', 'Team', 'Security', 'Commission']);
+    assert.ok(bar.more.height >= 44 && Math.abs(bar.more.bottom - bar.viewport.height) <= 1, 'More is in the bar');
+    assert.ok(bar.more.right >= bar.viewport.width - 1, 'More is the last slot');
+
+    // The sheet: the six appear above the bar, inside the viewport, and go away once one is chosen.
+    await page.click('#tabs-more');
+    await page.waitForTimeout(120);
+    const sheet = await page.$$eval('nav.tabs button', (buttons) =>
+      buttons
+        .map((button) => ({ label: button.textContent.trim(), box: button.getBoundingClientRect() }))
+        .filter(({ box }) => box.height > 0)
+        .map(({ label, box }) => ({ label, inside: box.top >= 0 && box.bottom <= window.innerHeight && box.left >= 0 && box.right <= window.innerWidth })),
+    );
+    assert.equal(sheet.length, 10, 'every section is on screen with the sheet open');
+    assert.ok(sheet.every(({ inside }) => inside), sheet.map(({ label, inside }) => `${label}:${inside}`).join(' '));
+    await page.click('nav.tabs button:has-text("Webhooks")');
+    await page.waitForTimeout(120);
+    assert.equal(await text(page, 'nav.tabs button[aria-current="page"]'), 'Webhooks');
+    assert.equal(await shown(page, 'nav.tabs button:has-text("Team")'), false, 'choosing a section closes the sheet');
+    assert.equal(await shown(page, '#tabs-backdrop'), false);
+
+    // And all ten, by their labels, the way a thumb reaches them.
     for (const label of EVERY_TAB) {
-      await page.click(`nav.tabs button:has-text("${label}")`);
+      await openTab(page, label);
       await page.waitForTimeout(120);
       assert.equal(await text(page, 'nav.tabs button[aria-current="page"]'), label);
-      const inView = await page.$eval('nav.tabs button[aria-current="page"]', (node) => {
-        const box = node.getBoundingClientRect();
-        return box.left >= 0 && box.right <= document.documentElement.clientWidth;
-      });
-      assert.equal(inView, true, `${label} was opened but is off the edge of the strip`);
     }
     assert.equal(await shown(page, '#view-commission'), true);
     await context.close();
+  });
+
+  test('from 1024px up the sections are a sidebar down the left', async () => {
+    /**
+     * The desktop shape, measured as drawn: one column of ten buttons pinned to the left edge,
+     * the content starting to the right of it. Two widths, because 1024 is the edge where the
+     * icon rail becomes the full sidebar and the edge is where layouts break.
+     */
+    for (const width of [1024, 1440]) {
+      const { page, context } = await open({ viewport: { width, height: 800 } });
+      const side = await page.$eval('nav.tabs', (nav) => {
+        const box = nav.getBoundingClientRect();
+        const buttons = [...nav.querySelectorAll('button')].map((button) => button.getBoundingClientRect());
+        return {
+          left: box.left, right: box.right, top: box.top,
+          visible: buttons.filter((button) => button.height > 0).length,
+          columns: new Set(buttons.map((button) => Math.round(button.left))).size,
+          rows: new Set(buttons.map((button) => Math.round(button.top))).size,
+          labelled: [...nav.querySelectorAll('button')].every((button) => {
+            const label = button.querySelector('.tab-label') ?? button;
+            return label.getBoundingClientRect().width > 0 && getComputedStyle(label).opacity !== '0';
+          }),
+          content: document.getElementById('view-overview').getBoundingClientRect().left,
+          viewport: window.innerWidth,
+        };
+      });
+      assert.ok(side.left < 40, `${width}: the sidebar starts at ${side.left}px`);
+      assert.ok(side.right >= 180 && side.right <= 280, `${width}: the sidebar is ${side.right}px wide`);
+      assert.ok(side.top < 200, `${width}: the sections start near the top, not at ${side.top}px`);
+      assert.equal(side.visible, 10, `${width}: every section is visible`);
+      assert.equal(side.columns, 1, `${width}: one column`);
+      assert.equal(side.rows, 10, `${width}: ten rows`);
+      assert.equal(side.labelled, true, `${width}: labels are drawn, not tooltips`);
+      assert.ok(side.content >= side.right, `${width}: content at ${side.content}px overlaps a sidebar ending at ${side.right}px`);
+      await context.close();
+    }
+  });
+
+  test('body text reads at 4.5:1 against the surface it is painted on, in both themes', async () => {
+    /**
+     * Measured, not eyeballed. For every note, checklist reason, table cell and KPI label that
+     * is on screen, the colour is compared with the background actually behind it — walking up
+     * through translucent layers to the first opaque one, because a tinted row on a white card
+     * on a grey page is three surfaces and the contrast that matters is against the composite.
+     * Every tab, both themes, a desktop and a phone.
+     */
+    const measure = () => {
+      const parse = (value) => {
+        const match = value.match(/rgba?\(([^)]+)\)/);
+        if (!match) return null;
+        const [r, g, b, a = '1'] = match[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+        return { r, g, b, a: Number.isNaN(a) ? 1 : a };
+      };
+      const channel = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+      const luminance = ({ r, g, b }) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+      const over = (top, under) => ({
+        r: top.r * top.a + under.r * (1 - top.a),
+        g: top.g * top.a + under.g * (1 - top.a),
+        b: top.b * top.a + under.b * (1 - top.a),
+        a: 1,
+      });
+      const painted = (node) => {
+        const layers = [];
+        let element = node;
+        let opaque = null;
+        while (element && element !== document.documentElement) {
+          const colour = parse(getComputedStyle(element).backgroundColor);
+          if (colour && colour.a > 0) {
+            if (colour.a >= 1) { opaque = colour; break; }
+            layers.push(colour);
+          }
+          element = element.parentElement;
+        }
+        let ground = opaque ?? parse(getComputedStyle(document.body).backgroundColor) ?? { r: 255, g: 255, b: 255, a: 1 };
+        for (const layer of layers.reverse()) ground = over(layer, ground);
+        return ground;
+      };
+      const failures = [];
+      for (const node of document.querySelectorAll('.note, .check-why, td, .stat-label')) {
+        const box = node.getBoundingClientRect();
+        if (box.width === 0 || box.height === 0 || !node.textContent.trim()) continue;
+        const ground = painted(node);
+        const colour = parse(getComputedStyle(node).color);
+        const ink = colour.a < 1 ? over(colour, ground) : colour;
+        const [light, dark] = [luminance(ink), luminance(ground)].sort((a, b) => b - a);
+        const ratio = (light + 0.05) / (dark + 0.05);
+        if (ratio < 4.5) {
+          failures.push(`${node.className || node.tagName.toLowerCase()} "${node.textContent.trim().slice(0, 32)}" is ${ratio.toFixed(2)}:1`);
+        }
+      }
+      return failures;
+    };
+
+    for (const colorScheme of ['light', 'dark']) {
+      for (const viewport of [{ width: 1280, height: 900 }, PHONE]) {
+        const { page, context } = await open({ viewport, colorScheme });
+        for (const label of EVERY_TAB) {
+          await openTab(page, label);
+          await page.waitForTimeout(120);
+          const failures = await page.evaluate(measure);
+          assert.deepEqual(failures, [], `${colorScheme} at ${viewport.width}px, ${label}`);
+        }
+        await context.close();
+      }
+    }
   });
 
   test('a table wider than a phone scrolls inside its panel, not the page', async () => {
@@ -2428,7 +2591,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * `.scroll` wrapper, the wrapper scrolls, and the document does not.
      */
     const { page, context } = await open({ viewport: PHONE });
-    await page.click('nav.tabs button:has-text("Invoices")');
+    await openTab(page, 'Invoices');
     await page.waitForTimeout(120);
     const measured = await page.$eval('#invoice-table', (table) => {
       const scroller = table.closest('.scroll');
@@ -2450,7 +2613,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
   test('fields and buttons are big enough to tap on a phone', async () => {
     // 44px is the floor both platforms' guidelines give for a touch target.
     const { page, context } = await open({ viewport: PHONE });
-    await page.click('nav.tabs button:has-text("Take a payment")');
+    await openTab(page, 'Take a payment');
     await page.waitForTimeout(120);
     const tooSmall = await page.$$eval('#view-new input, #view-new select, #view-new button, #sign-out', (nodes) =>
       nodes
@@ -2472,7 +2635,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      */
     const { page, context } = await open();
     for (const label of ['Overview', 'Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Commission']) {
-      await page.click(`nav.tabs button:has-text("${label}")`);
+      await openTab(page, label);
       await page.waitForTimeout(120);
       const body = await page.$eval('#app', (node) => node.textContent);
       assert.ok(!/\bnull\b/.test(body), `"null" rendered on ${label}`);
@@ -2494,7 +2657,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
   test('the dashboard ran without throwing', async () => {
     const { page, context, errors } = await open();
     for (const label of ['Invoices', 'Currencies', 'Payouts', 'Webhooks', 'API keys', 'Team', 'Security', 'Commission', 'Overview']) {
-      await page.click(`nav.tabs button:has-text("${label}")`);
+      await openTab(page, label);
       await page.waitForTimeout(120);
     }
     assert.deepEqual(errors, []);
