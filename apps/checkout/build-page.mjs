@@ -17,6 +17,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { injectBrand, injectCoins } from '../../packages/design/inject.mjs';
+import { coinSymbols } from '../../packages/design/coins/sprite.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 
 const compiled = readFileSync(join(here, '..', '..', 'packages', 'qr', 'dist', 'index.js'), 'utf8');
@@ -81,11 +84,13 @@ const inlined = strip(compiled);
  * The assertion afterwards is the guard that would have caught it: if the injected
  * text is not present verbatim in the output, the inlining was lossy.
  */
-const output = template.replace(MARKER, () => inlined);
+let output = template.replace(MARKER, () => inlined);
 if (!output.includes(inlined)) {
   console.error('inlining altered the injected source; refusing to write a corrupt page');
   process.exit(1);
 }
+output = injectCoins(injectBrand(output), coinSymbols());
+
 const target = join(here, 'public', 'checkout.html');
 writeFileSync(target, output);
 
@@ -112,12 +117,14 @@ if (!receiptTemplate.includes(RECEIPT_MARKER)) {
   process.exit(1);
 }
 
-const receiptOutput = receiptTemplate.replace(RECEIPT_MARKER, () => receiptModule);
+let receiptOutput = receiptTemplate.replace(RECEIPT_MARKER, () => receiptModule);
 if (!receiptOutput.includes(receiptModule)) {
   console.error('inlining altered the injected source; refusing to write a corrupt page');
   process.exit(1);
 }
 const receiptTarget = join(here, 'public', 'receipt.html');
+receiptOutput = injectBrand(receiptOutput);
+
 writeFileSync(receiptTarget, receiptOutput);
 
 console.log(

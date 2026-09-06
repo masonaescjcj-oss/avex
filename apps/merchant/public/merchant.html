@@ -1,5 +1,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2222%22%20fill%3D%22%23c8f135%22%2F%3E%3Cpath%20fill%3D%22%230f1114%22%20fill-rule%3D%22evenodd%22%20d%3D%22M47.7%2019.5L52.3%2019.5L55%2020L58.4%2021.1L61.7%2022.7L61.7%2023L64.1%2024.2L67.2%2026.7L73.3%2033.6L78.4%2042L83.1%2053L85.3%2060L85.9%2063.3L86.3%2063.4L87.5%2070.3L87.8%2070.6L88.3%2074.5L83.3%2074.5L81.6%2071.1L78%2065.9L73.1%2061.1L69.1%2058.1L62.8%2055L57.5%2053.4L53.3%2052.8L46.4%2052.8L42.2%2053.4L38.3%2054.5L33.4%2056.6L27.8%2060.2L23.1%2064.4L19.5%2068.9L16.4%2074.5L11.4%2074.5L13.1%2065L16.9%2052.3L20%2044.7L25.2%2035.5L29.8%2029.4L35.6%2024.2L41.3%2021.1L47.5%2019.5ZM49.1%2024.1L45%2024.7L40%2026.9L37%2028.9L31.9%2034.1L28.8%2038.8L28.4%2038.8L28.1%2039.8L27.3%2040.6L24.2%2046.6L21.1%2054.2L18.8%2062.5L21.9%2059.4L22.7%2056.3L25.8%2048.3L28.4%2043L28.8%2043L29.4%2041.4L32.5%2037.2L32.5%2036.7L35.8%2033L39.4%2029.8L40.8%2029.2L40.8%2028.9L43.9%2027.3L48.6%2026.3L53%2026.6L56.9%2027.8L61.6%2030.8L64.8%2033.9L68.4%2038.4L72.7%2045.6L75.3%2051.6L78%2059.5L81.1%2062.5L80%2058.3L78.8%2055.2L78.9%2054.8L75.3%2046.1L75%2046.1L74.2%2043.9L71.3%2038.8L68.6%2035L63.3%2029.4L58.6%2026.3L54.7%2024.7L49.2%2024.1ZM48.1%2030.9L45.2%2031.9L41.4%2034.1L37.2%2038.3L34.5%2041.9L32.8%2045.2L32.5%2045.2L28.4%2054.1L33.6%2051.4L37.7%2050.2L37.8%2049.8L42.2%2048.8L47.2%2048.1L54.7%2048.3L59.7%2049.2L65%2050.9L71.3%2054.1L69.5%2049.7L69.2%2049.7L69.1%2048.8L68%2046.6L67.7%2046.6L66.9%2044.5L66.6%2044.5L65.9%2043L63.4%2039.4L60.6%2036.1L57.7%2033.6L53.9%2031.6L51.6%2030.9L48.3%2030.9ZM49.4%2054.8L55%2055.2L59.2%2056.1L63.4%2057.7L67.7%2059.8L71.4%2062.5L75.5%2066.4L78.1%2070.2L78.4%2070.2L80.8%2074.5L75.6%2074.5L73.8%2071.6L70.2%2067.5L66.9%2064.8L63.9%2063.3L63.9%2063L57.2%2060.3L52.2%2059.5L44.7%2059.8L40.9%2060.8L37%2062.3L32.7%2065L30.2%2067L26.7%2070.6L24.1%2074.5L18.9%2074.5L21.1%2070.5L24.2%2066.4L27.2%2063.4L31.6%2060.2L34.8%2058.3L38.6%2056.7L40.3%2056.4L40.5%2056.1L44.7%2055.2L49.2%2054.8Z%22%2F%3E%3C%2Fsvg%3E">
 <!--
   Where the API is.
 
@@ -478,6 +479,22 @@
   td select, td input { width: auto; min-width: 9rem; min-height: var(--control-sm); padding-top: 0; padding-bottom: 0; font-size: var(--s-1); }
   td button.ghost { min-height: var(--control-sm); padding: 0 var(--sp-3); font-size: var(--s-2); }
 
+  /* ── coin badges ──────────────────────────────────────────────────────── */
+
+  /* A chain or a currency, named with the icon its holders know it by. The icons are
+     full-bleed squares in the issuer's own colours, so the circle and the clipping belong
+     to the wrapper; the letters are the fallback for a token we ship no icon for. */
+  .coin-cell { display: inline-flex; align-items: center; gap: 0.45rem; white-space: nowrap; }
+  .coin-badge {
+    width: 1.125rem; height: 1.125rem; flex: none;
+    border-radius: 50%; overflow: hidden;
+    display: grid; place-items: center;
+    background: var(--surface-3); color: var(--ink-2);
+    font-family: var(--mono); font-size: 0.5rem; font-weight: 700; line-height: 1;
+  }
+  .coin-badge.is-icon { background: none; }
+  .coin-badge svg { display: block; width: 100%; height: 100%; }
+
   /* ── pills ────────────────────────────────────────────────────────────── */
 
   .pill {
@@ -805,6 +822,13 @@
 </style>
 
 <!--
+  The coin icons, inlined once as <symbol>s and drawn with <use>. This page reaches no
+  host, so a currency's badge cannot be a remote image.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden"><symbol id="coin-bnb" viewBox="0 0 18 18"><path fill="url(#bnb-an0ocsyz4)" d="M0 0h18v18H0z"/><path d="M5.93 4.84 9 3l3.07 1.84-1.13.68L9 4.36 7.06 5.52l-1.13-.68Zm6.14 2.32-1.13-.68L9 7.64 7.06 6.48l-1.13.68V8.5l1.94 1.16V12l1.13.68 1.13-.68V9.67l1.94-1.16V7.16Zm0 3.67V9.47l-1.13.68v1.36l1.13-.68Zm.8.48-1.94 1.16v1.36L14 11.99V8.32l-1.13.67v2.32ZM11.74 6l1.13.68v1.35L14 7.36V6l-1.13-.68-1.13.68Zm-3.87 6.96v1.36L9 15l1.13-.68v-1.36L9 13.64l-1.13-.68Zm-1.94-2.13 1.13.68v-1.36l-1.13-.68v1.36ZM7.87 6 9 6.68 10.13 6 9 5.32 7.87 6Zm-2.74.68L6.26 6l-1.13-.68L4 6v1.36l1.13.67V6.68Zm0 2.31L4 8.32v3.67l3.07 1.84v-1.36l-1.94-1.16V9Z" fill="#F0B90B"/><defs><linearGradient id="bnb-an0ocsyz4" x1="3.35" y1="3.12" x2="21.9" y2="24.43" gradientUnits="userSpaceOnUse"><stop stop-color="#1A1E21"/><stop offset="1" stop-color="#06060A"/></linearGradient></defs></symbol><symbol id="coin-btc" viewBox="0 0 18 18"><path fill="#F7931A" d="M0 0h18v18H0z"/><path d="M12.836 7.94c.166-1.123-.684-1.721-1.855-2.128l.38-1.513-.926-.23-.369 1.476-.738-.177.375-1.486-.925-.23-.38 1.518-.588-.139v-.005l-1.278-.32-.246.988s.684.16.674.166c.374.096.438.342.427.535L6.96 8.128l.096.032-.102-.022-.604 2.423c-.043.112-.16.283-.423.214.011.016-.668-.16-.668-.16l-.46 1.053 1.203.3.658.17-.385 1.535.925.23.374-1.519.744.193-.38 1.513.925.23.38-1.535c1.577.3 2.765.182 3.262-1.246.401-1.15-.021-1.807-.85-2.246.604-.133 1.059-.534 1.176-1.353h.005zm-2.112 2.963c-.283 1.15-2.219.524-2.845.374l.508-2.037c.626.16 2.637.465 2.337 1.658v.005zm.284-2.979c-.257 1.043-1.872.514-2.39.385l.46-1.844c.523.128 2.202.374 1.93 1.46z" fill="#fff"/></symbol><symbol id="coin-dai" viewBox="0 0 18 18"><path fill="#FDC134" d="M0 0h18v18H0z"/><path fill-rule="evenodd" d="M9.13 4H5v3.5H4v1h1v1H4v1h1V14h4.13a4.89 4.89 0 0 0 4.65-3.5H15v-1h-1.02a5.2 5.2 0 0 0 0-1H15v-1h-1.22A4.89 4.89 0 0 0 9.13 4Zm3.6 3.5A3.8 3.8 0 0 0 9.2 5H6v2.5h6.72ZM6 8.5v1h6.97a4.27 4.27 0 0 0 0-1H6ZM6 13v-2.5h6.72a3.8 3.8 0 0 1-3.5 2.5H6Z" fill="#fff"/></symbol><symbol id="coin-eth" viewBox="0 0 18 18"><path fill="url(#eth-a)" d="M0 0h18v18H0z"/><path d="M8.97 3.14V7.2L5.11 9.1l3.86-5.96Z" fill="#E7F0FF"/><path d="m5.1 9.1-.01.04 3.89 2.21V7.2L5.1 9.1Z" fill="#A5B9EE"/><path d="M8.97 3.14V7.2l3.94 1.95L9 3.1l-.02.03Z" fill="#A5B8F0"/><path d="M12.9 9.14 9 11.36h-.03V7.18l3.94 1.95Z" fill="#687FCB"/><path fill-rule="evenodd" d="m9 3 4 6.15-4 2.28-4-2.28L9 3Zm-.07.32L5.26 8.98l3.67-1.84V3.32Zm0 3.94L5.21 9.14l3.72 2.12v-4Zm.13 4v-4l3.73 1.88-3.73 2.12Zm3.68-2.27L9.06 7.14V3.32L12.74 9Z" fill="#fff"/><path d="M9 14.9 5.05 9.76 9 11.92l3.95-2.16L9 14.9Z" fill="#A8B9EF"/><path d="M9 11.92 5.05 9.76 9 14.9v-2.98Z" fill="#E8F1FF"/><path fill-rule="evenodd" d="m5 9.8.09-.08L9 11.86l3.91-2.14.09.08L9 15 5 9.8Zm3.94 2.15-3.67-2 3.67 4.77v-2.77Zm.12 2.77v-2.77l3.67-2-3.67 4.77Z" fill="#fff"/><defs><linearGradient id="eth-a" x1="9" y1="0" x2="9" y2="18" gradientUnits="userSpaceOnUse"><stop stop-color="#465191"/><stop offset=".36" stop-color="#32498F"/><stop offset=".7" stop-color="#555E99"/><stop offset="1" stop-color="#4F5795"/></linearGradient></defs></symbol><symbol id="coin-matic" viewBox="0 0 18 18"><path fill="url(#matic-aoga4mepk)" d="M0 0h18v18H0z"/><path d="M5.74 7.05a.8.8 0 0 1 .75 0l5.05 2.87c.22.12.5.12.75 0l1.16-.76c.22-.13.55-.36.55-.62V6.46a.66.66 0 0 0-.36-.61L12.3 5.1a.8.8 0 0 0-.75 0l-1.2.74a.7.7 0 0 0-.34.6v1.28l-1-.65V6.1c0-.25.07-.48.3-.61l2.22-1.4a.8.8 0 0 1 .75 0l2.35 1.4c.25.13.38.36.38.61v2.82c0 .25-.13.48-.38.6l-2.33 1.4a.8.8 0 0 1-.75 0L6.49 8.1a.8.8 0 0 0-.75 0l-1.15.74c-.22.12-.59.36-.59.6v2.1c0 .25.14.48.39.6l1.35.77c.22.12.5.12.75 0l1.13-.76a.69.69 0 0 0 .38-.6v-1.28l1 .65v.98c0 .25-.04.48-.28.6l-2.25 1.4a.8.8 0 0 1-.75 0l-2.34-1.4a.72.72 0 0 1-.38-.6V9.08c0-.25.13-.48.38-.6l2.36-1.43Z" fill="#fff"/><defs><linearGradient id="matic-aoga4mepk" x1="0" y1="0" x2="18" y2="18" gradientUnits="userSpaceOnUse"><stop stop-color="#8F34C2"/><stop offset="1" stop-color="#7442DB"/></linearGradient></defs></symbol><symbol id="coin-pol" viewBox="0 0 18 18"><path fill="url(#pol-aoga4mepk)" d="M0 0h18v18H0z"/><path d="M5.74 7.05a.8.8 0 0 1 .75 0l5.05 2.87c.22.12.5.12.75 0l1.16-.76c.22-.13.55-.36.55-.62V6.46a.66.66 0 0 0-.36-.61L12.3 5.1a.8.8 0 0 0-.75 0l-1.2.74a.7.7 0 0 0-.34.6v1.28l-1-.65V6.1c0-.25.07-.48.3-.61l2.22-1.4a.8.8 0 0 1 .75 0l2.35 1.4c.25.13.38.36.38.61v2.82c0 .25-.13.48-.38.6l-2.33 1.4a.8.8 0 0 1-.75 0L6.49 8.1a.8.8 0 0 0-.75 0l-1.15.74c-.22.12-.59.36-.59.6v2.1c0 .25.14.48.39.6l1.35.77c.22.12.5.12.75 0l1.13-.76a.69.69 0 0 0 .38-.6v-1.28l1 .65v.98c0 .25-.04.48-.28.6l-2.25 1.4a.8.8 0 0 1-.75 0l-2.34-1.4a.72.72 0 0 1-.38-.6V9.08c0-.25.13-.48.38-.6l2.36-1.43Z" fill="#fff"/><defs><linearGradient id="pol-aoga4mepk" x1="0" y1="0" x2="18" y2="18" gradientUnits="userSpaceOnUse"><stop stop-color="#8F34C2"/><stop offset="1" stop-color="#7442DB"/></linearGradient></defs></symbol><symbol id="coin-sol" viewBox="0 0 18 18"><path fill="url(#sol-ayp5zlrdb)" d="M0 0h18v18H0z"/><path d="M12.38 6.9a.35.35 0 0 1-.24.1H4.21c-.17 0-.27-.19-.17-.32L5.6 5.1c.07-.06.15-.1.24-.1h7.96c.17 0 .27.19.17.32L12.38 6.9Z" fill="url(#sol-byp5zlrdb)"/><path d="M12.38 12.9a.35.35 0 0 1-.24.1H4.21c-.17 0-.27-.19-.17-.32L5.6 11.1c.07-.07.15-.1.24-.1h7.96c.17 0 .27.19.17.32l-1.58 1.59Z" fill="url(#sol-cyp5zlrdb)"/><path d="M12.38 8.1a.35.35 0 0 0-.24-.1H4.21c-.17 0-.27.19-.17.32L5.6 9.9c.07.06.15.1.24.1h7.96c.17 0 .27-.19.17-.32l-1.58-1.59Z" fill="url(#sol-dyp5zlrdb)"/><defs><linearGradient id="sol-ayp5zlrdb" x1="3.35" y1="3.12" x2="21.9" y2="24.43" gradientUnits="userSpaceOnUse"><stop stop-color="#1A1E21"/><stop offset="1" stop-color="#06060A"/></linearGradient><linearGradient id="sol-byp5zlrdb" x1="4.35" y1="7.81" x2="13.48" y2="5.12" gradientUnits="userSpaceOnUse"><stop stop-color="#6E73E3"/><stop offset=".32" stop-color="#41B8C8"/><stop offset=".58" stop-color="#27E2B7"/><stop offset="1" stop-color="#16FC99"/></linearGradient><linearGradient id="sol-cyp5zlrdb" x1="3.8" y1="12.68" x2="14.2" y2="11.22" gradientUnits="userSpaceOnUse"><stop stop-color="#9E48FF"/><stop offset=".34" stop-color="#8D4DF9"/><stop offset=".57" stop-color="#6B7AE1"/><stop offset=".95" stop-color="#45B3CE"/></linearGradient><linearGradient id="sol-dyp5zlrdb" x1="4.39" y1="9" x2="13.81" y2="9" gradientUnits="userSpaceOnUse"><stop stop-color="#8654F3"/><stop offset=".47" stop-color="#549AD6"/><stop offset=".93" stop-color="#26D9B2"/></linearGradient></defs></symbol><symbol id="coin-ton" viewBox="0 0 18 18"><path fill="#08C" d="M0 0h18v18H0z"/><path fill-rule="evenodd" d="m9.45 13.73 4.36-6.85c.12-.2.19-.42.19-.65C14 5.55 13.42 5 12.71 5H5.3C4.58 5 4 5.55 4 6.24c0 .22.06.44.18.64l4.28 6.85c.1.17.3.27.5.27s.39-.1.5-.27Zm-4.39-7.2 3.44 5.26V6H5.42c-.36 0-.52.23-.36.53Zm7.88 0L9.5 11.79V6h3.06c.37 0 .54.23.38.53Z" fill="#fff"/></symbol><symbol id="coin-trx" viewBox="0 0 18 18"><path fill="#C4342B" d="M0 0h18v18H0z"/><path opacity=".12" d="M13.491 7.27l-1.275-.909-.026-.02a.57.57 0 00-.168-.092l-.005-.005-3.424-.842-3.057-.755-.076-.02a.781.781 0 00-.312-.041.214.214 0 00-.086.03l-.03.026a.352.352 0 00-.083.127l-.005.02v.113l.005.015 1.94 5.48 1.5 4.22c.03.097.117.158.224.169h.026a.264.264 0 00.234-.133l1.868-2.76 1.362-2.021.562-.827.933-1.377.02-.026v-.03c.011-.082.011-.256-.127-.348v.005zm-2.184 1.005l-1.337.709.786-.857 1.005-1.092.006-.01.102-.113.081-.081c.3.208.597.419.893.632-.514.267-1.026.538-1.536.812zm-1.133-.123L9.14 9.28a668.669 668.669 0 00-2.02-2.475l-.91-1.102-.203-.255-.133-.158.822.204.73.178 4.107 1.01-1.357 1.48v-.01zm-1.188 4.67l.081-.766.061-.613.103-.97v-.05c.025-.21.05-.424.06-.638a.704.704 0 01.088-.04l.102-.052 1.643-.867 1.653-.873c-.502.739-1.002 1.479-1.5 2.22L9.99 12.07c-.169.255-.347.51-.51.765-.194.27-.388.562-.577.842.023-.286.05-.572.082-.857zM5.7 5.855l-.092-.26L7.51 7.918l.97 1.188c.066.072.127.154.188.23.082.097.158.199.25.296l-.081.735-.051.505-.031.321-.051.475-.005.02-.148 1.444-.061.597-.036-.102a10.68 10.68 0 01-.102-.296l-.255-.714L5.7 5.857z" fill="#fff"/><path fill-rule="evenodd" d="M4.629 4.165a.5.5 0 01.49-.15l7.063 1.727a.5.5 0 01.175.081l1.437 1.047a.5.5 0 01.119.686l-4.944 7.226a.5.5 0 01-.884-.114l-3.556-10a.5.5 0 01.1-.503zM6.37 6.862l1.932 5.43.317-2.814L6.37 6.862zm3.236 2.79l-.328 2.907 2.774-4.054-2.446 1.147zm2.916-2.472l-1.207.566.81-.855.397.29zm-1.413-.671L6.395 5.356 9.158 8.57l1.95-2.062z" fill="#fff"/></symbol><symbol id="coin-usdc" viewBox="0 0 18 18"><path fill="#2775CA" d="M0 0h18v18H0z"/><path d="M9 14A4.99 4.99 0 1 0 9 4a4.99 4.99 0 1 0 0 10Z" fill="#fff"/><path d="M10.38 9.8c0-.74-.44-.99-1.32-1.1-.62-.07-.75-.24-.75-.53 0-.3.21-.48.63-.48.37 0 .58.12.68.44.03.06.09.1.15.1h.33c.09 0 .15-.06.15-.15v-.02c-.08-.46-.46-.9-.94-.93v-.46c0-.09-.06-.15-.16-.17h-.28c-.08 0-.16.06-.18.17v.46c-.63.08-1.04.56-1.04 1.08 0 .69.41.96 1.29 1.06.58.1.77.23.77.56 0 .34-.3.57-.69.57-.54 0-.73-.23-.8-.55-.01-.08-.07-.12-.14-.12h-.35a.14.14 0 0 0-.15.15v.02c.09.52.42.87 1.1.98v.46c0 .08.07.14.17.16h.3c.09 0 .14-.06.16-.16v-.46c.63-.1 1.06-.53 1.06-1.09Z" fill="#2775CA"/><path d="M7.87 12a3.1 3.1 0 0 1-1.79-4.02c.32-.88.94-1.54 1.8-1.85.08-.05.12-.1.12-.21v-.3c0-.08-.04-.14-.12-.16-.03 0-.07 0-.09.02a3.7 3.7 0 0 0-2.37 4.7 3.69 3.69 0 0 0 2.37 2.47c.08.04.17 0 .19-.09.02-.02.02-.04.02-.08v-.3c0-.05-.06-.14-.13-.18Zm2.34-6.52c-.09-.04-.17 0-.2.08l-.01.09v.29c0 .08.06.16.12.2 1.63.59 2.4 2.4 1.8 4a2.94 2.94 0 0 1-1.79 1.84.21.21 0 0 0-.13.2v.3c0 .08.05.15.13.17.02 0 .06 0 .08-.02 1.98-.63 3-2.71 2.37-4.7a3.7 3.7 0 0 0-2.37-2.45Z" fill="#2775CA"/></symbol><symbol id="coin-usdt" viewBox="0 0 18 18"><path fill="#009393" d="M0 0h18v18H0z"/><path d="m15 8.5-6 6-6-6L5.29 5h7.42L15 8.5ZM9.67 9v-.57c1.2.06 1.98.3 2.33.6-.4.36-1.5.62-3 .62s-2.6-.26-3-.62c.35-.3 1.12-.54 2.33-.6V9h1.34ZM6 9.03v.5c.35.3 1.12.54 2.33.6V12h1.34v-1.87c1.2-.06 1.98-.3 2.33-.6v-1c-.35-.3-1.12-.54-2.33-.6V7h1.83V6h-5v1h1.83v.93c-1.2.06-1.98.3-2.33.6v.5Z" fill="#fff"/></symbol><symbol id="coin-wbtc" viewBox="0 0 18 18"><path fill="#F0F3FA" d="M0 0h18v18H0z"/><path d="m12.68 5.62-.32.32a4.54 4.54 0 0 1 0 6.12l.32.32a5 5 0 0 0 0-6.77Zm-6.74.02a4.53 4.53 0 0 1 6.12 0l.32-.32a4.99 4.99 0 0 0-6.77 0l.33.32Zm-.3 6.42a4.54 4.54 0 0 1 0-6.12l-.32-.32a5 5 0 0 0 0 6.77l.32-.33Zm6.42.3a4.53 4.53 0 0 1-6.12 0l-.32.32a4.99 4.99 0 0 0 6.76 0l-.32-.32Z" fill="#83808B"/><path d="M9.78 8.22c0 .35-.31.47-.62.47h-.47v-.94h.62a.46.46 0 0 1 .47.47Zm.28 1.58c0 .39-.44.57-.75.57H8.7V9.31h.62c.28 0 .75.12.75.5Zm.67-1.72A1.2 1.2 0 0 0 9.63 7V6H9v1h-.31V6H8v1H7v.75h.47c.12 0 .28 0 .28.25v2.1s0 .27-.18.27H7.1L7 11h1v1h.69v-1H9v1h.63v-1c.81-.05 1.31-.34 1.38-1.1.06-.62-.23-.9-.7-1 .29-.14.47-.4.42-.82Z" fill="#F09242"/><path d="M9 3.47a5.53 5.53 0 1 0 0 11.05A5.53 5.53 0 0 0 9 3.47ZM9 15A6 6 0 1 1 9 3a6 6 0 0 1 0 12Z" fill="#282138"/></symbol><symbol id="coin-weth" viewBox="0 0 18 18"><path fill="#F0F3FA" d="M0 0h18v18H0z"/><ellipse cx="8.46" cy="8.525" rx="4.342" ry="4.257" fill="#F61F7D"/><path d="M4.209 12.572c0-.512 1.042-.928 1.548-.928h3.554V13.5H5.757c-.506 0-1.548-.415-1.548-.928z" fill="#060505"/><path fill-rule="evenodd" clip-rule="evenodd" d="M13.314 8.45c0 2.459-2.085 4.451-4.657 4.451S4 10.91 4 8.451 6.085 4 8.657 4s4.657 1.993 4.657 4.45zm-.454.002c0 2.218-1.882 4.016-4.203 4.016-1.892 0-3.492-1.195-4.019-2.838l.767.568.202-.249-1.09-.808a3.867 3.867 0 01-.052-.974l.71.692.235-.22-.894-.873c.34-1.89 2.065-3.33 4.141-3.33 2.321 0 4.203 1.798 4.203 4.016z" fill="#000"/><ellipse cx="9.54" cy="8.99" rx="4.195" ry="4.243" fill="#F0F3FA"/><path fill-rule="evenodd" clip-rule="evenodd" d="M9.54 13.5c2.463 0 4.46-1.96 4.46-4.377s-1.997-4.376-4.46-4.376-4.46 1.96-4.46 4.376c0 2.418 1.997 4.377 4.46 4.377zm0-.426c2.223 0 4.024-1.768 4.024-3.95 0-2.18-1.801-3.949-4.024-3.949-2.222 0-4.024 1.769-4.024 3.95 0 2.18 1.802 3.949 4.024 3.949z" fill="#060505"/><path fill="#060505" d="M7 8h5v2H7z"/></symbol></svg>
+
+
+<!--
   First on the page, before even the sign-in form, and not dismissible.
 
   A dashboard full of plausible figures that somebody takes for their own account is worse
@@ -827,7 +851,7 @@
   already typed there so nobody types it twice.
 -->
 <section class="panel" id="auth-panel">
-  <div class="brand auth-brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg><span class="brand-text">AVEX <span class="brand-pay">Pay</span></span></div>
+  <div class="brand auth-brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="var(--lime-ink)"><path fill-rule="evenodd" d="M47.7 19.5L52.3 19.5L55 20L58.4 21.1L61.7 22.7L61.7 23L64.1 24.2L67.2 26.7L73.3 33.6L78.4 42L83.1 53L85.3 60L85.9 63.3L86.3 63.4L87.5 70.3L87.8 70.6L88.3 74.5L83.3 74.5L81.6 71.1L78 65.9L73.1 61.1L69.1 58.1L62.8 55L57.5 53.4L53.3 52.8L46.4 52.8L42.2 53.4L38.3 54.5L33.4 56.6L27.8 60.2L23.1 64.4L19.5 68.9L16.4 74.5L11.4 74.5L13.1 65L16.9 52.3L20 44.7L25.2 35.5L29.8 29.4L35.6 24.2L41.3 21.1L47.5 19.5ZM49.1 24.1L45 24.7L40 26.9L37 28.9L31.9 34.1L28.8 38.8L28.4 38.8L28.1 39.8L27.3 40.6L24.2 46.6L21.1 54.2L18.8 62.5L21.9 59.4L22.7 56.3L25.8 48.3L28.4 43L28.8 43L29.4 41.4L32.5 37.2L32.5 36.7L35.8 33L39.4 29.8L40.8 29.2L40.8 28.9L43.9 27.3L48.6 26.3L53 26.6L56.9 27.8L61.6 30.8L64.8 33.9L68.4 38.4L72.7 45.6L75.3 51.6L78 59.5L81.1 62.5L80 58.3L78.8 55.2L78.9 54.8L75.3 46.1L75 46.1L74.2 43.9L71.3 38.8L68.6 35L63.3 29.4L58.6 26.3L54.7 24.7L49.2 24.1ZM48.1 30.9L45.2 31.9L41.4 34.1L37.2 38.3L34.5 41.9L32.8 45.2L32.5 45.2L28.4 54.1L33.6 51.4L37.7 50.2L37.8 49.8L42.2 48.8L47.2 48.1L54.7 48.3L59.7 49.2L65 50.9L71.3 54.1L69.5 49.7L69.2 49.7L69.1 48.8L68 46.6L67.7 46.6L66.9 44.5L66.6 44.5L65.9 43L63.4 39.4L60.6 36.1L57.7 33.6L53.9 31.6L51.6 30.9L48.3 30.9ZM49.4 54.8L55 55.2L59.2 56.1L63.4 57.7L67.7 59.8L71.4 62.5L75.5 66.4L78.1 70.2L78.4 70.2L80.8 74.5L75.6 74.5L73.8 71.6L70.2 67.5L66.9 64.8L63.9 63.3L63.9 63L57.2 60.3L52.2 59.5L44.7 59.8L40.9 60.8L37 62.3L32.7 65L30.2 67L26.7 70.6L24.1 74.5L18.9 74.5L21.1 70.5L24.2 66.4L27.2 63.4L31.6 60.2L34.8 58.3L38.6 56.7L40.3 56.4L40.5 56.1L44.7 55.2L49.2 54.8Z"/></g></svg><span class="brand-text">AVEX <span class="brand-pay">Pay</span></span></div>
   <div class="panel-head">
     <h1 id="auth-title">Sign in</h1>
     <button class="quiet" type="button" id="auth-switch">Create an account</button>
@@ -859,7 +883,7 @@
 <!-- ── the dashboard ────────────────────────────────────────────────── -->
 <div id="app" class="shell" hidden>
   <aside class="side">
-    <div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg><span class="brand-text">AVEX <span class="brand-pay">Pay</span></span></div>
+    <div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="var(--lime-ink)"><path fill-rule="evenodd" d="M47.7 19.5L52.3 19.5L55 20L58.4 21.1L61.7 22.7L61.7 23L64.1 24.2L67.2 26.7L73.3 33.6L78.4 42L83.1 53L85.3 60L85.9 63.3L86.3 63.4L87.5 70.3L87.8 70.6L88.3 74.5L83.3 74.5L81.6 71.1L78 65.9L73.1 61.1L69.1 58.1L62.8 55L57.5 53.4L53.3 52.8L46.4 52.8L42.2 53.4L38.3 54.5L33.4 56.6L27.8 60.2L23.1 64.4L19.5 68.9L16.4 74.5L11.4 74.5L13.1 65L16.9 52.3L20 44.7L25.2 35.5L29.8 29.4L35.6 24.2L41.3 21.1L47.5 19.5ZM49.1 24.1L45 24.7L40 26.9L37 28.9L31.9 34.1L28.8 38.8L28.4 38.8L28.1 39.8L27.3 40.6L24.2 46.6L21.1 54.2L18.8 62.5L21.9 59.4L22.7 56.3L25.8 48.3L28.4 43L28.8 43L29.4 41.4L32.5 37.2L32.5 36.7L35.8 33L39.4 29.8L40.8 29.2L40.8 28.9L43.9 27.3L48.6 26.3L53 26.6L56.9 27.8L61.6 30.8L64.8 33.9L68.4 38.4L72.7 45.6L75.3 51.6L78 59.5L81.1 62.5L80 58.3L78.8 55.2L78.9 54.8L75.3 46.1L75 46.1L74.2 43.9L71.3 38.8L68.6 35L63.3 29.4L58.6 26.3L54.7 24.7L49.2 24.1ZM48.1 30.9L45.2 31.9L41.4 34.1L37.2 38.3L34.5 41.9L32.8 45.2L32.5 45.2L28.4 54.1L33.6 51.4L37.7 50.2L37.8 49.8L42.2 48.8L47.2 48.1L54.7 48.3L59.7 49.2L65 50.9L71.3 54.1L69.5 49.7L69.2 49.7L69.1 48.8L68 46.6L67.7 46.6L66.9 44.5L66.6 44.5L65.9 43L63.4 39.4L60.6 36.1L57.7 33.6L53.9 31.6L51.6 30.9L48.3 30.9ZM49.4 54.8L55 55.2L59.2 56.1L63.4 57.7L67.7 59.8L71.4 62.5L75.5 66.4L78.1 70.2L78.4 70.2L80.8 74.5L75.6 74.5L73.8 71.6L70.2 67.5L66.9 64.8L63.9 63.3L63.9 63L57.2 60.3L52.2 59.5L44.7 59.8L40.9 60.8L37 62.3L32.7 65L30.2 67L26.7 70.6L24.1 74.5L18.9 74.5L21.1 70.5L24.2 66.4L27.2 63.4L31.6 60.2L34.8 58.3L38.6 56.7L40.3 56.4L40.5 56.1L44.7 55.2L49.2 54.8Z"/></g></svg><span class="brand-text">AVEX <span class="brand-pay">Pay</span></span></div>
     <!--
       The sections. Filled by the script: one button per view, icon and label, the open one
       marked `aria-current="page"`. A sidebar on a desktop, a rail on a tablet, a bottom bar
@@ -3458,6 +3482,56 @@ function matchPreview(method, url, routes = previewRoutes()) {
 
   const text = (value) => document.createTextNode(String(value));
 
+  /**
+   * The coin whose icon stands for each chain.
+   *
+   * A chain's icon is its native coin's: on a list of wallets across four chains, the
+   * badge is what the eye sorts by, faster than reading "polygon" against "ethereum".
+   */
+  const CHAIN_COINS = {
+    ton: 'TON',
+    solana: 'SOL',
+    tron: 'TRX',
+    bsc: 'BNB',
+    polygon: 'POL',
+    ethereum: 'ETH',
+  };
+
+  /**
+   * A symbol's badge: its icon when the page carries one, its first two letters when not.
+   *
+   * The icons are inlined as <symbol>s at build time, so the test is simply whether the
+   * sprite has this ticker — which means a merchant's own token still gets a legible badge
+   * rather than an empty circle.
+   */
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+
+  function coinBadge(symbol) {
+    const badge = h('span', { class: 'coin-badge', 'aria-hidden': 'true' }, []);
+    const id = 'coin-' + String(symbol || '').toLowerCase();
+    if (document.getElementById(id) === null) {
+      badge.textContent = String(symbol || '?').slice(0, 2);
+      return badge;
+    }
+    badge.classList.add('is-icon');
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 18 18');
+    const use = document.createElementNS(SVG_NS, 'use');
+    use.setAttribute('href', '#' + id);
+    svg.append(use);
+    badge.append(svg);
+    return badge;
+  }
+
+  /** A cell naming a chain, with the chain's coin beside it. */
+  const chainCell = (chain) =>
+    h('td', {}, [
+      h('span', { class: 'coin-cell' }, [
+        coinBadge(CHAIN_COINS[chain] ?? chain),
+        h('span', { class: 'mono', text: chain ?? '—' }),
+      ]),
+    ]);
+
   function fill(container, children) {
     container.replaceChildren(
       ...children.flat().filter((child) => child !== null && child !== undefined && child !== false),
@@ -4094,8 +4168,16 @@ function matchPreview(method, url, routes = previewRoutes()) {
       const top = index * rowHeight;
       const count = Number(row.paymentCount) || 0;
       const amount = formatUnitsGrouped(String(row.total ?? '0'), Number(row.assetDecimals) || 0);
-      svg.append(
-        node('text', { x: 0, y: top + 13, class: 'chart-label' }, (row.assetSymbol || '?') + ' · ' + (row.chain || '')),
+      // The icon rides inside the chart's own <svg>, referencing the same sprite the
+      // tables use; a row with no icon simply has no <use>, and the label still says it.
+      const iconId = 'coin-' + String(row.assetSymbol || '').toLowerCase();
+      const hasIcon = document.getElementById(iconId) !== null;
+      // `append` stringifies anything that is not a Node, so a skipped icon has to be
+      // filtered out rather than passed as null — that would put the word "null" in the
+      // chart.
+      const parts = [
+        hasIcon ? node('use', { href: '#' + iconId, x: 0, y: top + 2, width: 13, height: 13 }) : null,
+        node('text', { x: hasIcon ? 18 : 0, y: top + 13, class: 'chart-label' }, (row.assetSymbol || '?') + ' · ' + (row.chain || '')),
         node('text', { x: width, y: top + 13, class: 'chart-value', 'text-anchor': 'end' },
           amount + ' ' + (row.assetSymbol || '') + ' · ' + count + (count === 1 ? ' payment' : ' payments')),
         node('rect', { x: 0, y: top + labelHeight + 8, width, height: barHeight, rx: barHeight / 2, class: 'chart-track' }),
@@ -4104,7 +4186,8 @@ function matchPreview(method, url, routes = previewRoutes()) {
           width: Math.max(barHeight, Math.round((count / max) * width)), height: barHeight, rx: barHeight / 2,
           class: 'chart-bar',
         }),
-      );
+      ];
+      svg.append(...parts.filter((part) => part !== null));
     });
 
     fill(host, [svg]);
@@ -4223,7 +4306,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
           h('td', {}, [h('span', { class: 'pill', 'data-tone': view.tone, text: view.label })]),
           h('td', { class: 'mono right', text: formatUnits(invoice.amountPaid, invoice.assetDecimals ?? 0) }),
           h('td', { class: 'mono right', text: formatUnits(invoice.amountDue, invoice.assetDecimals ?? 0) + ' ' + (invoice.assetSymbol || '') }),
-          h('td', { class: 'mono', text: invoice.chain }),
+          chainCell(invoice.chain),
           h('td', { text: formatAgo(invoice.createdAt) }),
         ]);
       })),
@@ -4567,7 +4650,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
        */
       ...pending.map((change) =>
         h('tr', {}, [
-          h('td', { class: 'mono', text: change.chain }),
+          chainCell(change.chain),
           h('td', { class: 'mono', title: change.address, text: shortenAddress(change.address) }),
           h('td', { text: '—' }),
           h('td', {}, [
@@ -4589,7 +4672,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
       ),
       ...active.map((row) =>
         h('tr', {}, [
-          h('td', { class: 'mono', text: row.chain }),
+          chainCell(row.chain),
           h('td', { class: 'mono', title: row.address, text: shortenAddress(row.address) }),
           h('td', { text: formatAgo(row.activeFrom) }),
           h('td', {}, [
@@ -4665,7 +4748,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
        */
       ...pending.map((change) =>
         h('tr', {}, [
-          h('td', { class: 'mono', text: change.chain }),
+          chainCell(change.chain),
           h('td', { class: 'mono', title: change.address, text: shortenAddress(change.address) }),
           h('td', { text: '—' }),
           h('td', {}, [h('span', { class: 'pill', 'data-tone': 'warn', text: 'in ' + (formatUntil(change.effectiveAt) ?? 'moments') })]),
@@ -4681,7 +4764,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
       ),
       ...wallets.map((wallet) =>
         h('tr', {}, [
-          h('td', { class: 'mono', text: wallet.chain }),
+          chainCell(wallet.chain),
           h('td', { class: 'mono', title: wallet.address, text: shortenAddress(wallet.address) }),
           h('td', { text: wallet.label ?? '—' }),
           h('td', {}, [
@@ -4706,7 +4789,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
     ];
 
     fill(el('wallet-table'), rows.length === 0
-      ? [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No wallets yet. Add one to start taking TRON payments.' })])])]
+      ? [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No wallets yet. Add one and invoices on that chain go straight to it.' })])])]
       : [
           h('thead', {}, [h('tr', {}, ['Chain', 'Address', 'Label', 'State', ''].map((label) => h('th', { text: label })))]),
           h('tbody', {}, rows),

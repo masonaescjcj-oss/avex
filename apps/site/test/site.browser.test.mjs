@@ -350,9 +350,11 @@ describe('avex.pay', { skip: playwright ? false : 'playwright is not installed' 
 
   test('the mark is drawn, and it is drawn the same on the panel', async () => {
     /**
-     * The logo is inline SVG because an artifact may reach no host but Google Fonts — a file
-     * would have to be a data URI, and at this size the arches are less markup than the base64
-     * of a picture of them. It renders at whatever size, which is the other reason.
+     * The logo is inline SVG because this page may reach no host — a file would have to be a
+     * data URI, and the traced arch is a fraction of the base64 of a picture of it. It renders
+     * at whatever size, which is the other reason. The path count is deliberately not
+     * asserted: the mark is regenerated from the source artwork, and a redraw that merges or
+     * splits contours is not a regression; an <image> or a mark that does not render is.
      *
      * Decorative, not labelled: the word AVEX is in the text beside it, and a screen reader
      * announcing "AVEX AVEXPay" is worse than one announcing the wordmark once.
@@ -361,14 +363,16 @@ describe('avex.pay', { skip: playwright ? false : 'playwright is not installed' 
     const marks = await page.$$eval('.mark', (nodes) =>
       nodes.map((node) => ({
         hidden: node.getAttribute('aria-hidden'),
-        paths: node.querySelectorAll('path').length,
+        shapes: node.querySelectorAll('path').length,
+        fetched: node.querySelectorAll('image, img, use[href^="http"]').length,
         width: Math.round(node.getBoundingClientRect().width),
       })),
     );
     assert.equal(marks.length, 2, 'the mark belongs in the header and the footer');
     for (const mark of marks) {
       assert.equal(mark.hidden, 'true');
-      assert.equal(mark.paths, 2, 'the mark is two arches');
+      assert.ok(mark.shapes >= 1, 'the mark is drawn as paths');
+      assert.equal(mark.fetched, 0, 'the mark is drawn, not fetched');
       assert.ok(mark.width >= 16, `the mark rendered ${mark.width}px wide`);
     }
     await context.close();

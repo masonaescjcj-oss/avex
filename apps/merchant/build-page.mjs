@@ -12,6 +12,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { injectBrand, injectCoins } from '../../packages/design/inject.mjs';
+import { coinSymbols } from '../../packages/design/coins/sprite.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 
 const MODULES = [
@@ -77,11 +80,13 @@ const inlined = MODULES.map((path) => strip(readFileSync(path, 'utf8'))).join('\
  * only the copy was corrupt. The assertion afterwards is what would have caught it.
  */
 const tokens = readFileSync(TOKENS, 'utf8').trim();
-const output = template.replace(MARKER, () => inlined).replace(TOKENS_MARKER, () => tokens);
+let output = template.replace(MARKER, () => inlined).replace(TOKENS_MARKER, () => tokens);
 if (!output.includes(inlined) || !output.includes(tokens)) {
   console.error('inlining altered the injected source; refusing to write a corrupt page');
   process.exit(1);
 }
+
+output = injectCoins(injectBrand(output), coinSymbols());
 
 const target = join(here, 'public', 'merchant.html');
 writeFileSync(target, output);

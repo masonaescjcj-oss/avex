@@ -33,11 +33,14 @@ const facts = read('apps/site/src/facts.ts');
  *
  * The script carries four of the product's own modules inlined, and the stylesheet is full
  * of percentages — so anything asking "does the copy say X" has to strip both first, or it
- * is asking about source code.
+ * is asking about source code. `<link>` goes the same way: the favicon is the brand mark as
+ * a data URI, whose percent-escapes read as printed percentages and whose href is not a
+ * link a visitor can follow.
  */
 const copy = page
   .replace(/<script[\s\S]*?<\/script>/g, '')
   .replace(/<style[\s\S]*?<\/style>/g, '')
+  .replace(/<link\b[^>]*>/g, '')
   .replace(/<!--[\s\S]*?-->/g, '');
 
 describe('the site does not outlive the product', () => {

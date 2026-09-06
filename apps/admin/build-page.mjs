@@ -12,6 +12,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { injectBrand } from '../../packages/design/inject.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -82,11 +84,13 @@ const inlined = MODULES.map((path) => strip(readFileSync(path, 'utf8'))).join('\
  * The assertion afterwards is the guard that would have caught it: if the injected
  * text is not present verbatim in the output, the inlining was lossy.
  */
-const output = template.replace(MARKER, () => inlined);
+let output = template.replace(MARKER, () => inlined);
 if (!output.includes(inlined)) {
   console.error('inlining altered the injected source; refusing to write a corrupt page');
   process.exit(1);
 }
+output = injectBrand(output);
+
 const target = join(here, 'public', 'admin.html');
 writeFileSync(target, output);
 

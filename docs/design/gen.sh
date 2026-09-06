@@ -39,10 +39,30 @@ tail_() { cat <<TAIL
 TAIL
 }
 
+# ── the real assets: the brand mark and the coin icons ───────────────────────
+# Both come from packages/design, the same files the product's pages inline, so a mockup
+# can never show a logo or a badge the shipped page does not have.
+DESIGN=../../packages/design
+MARK_PATH=$(cat "$DESIGN/brand/mark.path.svg")
+
+# The mark on its lime tile, at whatever size the screen asks for.
+tile() { printf '<svg viewBox="0 0 100 100" width="%s" height="%s" style="display:block;flex:none;" aria-hidden="true"><rect width="100" height="100" rx="22" fill="var(--lime)"/><g fill="var(--lime-ink)">%s</g></svg>' "$1" "$1" "$MARK_PATH"; }
+
+# A coin's own icon, clipped to a circle. The icons are full-bleed squares in the issuer's
+# colours — that is how a payer tells USDT from USDC — so the circle is the wrapper's.
+coin() { # $1 symbol  $2 size
+  local inner
+  inner=$(sed -e 's/^<svg[^>]*>//' -e 's#</svg>##' "$DESIGN/coins/$1.svg" | tr -d '\n')
+  printf '<span style="width:%spx;height:%spx;flex:none;border-radius:50%%;overflow:hidden;display:block;"><svg viewBox="0 0 18 18" width="%s" height="%s" style="display:block" aria-hidden="true">%s</svg></span>' "$2" "$2" "$2" "$2" "$inner"
+}
+
+# Each chain, named by its native coin — the badge is what the eye sorts a list of chains by.
+chaincoin() { case "$1" in TRON) echo TRX;; BSC) echo BNB;; POL|Polygon) echo POL;; ETH|Ethereum) echo ETH;; TON) echo TON;; SOL|Solana) echo SOL;; *) echo "$1";; esac; }
+
 # ── the AVEX mark, used on every auth screen ─────────────────────────────────
 mark() { cat <<MARK
 <div style="display:flex;align-items:center;gap:10px;">
-  <div style="width:36px;height:36px;border-radius:11px;background:var(--lime);color:var(--lime-ink);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:19px;letter-spacing:-0.02em;">A</div>
+  $(tile 36)
   <span style="font-weight:600;font-size:17px;letter-spacing:-0.015em;">AVEX Pay</span>
 </div>
 MARK
@@ -292,7 +312,7 @@ nav() { # $1 = active slot
 prow() { # $1 asset  $2 chain  $3 when  $4 amount  $5 state  $6 colour-var  $7 soft-var
   cat <<ROW
 <div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-top:1px solid var(--line);">
-  <div style="width:38px;height:38px;flex:none;border-radius:12px;background:var(--surface-3);color:var(--ink-2);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:650;letter-spacing:-0.01em;">$1</div>
+  $(coin "$1" 38)
   <div style="flex:1;min-width:0;">
     <div style="font-size:14.5px;font-weight:550;">$1 <span style="color:var(--faint);font-weight:400;">on</span> $2</div>
     <div style="font-size:12.5px;color:var(--faint);">$3</div>
@@ -425,7 +445,7 @@ opt() { # $1 asset  $2 chain  $3 detail  $4 on/off
   else ring='var(--line);background:var(--surface)'; dot='<div style="width:20px;height:20px;border-radius:999px;border:1.5px solid var(--line-strong);box-sizing:border-box;flex:none;"></div>'; fi
   cat <<OPT
 <div style="display:flex;align-items:center;gap:12px;padding:13px 14px;border:1px solid $ring;border-radius:13px;margin-bottom:9px;">
-  <div style="width:34px;height:34px;flex:none;border-radius:11px;background:var(--surface-3);color:var(--ink-2);display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:650;">$1</div>
+  $(coin "$1" 34)
   <div style="flex:1;min-width:0;">
     <div style="font-size:14.5px;font-weight:550;">$1 on $2</div>
     <div style="font-size:12.5px;color:var(--faint);">$3</div>
@@ -535,10 +555,13 @@ tail_; } > Invoice.dc.html
 wrow() { # $1 chain  $2 address  $3 state  $4 colour  $5 soft
   cat <<W
 <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line);">
-  <div style="width:36px;height:36px;flex:none;border-radius:11px;background:var(--surface-3);color:var(--ink-2);display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:650;letter-spacing:0.01em;">$1</div>
+  $(coin "$(chaincoin "$1")" 36)
   <div style="flex:1;min-width:0;">
     <div style="$M;font-size:13.5px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">$2</div>
-    <div style="display:inline-flex;margin-top:3px;padding:1px 7px;border-radius:999px;background:var($5);color:var($4);font-size:11px;font-weight:600;">$3</div>
+    <div style="display:flex;align-items:center;gap:7px;margin-top:3px;">
+      <span style="font-size:11.5px;font-weight:650;color:var(--faint);letter-spacing:0.02em;">$1</span>
+      <span style="padding:1px 7px;border-radius:999px;background:var($5);color:var($4);font-size:11px;font-weight:600;">$3</span>
+    </div>
   </div>
   <svg $SVG style="color:var(--n400);flex:none;"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>
 </div>

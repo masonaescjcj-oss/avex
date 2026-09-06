@@ -1,5 +1,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- @inject:favicon -->
 <!--
   Where the API is.
 
@@ -439,7 +440,38 @@
     color: var(--ink-2);
   }
 
-  .coin[aria-checked="true"] .coin-mark { background: var(--lime); color: var(--lime-ink); }
+  /* Selecting a lettered badge fills it; selecting an icon must not tint the icon, so the
+     fill and the ink it needs are scoped away from that variant. Left unscoped, a chosen
+     icon badge kept `--lime-ink` as its colour over the card's dark ground — 1.1:1 for any
+     text that ever lands in it, which the contrast test caught. */
+  .coin[aria-checked="true"] .coin-mark:not(.is-icon) { background: var(--lime); color: var(--lime-ink); }
+
+  /* With a real icon the badge is the icon: the issuer's own colours are how a payer
+     recognises USDT from USDC at a glance. The icons are full-bleed squares, so the circle
+     belongs to the wrapper, which is why it clips. */
+  .coin-mark.is-icon { background: none; overflow: hidden; }
+  .coin-mark.is-icon svg { display: block; width: 100%; height: 100%; }
+
+  /* The network's native coin, at the size of the row rather than the chip. */
+  .net-mark {
+    width: 1.375rem;
+    height: 1.375rem;
+    align-self: center;
+    border-radius: 50%;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    font-family: var(--mono);
+    font-size: 0.5625rem;
+    font-weight: 700;
+    background: var(--surface-3);
+    color: var(--ink-2);
+  }
+  .net-mark.is-icon { background: none; }
+  .net-mark svg { display: block; width: 100%; height: 100%; }
+  /* Narrow rows put the time under the name, so the badge spans both lines beside the
+     radio — the same trick the radio itself uses. Widened below. */
+  .net-mark { grid-column: 2; grid-row: 1 / span 2; }
 
   .coin-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
   .coin-sym { font-weight: 600; font-size: var(--s0); font-family: var(--mono); }
@@ -455,7 +487,7 @@
 
   .net-row {
     display: grid;
-    grid-template-columns: 1.125rem minmax(0, 1fr) auto;
+    grid-template-columns: 1.125rem 1.375rem minmax(0, 1fr) auto;
     column-gap: var(--sp-3);
     row-gap: 0;
     align-items: center;
@@ -500,7 +532,7 @@
 
   .net-name { font-weight: 600; font-size: var(--s0); line-height: 1.3; }
   .net-time {
-    grid-column: 2;
+    grid-column: 3;
     font-family: var(--mono);
     font-size: var(--s-2);
     color: var(--muted);
@@ -510,7 +542,7 @@
   }
   .net-cost {
     grid-row: 1 / span 2;
-    grid-column: 3;
+    grid-column: 4;
     font-family: var(--mono);
     font-size: var(--s-2);
     font-weight: 600;
@@ -915,9 +947,10 @@
     .send-to { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
     .qr-frame { justify-self: start; }
     .qr-frame svg { width: 9.5rem; height: 9.5rem; }
-    .net-row { grid-template-columns: 1.125rem minmax(0, 1fr) auto auto; }
+    .net-row { grid-template-columns: 1.125rem 1.375rem minmax(0, 1fr) auto auto; }
     .net-time { grid-column: auto; }
     .net-cost { grid-row: auto; grid-column: auto; }
+    .net-mark { grid-row: auto; }
     .dot { grid-row: auto; }
   }
 
@@ -949,11 +982,18 @@
   }
 </style>
 
+<!--
+  The coin icons, inlined once as <symbol>s and drawn with <use>. The page reaches no
+  host, so a badge cannot be a remote image; the alternative it replaces was the ticker's
+  first two letters.
+-->
+<!-- @inject:coins -->
+
 <div class="page">
 
   <header class="masthead">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg>
+      <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="var(--lime-ink)"><!-- @inject:mark --></g></svg>
       <span>AVEX <span class="brand-pay">Pay</span></span>
     </div>
     <div class="invoice-ref">Invoice <code id="invoice-ref">#INV-8F2C41</code></div>
@@ -1331,6 +1371,21 @@
   }
 
   /** Chain metadata the API does not carry: a label, and how long confirming takes. */
+  /**
+   * The coin whose icon stands for each network.
+   *
+   * A chain's own icon *is* its native coin's: the TRON badge on a USDT row is what tells
+   * a payer which of the three USDT rows they are looking at, faster than the word does.
+   */
+  const CHAIN_COINS = {
+    ton: 'TON',
+    solana: 'SOL',
+    tron: 'TRX',
+    bsc: 'BNB',
+    polygon: 'POL',
+    ethereum: 'ETH',
+  };
+
   const CHAIN_LABELS = {
     ton: { label: 'TON', confirm: '~5 sec' },
     solana: { label: 'Solana', confirm: '~1 sec' },
@@ -1460,6 +1515,32 @@
   /** The catalogue in play: the API's in live mode, the demo's otherwise. */
   let catalogue = CURRENCIES;
 
+  /**
+   * A currency's badge: its icon when the page carries one, its first two letters when not.
+   *
+   * The icons are inlined as <symbol>s at build time, so the check is simply whether the
+   * sprite has this ticker — which means a merchant's own token, for which no icon exists,
+   * still gets a legible badge instead of an empty square.
+   */
+  function coinBadge(symbol, className = 'coin-mark') {
+    const mark = document.createElement('span');
+    mark.className = className;
+    mark.setAttribute('aria-hidden', 'true');
+    const id = 'coin-' + String(symbol).toLowerCase();
+    if (document.getElementById(id) === null) {
+      mark.textContent = String(symbol).slice(0, 2);
+      return mark;
+    }
+    mark.classList.add('is-icon');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 18 18');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#' + id);
+    svg.append(use);
+    mark.append(svg);
+    return mark;
+  }
+
   function renderCurrencies() {
     const container = el('currencies');
     container.textContent = '';
@@ -1471,12 +1552,7 @@
       chip.setAttribute('role', 'radio');
       chip.setAttribute('aria-checked', String(currency !== null && row.id === currency.id));
 
-      const mark = document.createElement('span');
-      mark.className = 'coin-mark';
-      mark.setAttribute('aria-hidden', 'true');
-      // The ticker's first two letters, not an icon: a remote image would be a
-      // request to another host, and this page is deliberately self-contained.
-      mark.textContent = row.id.slice(0, 2);
+      const mark = coinBadge(row.id);
 
       const text = document.createElement('span');
       text.className = 'coin-text';
@@ -1574,7 +1650,7 @@
         costEl.textContent = cost.text;
       }
 
-      row.append(dot, name, time, costEl);
+      row.append(dot, coinBadge(CHAIN_COINS[network.id] ?? network.label, 'net-mark'), name, time, costEl);
       row.addEventListener('click', () => {
         if (paymentSeen()) return;
         selected = network;

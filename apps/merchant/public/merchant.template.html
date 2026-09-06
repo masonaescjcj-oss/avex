@@ -1,5 +1,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- @inject:favicon -->
 <!--
   Where the API is.
 
@@ -351,6 +352,22 @@
   td select, td input { width: auto; min-width: 9rem; min-height: var(--control-sm); padding-top: 0; padding-bottom: 0; font-size: var(--s-1); }
   td button.ghost { min-height: var(--control-sm); padding: 0 var(--sp-3); font-size: var(--s-2); }
 
+  /* ── coin badges ──────────────────────────────────────────────────────── */
+
+  /* A chain or a currency, named with the icon its holders know it by. The icons are
+     full-bleed squares in the issuer's own colours, so the circle and the clipping belong
+     to the wrapper; the letters are the fallback for a token we ship no icon for. */
+  .coin-cell { display: inline-flex; align-items: center; gap: 0.45rem; white-space: nowrap; }
+  .coin-badge {
+    width: 1.125rem; height: 1.125rem; flex: none;
+    border-radius: 50%; overflow: hidden;
+    display: grid; place-items: center;
+    background: var(--surface-3); color: var(--ink-2);
+    font-family: var(--mono); font-size: 0.5rem; font-weight: 700; line-height: 1;
+  }
+  .coin-badge.is-icon { background: none; }
+  .coin-badge svg { display: block; width: 100%; height: 100%; }
+
   /* ── pills ────────────────────────────────────────────────────────────── */
 
   .pill {
@@ -678,6 +695,13 @@
 </style>
 
 <!--
+  The coin icons, inlined once as <symbol>s and drawn with <use>. This page reaches no
+  host, so a currency's badge cannot be a remote image.
+-->
+<!-- @inject:coins -->
+
+
+<!--
   First on the page, before even the sign-in form, and not dismissible.
 
   A dashboard full of plausible figures that somebody takes for their own account is worse
@@ -700,7 +724,7 @@
   already typed there so nobody types it twice.
 -->
 <section class="panel" id="auth-panel">
-  <div class="brand auth-brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg><span class="brand-text">AVEX <span class="brand-pay">Pay</span></span></div>
+  <div class="brand auth-brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="var(--lime-ink)"><!-- @inject:mark --></g></svg><span class="brand-text">AVEX <span class="brand-pay">Pay</span></span></div>
   <div class="panel-head">
     <h1 id="auth-title">Sign in</h1>
     <button class="quiet" type="button" id="auth-switch">Create an account</button>
@@ -732,7 +756,7 @@
 <!-- ── the dashboard ────────────────────────────────────────────────── -->
 <div id="app" class="shell" hidden>
   <aside class="side">
-    <div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="none" stroke="var(--lime-ink)" stroke-width="9"><path d="M12 86C14.6 39 32.7 13 50 13C67.3 13 85.4 39 88 86"></path><path d="M28 86C29.5 55 38.5 33 50 33C61.5 33 70.5 55 72 86"></path></g></svg><span class="brand-text">AVEX <span class="brand-pay">Pay</span></span></div>
+    <div class="brand"><svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" rx="22" fill="var(--lime)"></rect><g fill="var(--lime-ink)"><!-- @inject:mark --></g></svg><span class="brand-text">AVEX <span class="brand-pay">Pay</span></span></div>
     <!--
       The sections. Filled by the script: one button per view, icon and label, the open one
       marked `aria-current="page"`. A sidebar on a desktop, a rail on a tablet, a bottom bar
@@ -1261,6 +1285,56 @@
   }
 
   const text = (value) => document.createTextNode(String(value));
+
+  /**
+   * The coin whose icon stands for each chain.
+   *
+   * A chain's icon is its native coin's: on a list of wallets across four chains, the
+   * badge is what the eye sorts by, faster than reading "polygon" against "ethereum".
+   */
+  const CHAIN_COINS = {
+    ton: 'TON',
+    solana: 'SOL',
+    tron: 'TRX',
+    bsc: 'BNB',
+    polygon: 'POL',
+    ethereum: 'ETH',
+  };
+
+  /**
+   * A symbol's badge: its icon when the page carries one, its first two letters when not.
+   *
+   * The icons are inlined as <symbol>s at build time, so the test is simply whether the
+   * sprite has this ticker — which means a merchant's own token still gets a legible badge
+   * rather than an empty circle.
+   */
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+
+  function coinBadge(symbol) {
+    const badge = h('span', { class: 'coin-badge', 'aria-hidden': 'true' }, []);
+    const id = 'coin-' + String(symbol || '').toLowerCase();
+    if (document.getElementById(id) === null) {
+      badge.textContent = String(symbol || '?').slice(0, 2);
+      return badge;
+    }
+    badge.classList.add('is-icon');
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 18 18');
+    const use = document.createElementNS(SVG_NS, 'use');
+    use.setAttribute('href', '#' + id);
+    svg.append(use);
+    badge.append(svg);
+    return badge;
+  }
+
+  /** A cell naming a chain, with the chain's coin beside it. */
+  const chainCell = (chain) =>
+    h('td', {}, [
+      h('span', { class: 'coin-cell' }, [
+        coinBadge(CHAIN_COINS[chain] ?? chain),
+        h('span', { class: 'mono', text: chain ?? '—' }),
+      ]),
+    ]);
 
   function fill(container, children) {
     container.replaceChildren(
@@ -1898,8 +1972,16 @@
       const top = index * rowHeight;
       const count = Number(row.paymentCount) || 0;
       const amount = formatUnitsGrouped(String(row.total ?? '0'), Number(row.assetDecimals) || 0);
-      svg.append(
-        node('text', { x: 0, y: top + 13, class: 'chart-label' }, (row.assetSymbol || '?') + ' · ' + (row.chain || '')),
+      // The icon rides inside the chart's own <svg>, referencing the same sprite the
+      // tables use; a row with no icon simply has no <use>, and the label still says it.
+      const iconId = 'coin-' + String(row.assetSymbol || '').toLowerCase();
+      const hasIcon = document.getElementById(iconId) !== null;
+      // `append` stringifies anything that is not a Node, so a skipped icon has to be
+      // filtered out rather than passed as null — that would put the word "null" in the
+      // chart.
+      const parts = [
+        hasIcon ? node('use', { href: '#' + iconId, x: 0, y: top + 2, width: 13, height: 13 }) : null,
+        node('text', { x: hasIcon ? 18 : 0, y: top + 13, class: 'chart-label' }, (row.assetSymbol || '?') + ' · ' + (row.chain || '')),
         node('text', { x: width, y: top + 13, class: 'chart-value', 'text-anchor': 'end' },
           amount + ' ' + (row.assetSymbol || '') + ' · ' + count + (count === 1 ? ' payment' : ' payments')),
         node('rect', { x: 0, y: top + labelHeight + 8, width, height: barHeight, rx: barHeight / 2, class: 'chart-track' }),
@@ -1908,7 +1990,8 @@
           width: Math.max(barHeight, Math.round((count / max) * width)), height: barHeight, rx: barHeight / 2,
           class: 'chart-bar',
         }),
-      );
+      ];
+      svg.append(...parts.filter((part) => part !== null));
     });
 
     fill(host, [svg]);
@@ -2027,7 +2110,7 @@
           h('td', {}, [h('span', { class: 'pill', 'data-tone': view.tone, text: view.label })]),
           h('td', { class: 'mono right', text: formatUnits(invoice.amountPaid, invoice.assetDecimals ?? 0) }),
           h('td', { class: 'mono right', text: formatUnits(invoice.amountDue, invoice.assetDecimals ?? 0) + ' ' + (invoice.assetSymbol || '') }),
-          h('td', { class: 'mono', text: invoice.chain }),
+          chainCell(invoice.chain),
           h('td', { text: formatAgo(invoice.createdAt) }),
         ]);
       })),
@@ -2371,7 +2454,7 @@
        */
       ...pending.map((change) =>
         h('tr', {}, [
-          h('td', { class: 'mono', text: change.chain }),
+          chainCell(change.chain),
           h('td', { class: 'mono', title: change.address, text: shortenAddress(change.address) }),
           h('td', { text: '—' }),
           h('td', {}, [
@@ -2393,7 +2476,7 @@
       ),
       ...active.map((row) =>
         h('tr', {}, [
-          h('td', { class: 'mono', text: row.chain }),
+          chainCell(row.chain),
           h('td', { class: 'mono', title: row.address, text: shortenAddress(row.address) }),
           h('td', { text: formatAgo(row.activeFrom) }),
           h('td', {}, [
@@ -2469,7 +2552,7 @@
        */
       ...pending.map((change) =>
         h('tr', {}, [
-          h('td', { class: 'mono', text: change.chain }),
+          chainCell(change.chain),
           h('td', { class: 'mono', title: change.address, text: shortenAddress(change.address) }),
           h('td', { text: '—' }),
           h('td', {}, [h('span', { class: 'pill', 'data-tone': 'warn', text: 'in ' + (formatUntil(change.effectiveAt) ?? 'moments') })]),
@@ -2485,7 +2568,7 @@
       ),
       ...wallets.map((wallet) =>
         h('tr', {}, [
-          h('td', { class: 'mono', text: wallet.chain }),
+          chainCell(wallet.chain),
           h('td', { class: 'mono', title: wallet.address, text: shortenAddress(wallet.address) }),
           h('td', { text: wallet.label ?? '—' }),
           h('td', {}, [
@@ -2510,7 +2593,7 @@
     ];
 
     fill(el('wallet-table'), rows.length === 0
-      ? [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No wallets yet. Add one to start taking TRON payments.' })])])]
+      ? [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No wallets yet. Add one and invoices on that chain go straight to it.' })])])]
       : [
           h('thead', {}, [h('tr', {}, ['Chain', 'Address', 'Label', 'State', ''].map((label) => h('th', { text: label })))]),
           h('tbody', {}, rows),

@@ -1,8 +1,9 @@
 # Design canvas — AVEX Pay on a phone
 
-Twelve screens, drawn from the product as it actually is: the fields the API
-accepts, the tabs the dashboard has, and `packages/design/tokens.css` for every
-colour. Nothing here shows a feature we do not ship.
+Twelve screens, drawn from the product as it actually is: the fields the API accepts, the
+tabs the dashboard has, and `packages/design` for every colour, the brand mark and the coin
+icons — the same files the shipped pages inline, so a mockup can never show a logo or a
+badge the product does not have. Nothing here shows a feature we do not ship.
 
 | | |
 |---|---|
@@ -20,9 +21,10 @@ bash gen.sh      # rewrite the twelve artboards and canvas.json
 node shot.mjs    # render each one to shots/ at 390x844, as the canvas renders it
 ```
 
-`shot.mjs` needs `playwright-core` (`npm i --no-save playwright-core`) and drives
-the Chromium already on the machine. It injects the same reset the canvas runtime
-injects (`html,body{height:100%;margin:0}`), so a screen that fits here fits there.
+`shot.mjs` finds a browser through `packages/design/chromium.mjs` (install one with
+`npm i --no-save playwright-core` if it cannot). It injects the same reset the canvas
+runtime injects (`html,body{height:100%;margin:0}`), so a screen that fits here fits
+there.
 
 To publish the canvas, seed a fresh copy of the design skill's payload:
 

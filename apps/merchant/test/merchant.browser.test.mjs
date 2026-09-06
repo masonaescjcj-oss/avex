@@ -452,20 +452,28 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   test('the mark is drawn rather than fetched', async () => {
     /**
-     * This page is one file and reaches no host at all, so the logo has to be inline — two
-     * arches, which is less markup than the base64 of a picture of two arches. Decorative,
-     * because the word AVEX is in the text beside it.
+     * This page is one file and reaches no host at all, so the logo has to be inline. It is
+     * the brand mark traced from the logo file — one even-odd path, arch inside arch, which
+     * is a fraction of the base64 of a picture of it. Decorative, because the word AVEX is
+     * in the text beside it.
+     *
+     * The path count is not the point and is not asserted: the mark is regenerated from the
+     * source artwork by `packages/design/brand/trace-mark.mjs`, and a redraw that merges or
+     * splits contours is not a regression. What would be: an <image>, which means the page
+     * fetches, or a mark that does not render.
      */
     const { page, context } = await open({ staySignedOut: true });
     const mark = await page.$eval('.brand-mark', (node) => ({
       tag: node.tagName.toLowerCase(),
       hidden: node.getAttribute('aria-hidden'),
-      paths: node.querySelectorAll('path').length,
+      shapes: node.querySelectorAll('path').length,
+      fetched: node.querySelectorAll('image, img, use[href^="http"]').length,
       width: Math.round(node.getBoundingClientRect().width),
     }));
     assert.equal(mark.tag, 'svg');
     assert.equal(mark.hidden, 'true');
-    assert.equal(mark.paths, 2, 'the mark is two arches');
+    assert.ok(mark.shapes >= 1, 'the mark is drawn as paths');
+    assert.equal(mark.fetched, 0, 'the mark is drawn, not fetched');
     assert.ok(mark.width >= 20, `the mark rendered ${mark.width}px wide`);
     await context.close();
   });

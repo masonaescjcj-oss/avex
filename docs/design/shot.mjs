@@ -1,12 +1,13 @@
 // Renders each artboard at its canvas size, in a viewport of exactly that size,
 // with the same reset the canvas runtime injects into its preview frames.
-import { chromium } from 'playwright-core';
 import { readdirSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+
+import { launchChromium } from '../../packages/design/chromium.mjs';
 const RESET = '<style>html,body{height:100%;margin:0}</style>';
 const files = readdirSync('.').filter((f) => f.endsWith('.dc.html'));
 mkdirSync('shots', { recursive: true });
 mkdirSync('.shotsrc', { recursive: true });
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
+const browser = await launchChromium();
 const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
 for (const f of files) {
   const name = f.replace(/\.dc\.html$/, '');

@@ -17,6 +17,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { injectBrand } from '../../packages/design/inject.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const core = join(here, '..', '..', 'packages', 'core', 'dist');
 
@@ -130,6 +132,8 @@ if (dashboard) {
 }
 
 const target = join(here, 'public', 'index.html');
+output = injectBrand(output);
+
 writeFileSync(target, output);
 
 console.log(
