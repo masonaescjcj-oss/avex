@@ -941,6 +941,19 @@
   }
   .demo-btn:hover { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
 
+  /*
+    On a phone the amount is the middle of the screen, so it sits in the middle of it.
+
+    The QR under it is centred already, and a centred symbol beneath a left-aligned figure
+    reads as two blocks rather than one instruction. Only the alignment moves: the copy
+    button stays beside the figure, because copying the exact amount is how a payer avoids
+    mistyping the digits that identify their order.
+  */
+  @media (max-width: 29.99rem) {
+    .amount-row { justify-content: center; }
+    .amount-fiat, .amount-exact, .amount-note { text-align: center; }
+  }
+
   /* ── wider screens ──────────────────────────────────────────────────── */
 
   @media (min-width: 30rem) {

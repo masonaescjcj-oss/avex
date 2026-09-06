@@ -339,6 +339,16 @@
   .cols:has(> .panel[hidden]) { grid-template-columns: minmax(0, 1fr); }
   /* Under 1200px the checklist column would be narrower than its sentences; the cards stack. */
   @media (max-width: 74.99em) { .cols { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 63.99em) { .cols > #setup-panel { order: -1; } }
+
+  /*
+    On a phone the overview's own heading goes: the bar above says whose account this is,
+    the bar below says which section, and the card says what the figure means. Three
+    labels for one screen is two too many.
+  */
+  @media (max-width: 39.99em) {
+    #view-overview > .page-head { display: none; }
+  }
 
   /* ── sign-in ──────────────────────────────────────────────────────────── */
 
@@ -510,7 +520,12 @@
   .row-item:first-child { border-top: 0; padding-top: 0; }
   .row-main { flex: 1 1 auto; min-width: 0; }
   .row-title { font-size: var(--s0); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row-sub { font-size: var(--s-2); color: var(--faint); }
+  .row-sub {
+    display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
+    font-size: var(--s-2); color: var(--faint); margin-top: 0.15rem;
+  }
+  .row-sub .pill { font-size: 0.6875rem; padding: 0.15rem 0.4rem; }
+  .row-item > button.ghost { flex: none; }
   .row-side { text-align: right; flex: none; }
   .row-amount { font-size: var(--s0); font-weight: 600; font-variant-numeric: tabular-nums; }
 
@@ -563,6 +578,23 @@
   .bar-fill[data-earned="false"] { background: var(--accent-edge); }
 
   /* ── checklist ────────────────────────────────────────────────────────── */
+
+  /* The next step, in the merchant's own words rather than as a fifth of a list. */
+  .setup-next { font-size: var(--s-1); color: var(--muted); margin-bottom: var(--sp-3); }
+
+  /*
+    The steps themselves. Open where there is room, closed on a phone — a `details` rather
+    than a script-driven panel so the state is the browser's and the content is in the
+    document either way.
+  */
+  .steps > summary {
+    cursor: pointer; font-size: var(--s-1); font-weight: 600; color: var(--accent);
+    padding: var(--sp-2) 0; list-style: none;
+  }
+  .steps > summary::-webkit-details-marker { display: none; }
+  .steps > summary::after { content: ' ▾'; font-size: 0.75em; }
+  .steps[open] > summary::after { content: ' ▴'; }
+  .steps > summary:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--r-sm); }
 
   ol.checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
   .check {
@@ -952,9 +984,22 @@
     /* Beneath the header, which holds the bar and the sheet: the header is its own stacking context. */
     .backdrop { position: fixed; inset: 0; z-index: 19; background: rgba(15, 17, 20, 0.45); }
 
-    .whoami { display: flex; align-items: center; gap: var(--sp-2); padding: 0; border-top: 0; min-width: 0; }
+    /*
+      The top bar is the identity row: the mark, whose account this is, whether it is live,
+      and the way out. The wordmark goes — "AVEX Pay" beside the mark, on the account's own
+      dashboard, is the one thing on that row nobody needs told.
+    */
+    .side .brand-text { display: none; }
+    .whoami { display: flex; align-items: center; gap: var(--sp-2); padding: 0; border-top: 0; min-width: 0; flex: 1 1 auto; }
     .whoami::before { display: none; }
-    .whoami > span { flex: 1 1 auto; font-size: var(--s-1); max-width: 10rem; }
+    .whoami > span { flex: 0 1 auto; font-size: var(--s0); color: var(--ink); max-width: 11rem; }
+    /*
+      No live/test pill beside the name, though the design sketches one: an organisation has
+      no mode. Keys do, and the page already says which of those exist on the checklist —
+      a green "live" chip here would be claiming a state nothing in the API reports.
+    */
+    .whoami code { display: none; }
+    .whoami button.ghost { margin-left: auto; }
     .whoami code { display: none; }
     .whoami button.ghost { margin: 0; width: auto; min-height: var(--control); padding: 0 var(--sp-3); font-size: var(--s-2); }
 
@@ -1128,7 +1173,18 @@
 
         <div class="panel" id="setup-panel">
           <div class="panel-head"><h2>Before your first live payment</h2><span class="note" id="setup-progress"></span></div>
-          <div class="panel-body"><ol class="checklist" id="checklist"></ol></div>
+          <div class="panel-body">
+            <div class="bar-track"><div class="bar-fill" id="setup-bar" style="width:0%"></div></div>
+            <p class="setup-next" id="setup-next"></p>
+            <!--
+              Open on a wide screen, closed on a phone: the same markup either way, so the
+              steps are always in the document and always reachable.
+            -->
+            <details class="steps" id="setup-steps">
+              <summary>All five steps</summary>
+              <ol class="checklist" id="checklist"></ol>
+            </details>
+          </div>
         </div>
       </div>
 
@@ -1220,7 +1276,7 @@
               <button class="ghost" type="submit">Apply</button>
             </div>
           </form>
-          <div class="scroll"><table id="invoice-table"></table></div>
+          <div class="rows" id="invoice-list"></div>
           <div class="row"><button class="ghost" type="button" id="invoice-more" hidden>Load more</button></div>
         </div>
       </div>
@@ -1288,18 +1344,16 @@
         <div class="panel-body">
           <p class="note">
             Your customers pay straight into a wallet of yours, on any chain — no contract of ours
-            in the path, nothing to sweep, and no network fee for us to pass on. Register one to
-            ten addresses per chain and we hand them out. Each invoice asks for a very slightly
-            different amount — 20.05, 20.03 — and that is how two payments to one address are told
-            apart. Paying into your own wallet has no minimum order size.
+            in the path, no gas, and no minimum. Up to ten addresses per chain, and each invoice
+            asks for a very slightly different amount — 20.05, 20.03 — which is how two payments
+            to one address are told apart.
           </p>
           <p class="warn-note">
-            Your first wallet on a chain is usable at once. Every one after it waits 24 hours and
-            everyone in your organization is emailed, because these are addresses your money lands
-            in — the same protection a payout address gets, for the same reason. Retiring one is
-            immediate.
+            Your first wallet on a chain works at once. Every one after it waits 24 hours and
+            everyone in your organization is emailed, because this is where your money lands.
+            Retiring one is immediate.
           </p>
-          <div class="scroll"><table id="wallet-table"></table></div>
+          <div class="rows" id="wallet-list"></div>
           <form id="wallet-form">
             <div class="row">
               <label>Chain<select id="wallet-chain"></select></label>
@@ -1318,7 +1372,7 @@
             requested. That delay is the difference between a stolen session costing you
             one order and costing you everything after it.
           </p>
-          <div class="scroll"><table id="payout-table"></table></div>
+          <div class="rows" id="payout-list"></div>
           <form id="payout-form">
             <div class="row">
               <label>Chain<select id="payout-chain"></select></label>
@@ -4567,6 +4621,15 @@ function matchPreview(method, url, routes = previewRoutes()) {
     ]);
   }
 
+  /**
+   * The steps start open where there is room for them.
+   *
+   * Set once, from the width at load, rather than by media query: `details` open state is
+   * an attribute, and CSS cannot set it. Somebody who opens or closes it keeps their
+   * choice, which a resize listener would take away from them.
+   */
+  if (window.matchMedia('(min-width: 40em)').matches) el('setup-steps').open = true;
+
   function renderChecklist() {
     const assets = cache.assets || [];
     const payouts = cache.payouts || { active: [], pending: [] };
@@ -4602,6 +4665,19 @@ function matchPreview(method, url, routes = previewRoutes()) {
     el('setup-panel').hidden = steps.every((step) => step.done);
     const done = steps.filter((step) => step.done).length;
     el('setup-progress').textContent = done + ' of ' + steps.length + ' done';
+
+    /**
+     * A bar, the next thing to do, and the rest folded away.
+     *
+     * Five steps with a paragraph each is most of a phone screen, and four of them are
+     * about work already finished. The bar carries the state, one line carries what to do
+     * next, and everything stays reachable — the details are a tap away rather than gone.
+     */
+    el('setup-bar').style.width = Math.round((done / steps.length) * 100) + '%';
+    const next = steps.find((step) => !step.done);
+    el('setup-next').textContent = next
+      ? 'Next: ' + next.title.charAt(0).toLowerCase() + next.title.slice(1)
+      : 'Everything on the list is done.';
 
     fill(
       el('checklist'),
@@ -4644,27 +4720,45 @@ function matchPreview(method, url, routes = previewRoutes()) {
     ]);
   }
 
+  /**
+   * Every invoice, one row each.
+   *
+   * Six columns — reference, status, received, due, chain, age — is a horizontal scroll on
+   * a phone, and the two amounts only differ on the invoices that need attention. So the
+   * row leads with what was asked for and says what arrived only when it was not that.
+   */
   function renderInvoices() {
     const rows = cache.invoices || [];
     el('invoice-count').textContent = rows.length + ' shown';
     if (rows.length === 0) {
-      fill(el('invoice-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No invoices yet.' })])])]);
+      fill(el('invoice-list'), [h('p', { class: 'empty', text: 'No invoices yet.' })]);
       return;
     }
-    fill(el('invoice-table'), [
-      h('thead', {}, [h('tr', {}, ['Reference', 'Status', 'Received', 'Due', 'Chain', 'Created'].map((label) => h('th', { text: label })))]),
-      h('tbody', {}, rows.map((invoice) => {
+    fill(
+      el('invoice-list'),
+      rows.map((invoice) => {
         const view = statusView(invoice.status);
-        return h('tr', { 'data-attention': String(view.needsAttention) }, [
-          h('td', { class: 'mono', text: invoice.reference || '—' }),
-          h('td', {}, [h('span', { class: 'pill', 'data-tone': view.tone, text: view.label })]),
-          h('td', { class: 'mono right', text: formatUnits(invoice.amountPaid, invoice.assetDecimals ?? 0) }),
-          h('td', { class: 'mono right', text: formatUnits(invoice.amountDue, invoice.assetDecimals ?? 0) + ' ' + (invoice.assetSymbol || '') }),
-          chainCell(invoice.chain),
-          h('td', { text: formatAgo(invoice.createdAt) }),
+        const decimals = invoice.assetDecimals ?? 0;
+        const due = formatUnits(invoice.amountDue, decimals);
+        const paid = formatUnits(invoice.amountPaid, decimals);
+        return h('div', { class: 'row-item', 'data-attention': String(view.needsAttention) }, [
+          coinBadge(invoice.assetSymbol),
+          h('div', { class: 'row-main' }, [
+            h('div', { class: 'row-title', text: (invoice.reference || 'no reference') }),
+            h('div', { class: 'row-sub' }, [
+              h('span', { text: (invoice.assetSymbol || '?') + ' on ' + (invoice.chain || '?') }),
+              h('span', { text: formatAgo(invoice.createdAt) }),
+              // Only when it differs. "20.03 of 20.03" is a column of noise.
+              paid !== due ? h('span', { text: paid + ' received' }) : null,
+            ]),
+          ]),
+          h('div', { class: 'row-side' }, [
+            h('div', { class: 'row-amount', text: due + ' ' + (invoice.assetSymbol || '') }),
+            h('span', { class: 'pill', 'data-tone': view.tone, text: view.label }),
+          ]),
         ]);
-      })),
-    ]);
+      }),
+    );
   }
 
   el('invoice-filters').addEventListener('submit', (event) => {
@@ -4992,7 +5086,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
     fill(el('payout-chain'), chains.map((chain) => h('option', { value: chain, text: chain })));
 
     if (active.length === 0 && pending.length === 0) {
-      fill(el('payout-table'), [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No payout addresses yet. Add one per chain you accept.' })])])]);
+      fill(el('payout-list'), [h('p', { class: 'empty', text: 'No payout addresses yet. Add one per chain you accept.' })]);
       return;
     }
 
@@ -5004,50 +5098,33 @@ function matchPreview(method, url, routes = previewRoutes()) {
        * nothing. The email we send says to cancel it here; before this there was no here.
        */
       ...pending.map((change) =>
-        h('tr', {}, [
-          chainCell(change.chain),
-          h('td', { class: 'mono', title: change.address, text: shortenAddress(change.address) }),
-          h('td', { text: '—' }),
-          h('td', {}, [
-            h('span', {
-              class: 'pill',
-              'data-tone': 'warn',
-              text: 'in ' + (formatUntil(change.effectiveAt) ?? 'moments'),
-            }),
-          ]),
-          h('td', {}, [
-            h('button', {
-              class: 'ghost',
-              type: 'button',
-              text: 'Cancel',
-              onclick: () => void cancelPayout(change.id),
-            }),
-          ]),
-        ]),
+        walletRow({
+          chain: change.chain,
+          address: change.address,
+          note: null,
+          tone: 'warn',
+          state: 'in ' + (formatUntil(change.effectiveAt) ?? 'moments'),
+          action: h('button', {
+            class: 'ghost',
+            type: 'button',
+            text: 'Cancel',
+            onclick: () => void cancelPayout(change.id),
+          }),
+        }),
       ),
       ...active.map((row) =>
-        h('tr', {}, [
-          chainCell(row.chain),
-          h('td', { class: 'mono', title: row.address, text: shortenAddress(row.address) }),
-          h('td', { text: formatAgo(row.activeFrom) }),
-          h('td', {}, [
-            h('span', {
-              class: 'pill',
-              'data-tone': row.supersededAt ? 'dead' : 'good',
-              text: row.supersededAt ? 'replaced' : 'active',
-            }),
-          ]),
-          h('td', {}, []),
-        ]),
+        walletRow({
+          chain: row.chain,
+          address: row.address,
+          note: 'since ' + formatAgo(row.activeFrom),
+          tone: row.supersededAt ? 'dead' : 'good',
+          state: row.supersededAt ? 'replaced' : 'active',
+          action: null,
+        }),
       ),
     ];
 
-    fill(el('payout-table'), [
-      h('thead', {}, [
-        h('tr', {}, ['Chain', 'Address', 'Active since', 'State', ''].map((label) => h('th', { text: label }))),
-      ]),
-      h('tbody', {}, rows),
-    ]);
+    fill(el('payout-list'), rows);
   }
 
   /** Stop a scheduled address change before it takes effect. */
@@ -5094,61 +5171,76 @@ function matchPreview(method, url, routes = previewRoutes()) {
     el('wallet-count').textContent =
       live === 0 ? '' : live + ' in use' + (pending.length ? ', ' + pending.length + ' waiting' : '');
 
+    /**
+     * Rows, not a table.
+     *
+     * Five columns of an address, a label, a state and a button is a horizontal scroll on a
+     * phone and a lot of empty space on a desktop. The same four facts fit one row per
+     * wallet at any width — which is also how the design draws them.
+     *
+     * Scheduled additions come first, because they are the ones somebody might need to
+     * stop: a pending row is the whole point of the delay, and buried under the wallets
+     * that already work, the member who did not request it would not see it.
+     */
     const rows = [
-      /**
-       * Scheduled additions first, because they are the ones somebody might need to stop.
-       *
-       * A pending row is the whole point of the delay: if it is buried under a list of wallets
-       * that are already working, the member who did not request it will not see it.
-       */
       ...pending.map((change) =>
-        h('tr', {}, [
-          chainCell(change.chain),
-          h('td', { class: 'mono', title: change.address, text: shortenAddress(change.address) }),
-          h('td', { text: '—' }),
-          h('td', {}, [h('span', { class: 'pill', 'data-tone': 'warn', text: 'in ' + (formatUntil(change.effectiveAt) ?? 'moments') })]),
-          h('td', {}, [
-            h('button', {
-              class: 'ghost',
-              type: 'button',
-              text: 'Cancel',
-              onclick: () => void cancelWallet(change.id),
-            }),
-          ]),
-        ]),
+        walletRow({
+          chain: change.chain,
+          address: change.address,
+          note: null,
+          tone: 'warn',
+          state: 'in ' + (formatUntil(change.effectiveAt) ?? 'moments'),
+          action: h('button', {
+            class: 'ghost',
+            type: 'button',
+            text: 'Cancel',
+            onclick: () => void cancelWallet(change.id),
+          }),
+        }),
       ),
       ...wallets.map((wallet) =>
-        h('tr', {}, [
-          chainCell(wallet.chain),
-          h('td', { class: 'mono', title: wallet.address, text: shortenAddress(wallet.address) }),
-          h('td', { text: wallet.label ?? '—' }),
-          h('td', {}, [
-            h('span', {
-              class: 'pill',
-              'data-tone': wallet.retiredAt ? 'dead' : 'good',
-              text: wallet.retiredAt ? 'retired' : 'in use',
-            }),
-          ]),
-          h('td', {}, [
-            wallet.retiredAt
-              ? null
-              : h('button', {
-                  class: 'ghost',
-                  type: 'button',
-                  text: 'Retire',
-                  onclick: () => void retireWallet(wallet.id),
-                }),
-          ]),
-        ]),
+        walletRow({
+          chain: wallet.chain,
+          address: wallet.address,
+          note: wallet.label ?? null,
+          tone: wallet.retiredAt ? 'dead' : 'good',
+          state: wallet.retiredAt ? 'retired' : 'in use',
+          action: wallet.retiredAt
+            ? null
+            : h('button', {
+                class: 'ghost',
+                type: 'button',
+                text: 'Retire',
+                onclick: () => void retireWallet(wallet.id),
+              }),
+        }),
       ),
     ];
 
-    fill(el('wallet-table'), rows.length === 0
-      ? [h('tbody', {}, [h('tr', {}, [h('td', { class: 'empty', text: 'No wallets yet. Add one and invoices on that chain go straight to it.' })])])]
-      : [
-          h('thead', {}, [h('tr', {}, ['Chain', 'Address', 'Label', 'State', ''].map((label) => h('th', { text: label })))]),
-          h('tbody', {}, rows),
-        ]);
+    fill(el('wallet-list'), rows.length === 0
+      ? [h('p', { class: 'empty', text: 'No wallets yet. Add one and invoices on that chain go straight to it.' })]
+      : rows);
+  }
+
+  /**
+   * One address, however it got there: the chain's badge, the address, and its state.
+   *
+   * Shared by the wallet pool and the settlement addresses, because a merchant reading
+   * both on one tab should not have to learn two layouts for the same four facts.
+   */
+  function walletRow({ chain, address, note, tone, state, action }) {
+    return h('div', { class: 'row-item' }, [
+      coinBadge(CHAIN_COINS[chain] ?? chain),
+      h('div', { class: 'row-main' }, [
+        h('div', { class: 'row-title mono', title: address, text: shortenAddress(address) }),
+        h('div', { class: 'row-sub' }, [
+          h('span', { text: chain ?? '—' }),
+          h('span', { class: 'pill', 'data-tone': tone, text: state }),
+          note ? h('span', { text: note }) : null,
+        ]),
+      ]),
+      action,
+    ]);
   }
 
   async function retireWallet(walletId) {

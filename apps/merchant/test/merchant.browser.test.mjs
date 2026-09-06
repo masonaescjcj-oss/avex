@@ -1424,7 +1424,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await openTab(page, 'Invoices');
     await page.waitForTimeout(150);
     // 20100502512562814071 at 18 decimals, which no double holds.
-    assert.match(await text(page, '#invoice-table'), /20\.100502512562814071/);
+    assert.match(await text(page, '#invoice-list'), /20\.100502512562814071/);
     await context.close();
   });
 
@@ -1455,7 +1455,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await page.waitForTimeout(250);
 
     assert.equal(await shown(page, '#flash'), false, await text(page, '#flash').catch(() => ''));
-    const table = await text(page, '#payout-table');
+    const table = await text(page, '#payout-list');
     assert.match(table, /bsc/);
     assert.match(table, /0x7A3f/);
     assert.match(table, /active/);
@@ -1492,12 +1492,12 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await openTab(page, 'Payouts');
     await page.waitForTimeout(250);
 
-    const table = await text(page, '#payout-table');
+    const table = await text(page, '#payout-list');
     assert.match(table, /0x1111/, 'the scheduled address must be visible');
     // `formatUntil` counts down in hours and minutes: "in 17h 59m".
     assert.match(table, /in \d+h/, table);
 
-    await page.click('#payout-table button:has-text("Cancel")');
+    await page.click('#payout-list button:has-text("Cancel")');
     await page.waitForTimeout(300);
     assert.ok(
       posts.some((post) => post.path.endsWith('/payout-addresses/pending/pc-9')),
@@ -1756,8 +1756,8 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.match(body, /retired/);
     // The scheduled one says how long is left, not just that it is pending.
     assert.match(body, /in \d/);
-    assert.ok(await page.$('#wallet-table button:has-text("Cancel")'));
-    assert.ok(await page.$('#wallet-table button:has-text("Retire")'));
+    assert.ok(await page.$('#wallet-list button:has-text("Cancel")'));
+    assert.ok(await page.$('#wallet-list button:has-text("Retire")'));
     await context.close();
   });
 
@@ -1771,7 +1771,8 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await openTab(page, 'Payouts');
     await page.waitForTimeout(200);
     const body = await text(page, '#wallets-panel');
-    assert.match(body, /first wallet on a chain is usable at once/);
+    // The fact, not the phrasing: the copy has been tightened twice for a phone.
+    assert.match(body, /first wallet on a chain[^.]*at once/);
     assert.match(body, /waits 24 hours/);
     assert.match(body, /Retiring one is\s+immediate/);
     await context.close();
@@ -2600,28 +2601,36 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     }
   });
 
-  test('a table wider than a phone scrolls inside its panel, not the page', async () => {
+  test('the invoice list fits a phone, and nothing scrolls sideways', async () => {
     /**
-     * Six columns of identifiers and amounts are wider than 360px, and they must stay so —
-     * an address or a figure broken across two lines is misread. So the table overflows its
-     * `.scroll` wrapper, the wrapper scrolls, and the document does not.
+     * This used to assert the opposite: six columns — reference, status, received, due,
+     * chain, age — were wider than 360px on purpose, and the panel scrolled so the page did
+     * not. The list replaced the table, so there is nothing to scroll: one row per invoice,
+     * the amount and the state on the right, the rest underneath.
+     *
+     * The half of the old assertion that still matters is the last one. A page that scrolls
+     * sideways on a phone is broken however the content got that wide, so it is measured
+     * here rather than assumed.
      */
     const { page, context } = await open({ viewport: PHONE });
     await openTab(page, 'Invoices');
     await page.waitForTimeout(120);
-    const measured = await page.$eval('#invoice-table', (table) => {
-      const scroller = table.closest('.scroll');
-      return {
-        table: table.getBoundingClientRect().width,
-        scrolls: scroller.scrollWidth > scroller.clientWidth,
-        overflowX: getComputedStyle(scroller).overflowX,
-        page: document.documentElement.scrollWidth,
-        viewport: document.documentElement.clientWidth,
-      };
-    });
-    assert.ok(measured.table > measured.viewport, `the table is ${measured.table}px in a ${measured.viewport}px viewport; it should be wider`);
-    assert.equal(measured.scrolls, true, 'the .scroll wrapper should have something to scroll');
-    assert.equal(measured.overflowX, 'auto');
+    const measured = await page.$eval('#invoice-list', (list) => ({
+      list: list.getBoundingClientRect().width,
+      rows: list.querySelectorAll('.row-item').length,
+      widest: Math.max(...[...list.querySelectorAll('.row-item')].map((row) => row.scrollWidth)),
+      page: document.documentElement.scrollWidth,
+      viewport: document.documentElement.clientWidth,
+    }));
+    assert.ok(measured.rows > 0, 'the fixture has invoices; the list drew none');
+    assert.ok(
+      measured.list <= measured.viewport,
+      `the list is ${measured.list}px in a ${measured.viewport}px viewport`,
+    );
+    assert.ok(
+      measured.widest <= Math.ceil(measured.list),
+      `a row overflows its list by ${measured.widest - measured.list}px`,
+    );
     assert.ok(measured.page <= measured.viewport, 'the page itself must not scroll sideways');
     await context.close();
   });
