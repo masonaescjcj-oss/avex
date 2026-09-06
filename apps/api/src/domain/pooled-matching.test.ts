@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import {
-  COMPETITOR_WINDOW_MS,
   LATE_PAYMENT_GRACE_MS,
   assetKeyOf,
   decidePooled,
@@ -42,7 +41,7 @@ function transfer(amount: bigint, over: Partial<ObservedTransfer> = {}): Observe
 }
 
 function context(candidates: readonly CandidateInvoice[], over: Partial<MatchContext> = {}): MatchContext {
-  return { now: NOW, candidates, priorPayments: [], otherPendingStrays: 0, ...over };
+  return { now: NOW, candidates, priorPayments: [], ...over };
 }
 
 const credit = (invoiceId: string, rule: string, sameAsset = true) => ({
@@ -195,33 +194,24 @@ describe('rule 3: the only candidate', () => {
     assert.deepEqual(decidePooled(transfer(20_000_000n), context([paid, gone, only])), credit('only', 'sole_open'));
   });
 
-  test('an invoice that lapsed unpaid within the hour still competes', () => {
+  test('an invoice that lapsed unpaid does not hold back a payment to the one still open', () => {
     /**
-     * Its payer may be about to send the wrong amount, late. For one hour the live invoice is
-     * not the only explanation, and the transfer waits; once the hour passes the survivor is
-     * credited by the sweep.
+     * The merchant's rule, applied literally: "empty" means no other invoice is open. A test
+     * payment for more than the price arrived while an earlier abandoned invoice on the same
+     * wallet had expired minutes before; holding the new payment for an hour on the chance that
+     * the earlier payer was both late and wrong made the live payment look lost. The late payer
+     * who sends the exact figure is still found by rule 1.
      */
     const lapsed = invoice({ id: 'lapsed', amountDue: 20_001_000n, status: 'expired', expiresAt: NOW - HOUR / 2 });
     const only = invoice({ id: 'only', amountDue: 20_002_000n, expiresAt: NOW + 3 * HOUR });
-    assert.deepEqual(decidePooled(transfer(20_000_000n), context([lapsed, only])), { kind: 'park', reason: 'ambiguous' });
-
-    const later = { ...context([lapsed, only]), now: NOW + COMPETITOR_WINDOW_MS };
-    assert.deepEqual(decidePooled(transfer(20_000_000n, { seenAt: NOW }), later), credit('only', 'sole_open'));
+    assert.deepEqual(decidePooled(transfer(20_000_000n), context([lapsed, only])), credit('only', 'sole_open'));
   });
 
-  test('an invoice past its deadline that the sweep has not yet marked is treated as lapsed', () => {
+  test('an invoice past its deadline that the sweep has not yet marked is not open either', () => {
     // Status still says pending; the clock says otherwise. The clock is right.
     const lapsed = invoice({ id: 'lapsed', amountDue: 20_001_000n, status: 'pending', expiresAt: NOW - HOUR / 2 });
     const only = invoice({ id: 'only', amountDue: 20_002_000n });
-    assert.deepEqual(decidePooled(transfer(20_000_000n), context([lapsed, only])), { kind: 'park', reason: 'ambiguous' });
-  });
-
-  test('another stray already waiting at the wallet makes one open invoice two claims', () => {
-    const only = invoice({ id: 'only', amountDue: 20_001_000n });
-    assert.deepEqual(
-      decidePooled(transfer(20_000_000n), context([only], { otherPendingStrays: 1 })),
-      { kind: 'park', reason: 'ambiguous' },
-    );
+    assert.deepEqual(decidePooled(transfer(20_000_000n), context([lapsed, only])), credit('only', 'sole_open'));
   });
 
   test('nothing open and nothing exact is a late payer for a person to find', () => {
@@ -256,14 +246,15 @@ describe('the sweep: deciding again later', () => {
     assert.deepEqual(decidePooled(stray, context([a, b, c])), { kind: 'park', reason: 'invoice_expired' });
   });
 
-  test('two strays and one survivor stay parked for a person', () => {
+  test('two strays for one survivor both go to it', () => {
+    // Two wrong amounts, one open invoice they could be for: both are that invoice's, as an
+    // over- or under-payment. Nothing else exists for either to belong to.
     const a = invoice({ id: 'a', amountDue: 20_001_000n, status: 'paid' });
     const b = invoice({ id: 'b', amountDue: 20_002_000n });
-    const stray = transfer(20_000_000n, { seenAt: NOW - HOUR / 2 });
-    assert.deepEqual(
-      decidePooled(stray, context([a, b], { otherPendingStrays: 1 })),
-      { kind: 'park', reason: 'ambiguous' },
-    );
+    const first = transfer(20_000_000n, { seenAt: NOW - HOUR / 2 });
+    const second = transfer(5_000_000n, { seenAt: NOW - HOUR / 3 });
+    assert.deepEqual(decidePooled(first, context([a, b])), credit('b', 'sole_open'));
+    assert.deepEqual(decidePooled(second, context([a, b])), credit('b', 'sole_open'));
   });
 });
 

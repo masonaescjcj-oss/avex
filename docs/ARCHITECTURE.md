@@ -95,7 +95,8 @@ in `apps/api/src/domain/pooled-matching.ts`, and every scenario is a test. In sh
 - **Idle wallets first, quietest first.** With a hundred wallets and three-hour invoices,
   nearly every invoice has a wallet to itself — and on a wallet with one open invoice a
   wrong amount, or the wrong stablecoin, is still credited: there is nothing else it could
-  be for. Underpayments are credited as underpaid, with what arrived.
+  be for. Only open invoices count; an expired one on the same wallet does not hold a new
+  payment back. Underpayments are credited as underpaid, with what arrived.
 - **The exact number wins**, compared as the number a person read, whatever the token or its
   decimals; honoured for a day after the invoice closed, because the wallet keeps the number
   reserved that long. **The same sender** as an earlier payment to an invoice here goes with

@@ -28,9 +28,10 @@ import { sameHumanAmount } from '@avex/core';
  *    transfer could be for exists, whatever the amount and whatever the token. Credited, and
  *    the over/under classification records the difference — an underpayment keeps the
  *    shortfall rather than failing, because real money arrived. This is what the allocator's
- *    preference for idle wallets buys, and it is refused the moment there is a second
- *    explanation: another invoice open, an invoice that expired within the last hour whose
- *    payer may be late, or another stray already waiting at this address.
+ *    preference for idle wallets buys. Only *open* invoices count: an expired one on the same
+ *    wallet does not hold a new payment back. Its payer, if late, sends the exact figure they
+ *    were shown and rule 1 finds them; a payer who is both late and wrong is the rare case the
+ *    merchant chose to accept rather than make every other payer wait.
  *
  * 4. **Nothing.** Two or more invoices open and a transfer matching none of them: nothing on
  *    the chain says which it was for, so nothing here guesses. It is parked for a later pass —
@@ -81,8 +82,6 @@ export interface MatchContext {
   readonly now: number;
   readonly candidates: readonly CandidateInvoice[];
   readonly priorPayments: readonly PriorPayment[];
-  /** Other transfers parked at this address and still unresolved, excluding this one. */
-  readonly otherPendingStrays: number;
 }
 
 export type MatchRule = 'exact_amount' | 'exact_amount_late' | 'same_sender' | 'sole_open';
@@ -107,16 +106,6 @@ export type MatchDecision =
  * sides, and `wallet-pool-service` states the reasoning.
  */
 export const LATE_PAYMENT_GRACE_MS = 24 * 60 * 60 * 1000;
-
-/**
- * How long an expired, unpaid invoice still competes for a wrong-amount payment.
- *
- * Shorter than the exact-amount grace, deliberately. A payer who is late *and* sent the wrong
- * amount is rare, and every hour this window is widened is an hour in which a wallet with one
- * live invoice cannot credit a wrong amount without a human. One hour covers the ordinary
- * "the exchange took a while" case and no more.
- */
-export const COMPETITOR_WINDOW_MS = 60 * 60 * 1000;
 
 const OPEN = new Set(['pending', 'confirming']);
 
@@ -193,18 +182,7 @@ export function decidePooled(
   const open = candidates.filter((c) => isOpen(c, now));
   if (open.length === 0) return { kind: 'park', reason: 'invoice_expired' };
 
-  /**
-   * Invoices that lapsed unpaid within the last hour, whether or not the expiry sweep has
-   * marked them yet. Each is a payer who may still be about to send the wrong amount.
-   */
-  const competitors = candidates.filter(
-    (c) =>
-      (c.status === 'expired' || OPEN.has(c.status)) &&
-      c.expiresAt <= now &&
-      c.expiresAt > now - COMPETITOR_WINDOW_MS,
-  );
-
-  if (open.length === 1 && competitors.length === 0 && context.otherPendingStrays === 0) {
+  if (open.length === 1) {
     return { kind: 'credit', invoiceId: open[0]!.id, rule: 'sole_open', sameAsset: sameAsset(open[0]!) };
   }
 

@@ -692,18 +692,6 @@ export class DatabasePaymentSink implements PaymentSink {
       creditedAt: row.creditedAt.getTime(),
     }));
 
-    const [strays] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(unmatchedPayments)
-      .where(
-        and(
-          eq(unmatchedPayments.chain, payment.chain),
-          eq(unmatchedPayments.toAddress, payment.to),
-          eq(unmatchedPayments.resolution, 'pending'),
-          ...(context.parkedId === null ? [] : [ne(unmatchedPayments.id, context.parkedId)]),
-        ),
-      );
-
     const decision = decidePooled(
       {
         amount: payment.amount,
@@ -716,7 +704,6 @@ export class DatabasePaymentSink implements PaymentSink {
         now,
         candidates,
         priorPayments,
-        otherPendingStrays: strays?.count ?? 0,
       },
     );
 
