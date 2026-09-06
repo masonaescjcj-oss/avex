@@ -358,6 +358,7 @@ test('a transfer the sink throws on is shown again, and the cursor waits for it'
    */
   const chain = new FakeChain(10);
   const state = new MemoryState();
+  state.cursor = '7'; // already watched, so the first-watch anchor does not apply
   const sink = new RecordingSink(state);
   sink.failOn.add('bsc:0xaa:0');
   const adapter = new ScriptedAdapter(() => [transfer('0xaa', 9)]);
@@ -391,6 +392,7 @@ test('a transfer that keeps failing is given up on, and does not stall the chain
     transfer('0xbad', 8),
     transfer('0xgood', 9),
   ]);
+  state.cursor = '7'; // already watched, so the first-watch anchor does not apply
   sink.failOn.add('bsc:0xbad:0');
 
   let outcome = await watcher.poll();
@@ -498,6 +500,7 @@ test('a transfer the sink defers holds the cursor until it is final', async () =
    */
   const chain = new FakeChain(10);
   const state = new MemoryState();
+  state.cursor = '7'; // already watched, so the first-watch anchor does not apply
   const seen: number[] = [];
   const sink: PaymentSink = {
     async credit(payment) {
@@ -529,4 +532,36 @@ test('a transfer the sink defers holds the cursor until it is final', async () =
   assert.equal(second.credited, 1);
   assert.deepEqual(seen, [2, 4]);
   assert.equal(state.credited.has('bsc:0xaa:0'), true);
+});
+
+test('a chain watched for the first time is anchored before the first query', async () => {
+  /**
+   * The failure that lost a payment: no poll on the chain had ever succeeded, so no cursor was
+   * ever written, and each restart began at the head of that moment — past the transfer. The
+   * anchor is written before the adapter is asked anything, so a failing node cannot stop it.
+   */
+  const chain = new FakeChain(10);
+  const state = new MemoryState();
+  const sink = new RecordingSink(state);
+  const failing: ChainAdapter = {
+    ...new ScriptedAdapter(() => []),
+    chain: 'bsc',
+    addressModel: 'unique',
+    async poll() {
+      throw new Error('bsc rpc eth_getLogs: limit exceeded');
+    },
+  } as unknown as ChainAdapter;
+  const watcher = new Watcher('bsc', failing, chain, state, sink, {
+    reorgDepth: 3,
+    blockMemory: 8,
+    maxBlocksPerPoll: 100,
+  });
+
+  await assert.rejects(watcher.poll(), /limit exceeded/);
+  assert.equal(state.cursor, '9', 'anchored just below the head seen at the first poll');
+
+  // The chain moves on while the node keeps failing; the anchor does not.
+  chain.reorg(11, 20, 'a');
+  await assert.rejects(watcher.poll(), /limit exceeded/);
+  assert.equal(state.cursor, '9');
 });

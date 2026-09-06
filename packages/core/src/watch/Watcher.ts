@@ -145,8 +145,28 @@ export class Watcher {
       reversed = await this.rewind(reorg.rewoundTo);
     }
 
-    const { cursor } = await this.state.loadCursor(this.chain);
+    const { cursor: stored } = await this.state.loadCursor(this.chain);
     const head = await this.blocks.head();
+
+    /**
+     * A chain being watched for the first time is anchored at the head before anything is
+     * asked of the node.
+     *
+     * Without this, a chain whose very first polls fail has no cursor at all, and every restart
+     * begins again at whatever the head is *then*. That is how a payment was lost: the node
+     * refused every query for an hour, the process was restarted with a fix, and the new
+     * watcher started an hour's worth of blocks past the transfer. Written once, here, the
+     * position is kept through any number of failures and restarts, and the catch-up scan
+     * covers the gap.
+     */
+    const cursor =
+      stored ??
+      (await (async () => {
+        const anchor = String(Math.max(0, head.number - 1));
+        await this.state.saveCursor(this.chain, anchor, head.number - 1);
+        this.log(`${this.chain}: first watch, anchored at block ${head.number}`);
+        return anchor;
+      })());
 
     const result = await this.adapter.poll(cursor);
 
