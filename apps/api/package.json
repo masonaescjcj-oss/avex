@@ -12,6 +12,7 @@
     "db:migrate": "drizzle-kit migrate",
     "admin:bootstrap": "node dist/admin-bootstrap.js",
     "watch": "node dist/watcher.js",
+    "replay-tx": "node dist/replay-tx.js",
     "preflight": "node dist/preflight.js"
   },
   "dependencies": {

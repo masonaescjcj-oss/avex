@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, mock, test } from 'node:test';
 
 import type { Asset } from '../../types.js';
+import { REGROW_AFTER_POLLS } from '../transfer-topics.js';
 import { TronAdapter } from './TronAdapter.js';
 import { normalizeTronAddress, tronAddressToEvmHex } from './address.js';
 
@@ -388,7 +389,7 @@ describe('watching TRON', () => {
      * restart, and it asked for the same width every time. Now a refusal halves the width for
      * the next poll, and the width grows back once queries go through.
      */
-    const { adapter, calls, fetchMock } = adapterWith({ head: 2000, logs: [], refuseRangeAbove: 60 });
+    const { adapter, calls, fetchMock } = adapterWith({ head: 9000, logs: [], refuseRangeAbove: 60 });
     t.mock.method(globalThis, 'fetch', fetchMock);
 
     // 200 blocks: refused. 100: refused. 50: accepted.
@@ -406,8 +407,16 @@ describe('watching TRON', () => {
       });
     assert.deepEqual(widths, [200, 100, 50]);
 
-    // Growing back: the next poll may ask for a hundred again, and is refused, and narrows.
-    await assert.rejects(adapter.poll('1050'), /narrowing from 100 to 50/);
+    // Growing back only after a run of successes, so a node with a fixed limit is not asked
+    // for twice its limit every other poll.
+    // The fifty-block poll above was the first success of the run.
+    let cursor = 1050;
+    for (let i = 2; i < REGROW_AFTER_POLLS; i++) {
+      cursor = Number((await adapter.poll(String(cursor))).cursor);
+    }
+    const grown = await adapter.poll(String(cursor));
+    assert.equal(Number(grown.cursor) - cursor, 50, 'still fifty inside the run');
+    await assert.rejects(adapter.poll(grown.cursor), /narrowing from 100 to 50/, 'doubled after the run, and refused again');
   });
 
   test('nothing here settles, and it says so rather than pretending', async () => {

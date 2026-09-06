@@ -143,6 +143,10 @@ usage: sudo bash deploy/install.sh [options]
                    and — for the migration string — create a type and roll it back. Writes
                    nothing, keeps nothing, and needs no root.
   --reconfigure    Ask the configuration questions again, keeping the old api.env beside it.
+  --credit-tx CHAIN HASH
+                   Credit one transaction by its hash, as the watcher would have: for a payment
+                   made while the chain's node was refusing queries and the watcher moved on.
+                   Idempotent; a transaction already credited is reported and left alone.
   --repo URL       Where to clone from. Defaults to the AVEX repository.
   --branch NAME    Branch to check out. Defaults to main.
   -h, --help       This.
@@ -1469,6 +1473,7 @@ main() {
       --check-db)    MODE=check-db; shift ;;
       --selftest)    MODE=selftest; shift ;;
       --reconfigure) MODE=reconfigure; shift ;;
+      --credit-tx)   MODE=credit-tx; CREDIT_CHAIN=${2:?--credit-tx needs a chain}; CREDIT_TX=${3:?--credit-tx needs a transaction hash}; shift 3 ;;
       --repo)        REPO=${2:?--repo needs a URL}; shift 2 ;;
       --branch)      BRANCH=${2:?--branch needs a name}; shift 2 ;;
       -h|--help)     usage; exit 0 ;;
@@ -1502,6 +1507,15 @@ main() {
   if [[ $MODE == report ]]; then
     report
     exit 0
+  fi
+
+  if [[ $MODE == credit-tx ]]; then
+    # The built code on disk, with the deployed env: the same database, the same endpoints, the
+    # same rules the watcher applies. Nothing is restarted.
+    [[ -f $APP_DIR/apps/api/dist/replay-tx.js ]] ||
+      die "this checkout predates --credit-tx; run the installer once to update, then retry."
+    with_env node apps/api/dist/replay-tx.js "$CREDIT_CHAIN" "$CREDIT_TX"
+    exit $?
   fi
 
   pick_port

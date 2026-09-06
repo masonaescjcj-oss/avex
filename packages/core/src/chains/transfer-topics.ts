@@ -87,6 +87,9 @@ export function isLogQueryLimitError(error: unknown): boolean {
 export const MIN_POLL_RANGE = 8;
 
 /** Half the range, never below the floor. */
+/** Successful polls at a narrowed range before it is allowed to double again. */
+export const REGROW_AFTER_POLLS = 20;
+
 export function narrowedRange(current: number): number {
   return Math.max(MIN_POLL_RANGE, Math.floor(current / 2));
 }

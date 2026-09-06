@@ -184,6 +184,10 @@ all tested here.
 
 ## The jobs, without a process to hold them
 
+A payment the watcher missed — the node refused every log query for an hour, or the process
+was down longer than the public node keeps logs — is credited by hash, with the same rules the
+watcher applies: `sudo bash deploy/install.sh --credit-tx bsc 0x…`. Idempotent.
+
 Five jobs run on a clock: webhook delivery, commission period close, payout change
 application, invoice expiry, and the sweep over transfers parked at shared wallets. Defined
 once in `apps/api/src/jobs.ts`, driven two ways.

@@ -21,6 +21,7 @@ import {
   RECIPIENTS_PER_FILTER,
   addressTopicOrNull,
   inBatches,
+  REGROW_AFTER_POLLS,
   isLogQueryLimitError,
   narrowedRange,
 } from '../transfer-topics.js';
@@ -135,6 +136,8 @@ export class EvmAdapter implements ChainAdapter {
    * that wide, and the watcher retried the same width for as long as it was left running.
    */
   private rangeCap: number;
+  /** Successful polls since the range was last narrowed; the range grows back only after a run of them. */
+  private pollsSinceNarrow = 0;
 
   constructor(
     private readonly config: EvmAdapterConfig,
@@ -251,6 +254,7 @@ export class EvmAdapter implements ChainAdapter {
       if (isLogQueryLimitError(error) && this.rangeCap > narrowedRange(this.rangeCap)) {
         const before = this.rangeCap;
         this.rangeCap = narrowedRange(this.rangeCap);
+        this.pollsSinceNarrow = 0;
         throw new Error(
           `${error instanceof Error ? error.message : String(error)} — the node refused a ` +
             `${to - from + 1}-block query; narrowing from ${before} to ${this.rangeCap} blocks per poll`,
@@ -258,9 +262,18 @@ export class EvmAdapter implements ChainAdapter {
       }
       throw error;
     }
-    // A query that went through means the node can take this much; try a little more.
+    /**
+     * A query that went through means the node can take this much. Growing back at once would
+     * fail every other poll against a node with a fixed limit — halve, double, halve — so the
+     * range doubles only after a run of successes, and the log shows one refusal per step down
+     * rather than a steady beat of them.
+     */
     if (this.rangeCap < this.config.pollRange) {
-      this.rangeCap = Math.min(this.config.pollRange, this.rangeCap * 2);
+      this.pollsSinceNarrow += 1;
+      if (this.pollsSinceNarrow >= REGROW_AFTER_POLLS) {
+        this.pollsSinceNarrow = 0;
+        this.rangeCap = Math.min(this.config.pollRange, this.rangeCap * 2);
+      }
     }
 
     for (const log of logs) {
