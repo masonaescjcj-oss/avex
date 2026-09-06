@@ -6,6 +6,7 @@ import type { Asset, IncomingPayment } from '../types.js';
 import { paymentKey } from '../types.js';
 import {
   DEFAULT_WATCHER,
+  MAX_CREDIT_ATTEMPTS,
   Watcher,
   type BlockRef,
   type BlockSource,
@@ -348,20 +349,64 @@ test('the first poll on an empty state is not mistaken for a reorg', async () =>
   assert.equal(outcome.reorg, null);
 });
 
-test('a transfer that fails to credit does not stall the chain behind it', async () => {
+test('a transfer the sink throws on is shown again, and the cursor waits for it', async () => {
+  /**
+   * The failure this exists for: the database hiccups, or a migration lands a minute after the
+   * code that needs it, and the sink throws on a real transfer. Moving on would lose it — no
+   * payment row, no queue entry, nothing. So the block is held and the transfer re-presented,
+   * and once the sink recovers it is credited as though nothing happened.
+   */
   const chain = new FakeChain(10);
-  const { watcher, state, sink } = build(chain, (poll) =>
-    poll === 0 ? [transfer('0xbad', 8), transfer('0xgood', 9)] : [],
-  );
+  const state = new MemoryState();
+  const sink = new RecordingSink(state);
+  sink.failOn.add('bsc:0xaa:0');
+  const adapter = new ScriptedAdapter(() => [transfer('0xaa', 9)]);
+  const watcher = new Watcher('bsc', adapter, chain, state, sink, {
+    reorgDepth: 3,
+    blockMemory: 8,
+    maxBlocksPerPoll: 100,
+  });
+
+  const first = await watcher.poll();
+  assert.equal(first.credited, 0);
+  assert.equal(first.ignored, 0, 'not given up on');
+  assert.equal(state.cursor, '8', 'held below the failing block');
+
+  sink.failOn.clear();
+  const second = await watcher.poll();
+  assert.equal(second.credited, 1);
+  assert.deepEqual(sink.creditedKeys, ['bsc:0xaa:0']);
+  assert.equal(state.cursor, '9');
+});
+
+test('a transfer that keeps failing is given up on, and does not stall the chain forever', async () => {
+  /**
+   * The other half of the retry: a transfer the sink throws on every time — a poisoned row,
+   * a bug — must not hold the chain's cursor for good. It is shown again for a bounded number
+   * of polls, then logged as given up and left behind; the good transfer beside it is
+   * credited once, on the first pass.
+   */
+  const chain = new FakeChain(10);
+  const { watcher, state, sink } = build(chain, () => [
+    transfer('0xbad', 8),
+    transfer('0xgood', 9),
+  ]);
   sink.failOn.add('bsc:0xbad:0');
 
-  const outcome = await watcher.poll();
-
+  let outcome = await watcher.poll();
   assert.equal(outcome.credited, 1);
-  assert.equal(outcome.ignored, 1);
-  assert.deepEqual(sink.creditedKeys, ['bsc:0xgood:0']);
-  // The cursor still advanced, so one poison transfer cannot block the chain.
-  assert.equal(state.scannedTo, 10);
+  assert.equal(outcome.ignored, 0, 'still being retried');
+  assert.equal(state.cursor, '7', 'held below the failing block');
+
+  for (let attempt = 2; attempt < MAX_CREDIT_ATTEMPTS; attempt++) {
+    outcome = await watcher.poll();
+    assert.equal(outcome.ignored, 0, `attempt ${attempt} is still a retry`);
+  }
+  outcome = await watcher.poll();
+  assert.equal(outcome.ignored, 1, 'given up');
+  assert.deepEqual(sink.creditedKeys, ['bsc:0xgood:0'], 'the good one was credited once');
+  // The cursor is released, so one poison transfer cannot block the chain.
+  assert.equal(state.cursor, '9');
 });
 
 test('the cursor never claims to be ahead of the head', async () => {

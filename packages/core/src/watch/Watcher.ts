@@ -98,7 +98,23 @@ export interface PollOutcome {
   readonly note: string;
 }
 
+/**
+ * How many polls a transfer the sink keeps failing on is shown again before it is given up.
+ *
+ * A failure here is almost always ours and almost always brief — a database that was
+ * restarting, a migration that lands a minute after the code that needs it — and a transfer
+ * dropped in that minute is a payer's money the system has no record of. So a failing credit
+ * holds the cursor like a deferred one, and the transfer is presented again on the next poll.
+ * Bounded, because a transfer that fails forever would otherwise stall the chain behind it;
+ * thirty polls is minutes, long enough for anything that fixes itself, and the last failure is
+ * logged as the giving-up it is.
+ */
+export const MAX_CREDIT_ATTEMPTS = 30;
+
 export class Watcher {
+  /** Transfers the sink has thrown on, and how many times. Cleared on success or surrender. */
+  private readonly creditFailures = new Map<string, number>();
+
   constructor(
     private readonly chain: ChainId,
     private readonly adapter: ChainAdapter,
@@ -160,6 +176,7 @@ export class Watcher {
 
       try {
         const outcome = (await this.sink.credit(payment)) ?? 'credited';
+        this.creditFailures.delete(paymentKey(payment));
         if (outcome === 'deferred') {
           holdBelow =
             holdBelow === null ? payment.blockNumber : Math.min(holdBelow, payment.blockNumber);
@@ -168,12 +185,21 @@ export class Watcher {
         if (outcome === 'credited') credited += 1;
         else ignored += 1;
       } catch (error) {
-        // One bad transfer must not stall the whole chain behind it.
+        const key = paymentKey(payment);
+        const attempts = (this.creditFailures.get(key) ?? 0) + 1;
+        const detail = error instanceof Error ? error.message : String(error);
+        if (attempts < MAX_CREDIT_ATTEMPTS) {
+          // Shown again next poll: the block is held, as for a transfer not yet final.
+          this.creditFailures.set(key, attempts);
+          holdBelow =
+            holdBelow === null ? payment.blockNumber : Math.min(holdBelow, payment.blockNumber);
+          this.log(`${this.chain}: could not credit ${key} (attempt ${attempts}, will retry): ${detail}`);
+          continue;
+        }
+        // One bad transfer must not stall the whole chain behind it forever.
+        this.creditFailures.delete(key);
         ignored += 1;
-        this.log(
-          `${this.chain}: could not credit ${paymentKey(payment)}: ` +
-            (error instanceof Error ? error.message : String(error)),
-        );
+        this.log(`${this.chain}: giving up on ${key} after ${attempts} attempts: ${detail}`);
       }
     }
 
