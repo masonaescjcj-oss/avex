@@ -71,6 +71,20 @@ const OPTIONS = [
     available: true,
     unavailableReason: null,
   },
+  /** Sorts before USDT alphabetically, which is how the API returns it; the page must not. */
+  {
+    assetId: '44444444-4444-4444-8444-444444444444',
+    symbol: 'AAVE',
+    name: 'AAVE',
+    chain: 'bsc',
+    decimals: 18,
+    amount: '100000000000000000',
+    rateUsd: '200000000000000000000',
+    feeIncluded: '0',
+    feeBps: 0,
+    available: true,
+    unavailableReason: null,
+  },
   {
     assetId: '33333333-3333-4333-8333-333333333333',
     symbol: 'WEIRD',
@@ -247,7 +261,8 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
      */
     const { page, context } = await open();
     const coins = await list(page, '#currencies .coin .coin-sym');
-    assert.deepEqual(coins, ['USDT', 'WEIRD']);
+    // USDT first whatever the alphabet says; the rest in the API's order.
+    assert.deepEqual(coins, ['USDT', 'AAVE', 'WEIRD']);
     const weird = page.locator('#currencies .coin:has-text("WEIRD")');
     assert.equal(await weird.getAttribute('aria-disabled'), 'true');
     assert.equal(
@@ -274,7 +289,7 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
     await page.click('#currencies .coin:has-text("USDT")');
 
     const networks = await list(page, '#networks .net-name');
-    assert.deepEqual([...networks].sort(), ['BNB Chain', 'TON']);
+    assert.deepEqual([...networks].sort(), ['BNB Chain (BEP20)', 'TON']);
     await context.close();
   });
 
@@ -554,7 +569,7 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
       { timeout: 5000 },
     );
     assert.equal(await shown(page, '#screen-pay'), true);
-    assert.equal(await text(page, '#chosen-net'), 'USDT on BNB Chain');
+    assert.equal(await text(page, '#chosen-net'), 'USDT on BNB Chain (BEP20)');
     await context.close();
   });
 

@@ -106,7 +106,19 @@ describe('checkout, in a browser', { skip: playwright ? false : 'playwright is n
 
     assert.equal(await shown('#net-step'), true);
     const networks = await list('#networks .net-name');
-    assert.deepEqual(networks, ['TON', 'Solana', 'TRON', 'Ethereum', 'BNB Chain', 'Polygon']);
+    /**
+     * The token standard beside the network's name, on the chains that have one. It is what a
+     * payer's exchange calls the network, and the word that stops a TRC20 withdrawal being sent
+     * to a BNB Chain address.
+     */
+    assert.deepEqual(networks, [
+      'TON',
+      'Solana (SPL)',
+      'TRON (TRC20)',
+      'Ethereum (ERC20)',
+      'BNB Chain (BEP20)',
+      'Polygon',
+    ]);
     // Cheapest first: the option that costs the payer least is read before any other.
     assert.equal(networks[0], 'TON');
   });
@@ -200,8 +212,8 @@ describe('checkout, in a browser', { skip: playwright ? false : 'playwright is n
     assert.equal(await shown('#screen-network'), false);
     assert.equal(await text('#address'), '0x7A3f9C21bE04D5aa71cE3B8Ed4F9021cC6b17E52');
     // Both halves of the choice, restated where the payer is about to act on them.
-    assert.equal(await text('#chosen-net'), 'USDT on BNB Chain');
-    assert.equal(await text('#summary-network'), 'USDT · BNB Chain');
+    assert.equal(await text('#chosen-net'), 'USDT on BNB Chain (BEP20)');
+    assert.equal(await text('#summary-network'), 'USDT · BNB Chain (BEP20)');
     assert.equal(await page.$$eval('#qr svg', (nodes) => nodes.length), 1);
   });
 

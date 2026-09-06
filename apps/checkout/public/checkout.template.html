@@ -1397,7 +1397,16 @@
           ?? 'Not available right now.';
       grouped.push({ ...entry, disabled: usable.length === 0, reason });
     }
-    return grouped;
+    /**
+     * USDT first, always. It is what most payers arrive holding, and the merchant asked for
+     * it at the top rather than wherever the alphabet puts it. The rest keep the API's order,
+     * which is alphabetical; the sort is stable so nothing else moves.
+     */
+    return grouped.sort((left, right) => currencyRank(left.id) - currencyRank(right.id));
+  }
+
+  function currencyRank(symbol) {
+    return symbol === 'USDT' ? 0 : 1;
   }
 
   /** Chain metadata the API does not carry: a label, and how long confirming takes. */
@@ -1415,6 +1424,28 @@
     polygon: 'POL',
     ethereum: 'ETH',
   };
+
+  /**
+   * The token standard a payer's wallet names the network by.
+   *
+   * "USDT on BNB Chain" and "USDT (BEP20)" are the same thing said two ways, and wallets and
+   * exchanges say the second. Showing both beside the network's name is what stops a payer
+   * choosing TRC20 in their exchange for an address on BNB Chain. Only for tokens: the
+   * chain's own coin has no standard, and "BNB (BEP20)" would be a category error.
+   */
+  const TOKEN_STANDARDS = {
+    bsc: 'BEP20',
+    tron: 'TRC20',
+    ethereum: 'ERC20',
+    solana: 'SPL',
+  };
+
+  /** "BNB Chain (BEP20)" for a token there, "BNB Chain" for the chain's own coin. */
+  function networkLabel(chain, base, asset) {
+    const standard = TOKEN_STANDARDS[chain];
+    if (!standard || asset === CHAIN_COINS[chain]) return base;
+    return base + ' (' + standard + ')';
+  }
 
   const CHAIN_LABELS = {
     ton: { label: 'TON', confirm: '~5 sec' },
@@ -1506,7 +1537,11 @@
     if (LIVE) {
       return currencyRow.networks.map((network) => ({
         id: network.chain,
-        label: CHAIN_LABELS[network.chain]?.label ?? network.chain,
+        label: networkLabel(
+          network.chain,
+          CHAIN_LABELS[network.chain]?.label ?? network.chain,
+          network.symbol,
+        ),
         confirm: CHAIN_LABELS[network.chain]?.confirm ?? '',
         // The payer covers the network fee, and the API has already included it.
         cost: 0,
@@ -1541,6 +1576,7 @@
     return currencyRow.networks.map((id) => ({
       id,
       ...CHAINS[id],
+      label: networkLabel(id, CHAINS[id].label, currencyRow.id),
       asset: currencyRow.id,
       amount: amountFor(currencyRow, CHAINS[id]),
       available: true,
