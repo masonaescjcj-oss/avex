@@ -11,6 +11,7 @@ import type {
   SettlementResult,
 } from '../ChainAdapter.js';
 import { isTronAddress, normalizeTronAddress, tronAddressToEvmHex } from './address.js';
+import { RECIPIENTS_PER_FILTER, addressTopicOrNull, inBatches } from '../transfer-topics.js';
 
 /**
  * TRON, for detecting payments. It sends nothing, and that is the design rather than a gap.
@@ -59,6 +60,14 @@ export interface TronAdapterConfig {
 /** Where a transfer's recipient is looked up, to decide whether it is ours. */
 export interface TronAddressBook {
   lookup(address: string): Promise<string | null>;
+  /**
+   * Every address on this chain a transfer to which would be ours, Base58Check as stored.
+   *
+   * The poll names these as the recipient filter rather than asking for every transfer of
+   * every accepted token: TRON answers the second question with "query returned more than
+   * 10000 results" the moment a poll spans more than a few blocks of a busy token.
+   */
+  watched(): Promise<readonly string[]>;
 }
 
 /** Native price, for the gas model. Never consulted during a poll. */
@@ -154,14 +163,34 @@ export class TronAdapter implements ChainAdapter {
     }
     if (byContract.size === 0) return { payments: [], cursor: String(to) };
 
-    const logs = await this.rpc<RpcLog[]>('eth_getLogs', [
-      {
-        fromBlock: `0x${from.toString(16)}`,
-        toBlock: `0x${to.toString(16)}`,
-        address: [...byContract.keys()],
-        topics: [TRANSFER_TOPIC],
-      },
-    ]);
+    /**
+     * Our own addresses, as the third topic of `Transfer`, in the hex form a log carries.
+     *
+     * A wallet the merchant registered is stored Base58Check, which is what they read and
+     * what we show them; the node speaks hex. One unparseable row is skipped rather than
+     * fatal, for the same reason a bad contract is: somebody's typo must not stop the chain.
+     */
+    const recipients: string[] = [];
+    for (const address of await this.addressBook.watched()) {
+      if (!isTronAddress(address)) continue;
+      const topic = addressTopicOrNull(tronAddressToEvmHex(address));
+      if (topic !== null) recipients.push(topic);
+    }
+    if (recipients.length === 0) return { payments: [], cursor: String(to) };
+
+    const logs: RpcLog[] = [];
+    for (const batch of inBatches(recipients, RECIPIENTS_PER_FILTER)) {
+      logs.push(
+        ...(await this.rpc<RpcLog[]>('eth_getLogs', [
+          {
+            fromBlock: `0x${from.toString(16)}`,
+            toBlock: `0x${to.toString(16)}`,
+            address: [...byContract.keys()],
+            topics: [TRANSFER_TOPIC, null, batch],
+          },
+        ])),
+      );
+    }
 
     const payments: IncomingPayment[] = [];
     for (const log of logs) {

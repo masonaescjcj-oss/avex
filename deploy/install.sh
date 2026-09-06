@@ -525,7 +525,9 @@ PROMPT
   info "An endpoint per chain is what turns that chain on. No contracts needed: payments go"
   info "straight into each merchant's own wallet. Leave one blank to leave the chain off."
   ask "BNB Chain JSON-RPC endpoint (blank to skip)" bsc_rpc "https://bsc-dataseed.bnbchain.org"
-  ask "Polygon JSON-RPC endpoint (blank to skip)" polygon_rpc "https://polygon-rpc.com"
+  # `polygon-rpc.com` answers 401 without a key, which the watcher reports as a chain it
+  # cannot see. The publicnode endpoint needs none.
+  ask "Polygon JSON-RPC endpoint (blank to skip)" polygon_rpc "https://polygon-bor-rpc.publicnode.com"
   ask "Ethereum JSON-RPC endpoint (blank to skip)" ethereum_rpc ""
 }
 

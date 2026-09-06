@@ -109,6 +109,8 @@ function adapterWith(options: {
     { nativePriceUsd: async () => 0.3 },
     {
       lookup: async (address) => (known.has(address) ? 'invoice-1' : null),
+      // The poll asks the node about these and nothing else, so the fake has to know them.
+      watched: async () => [...known],
     },
   );
 
@@ -116,6 +118,50 @@ function adapterWith(options: {
 }
 
 describe('watching TRON', () => {
+  test('the node is asked about our own addresses, not about every transfer', async (t) => {
+    /**
+     * The bug this exists for. The poll asked for every `Transfer` of every accepted token,
+     * chain-wide, and TRON answered "query returned more than 10000 results" rather than
+     * answering — so the watcher stopped at its first poll and the chain looked quiet.
+     *
+     * `Transfer(address indexed from, address indexed to, uint256)` indexes the recipient, so
+     * the third topic is the filter. It is asserted here as the hex the node speaks, from the
+     * Base58Check the wallet is stored as: getting that conversion wrong returns an empty list
+     * from a real node, which a test checking only the outcome could not tell from a quiet
+     * chain.
+     */
+    const { adapter, calls, fetchMock } = adapterWith({ head: 100, logs: [] });
+    t.mock.method(globalThis, 'fetch', fetchMock);
+
+    await adapter.poll('90');
+
+    const query = calls.find((call) => call.method === 'eth_getLogs');
+    assert.ok(query, 'no eth_getLogs was sent');
+    const filter = query.params[0] as { topics: unknown[] };
+    assert.equal(filter.topics.length, 3, 'the recipient filter is the third topic');
+    assert.equal(filter.topics[1], null, 'the sender is not filtered');
+    assert.deepEqual(filter.topics[2], [
+      `0x${'0'.repeat(24)}${tronAddressToEvmHex(WALLET).replace(/^0x/, '').toLowerCase()}`,
+    ]);
+  });
+
+  test('with nothing to watch the node is not asked at all', async (t) => {
+    /**
+     * And the cursor still advances. Blocks with no address of ours in them have been looked
+     * at, and a poll that refused to move past them would stall the chain the first time a
+     * merchant had no invoices — while asking the node with no recipient filter would be the
+     * whole-chain query this change exists to avoid.
+     */
+    const { adapter, calls, fetchMock } = adapterWith({ head: 100, logs: [], known: [] });
+    t.mock.method(globalThis, 'fetch', fetchMock);
+
+    const result = await adapter.poll('90');
+
+    assert.deepEqual(result.payments, []);
+    assert.equal(result.cursor, '100');
+    assert.equal(calls.filter((call) => call.method === 'eth_getLogs').length, 0);
+  });
+
   test('a transfer to a watched wallet is found, and reported in Base58Check', async (t) => {
     const { adapter, calls, fetchMock } = adapterWith({
       head: 1000,
@@ -321,7 +367,9 @@ describe('watching TRON', () => {
     const adapter = new TronAdapter(
       { chain: 'tron', rpcUrl: 'https://example.test', acceptedAssets: [USDT], pollRange: 10 },
       { nativePriceUsd: async () => 0.3 },
-      { lookup: async () => null },
+      // A wallet to ask about: with none, the poll has nothing to send and never reaches
+      // the node, which is not the failure this test is about.
+      { lookup: async () => null, watched: async () => [WALLET] },
     );
 
     await assert.rejects(adapter.poll('1'), /rate limited/);

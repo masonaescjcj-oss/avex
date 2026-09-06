@@ -17,6 +17,7 @@ import type {
   SettlementResult,
 } from '../ChainAdapter.js';
 import { chainConfig } from '../registry.js';
+import { RECIPIENTS_PER_FILTER, addressTopicOrNull, inBatches } from '../transfer-topics.js';
 import {
   NO_FEE,
   invoiceSalt,
@@ -42,6 +43,20 @@ export interface PriceOracle {
 /** Maps a deposit address back to the invoice that owns it. */
 export interface AddressBook {
   lookup(address: string): Promise<string | null>;
+  /**
+   * Every address on this chain a transfer to which would be ours.
+   *
+   * The poll asks the node for transfers *to these* rather than for every transfer of the
+   * tokens we accept: the second question is one about the whole chain, and on a busy one a
+   * public node refuses to answer it at all.
+   *
+   * So this list decides what the watcher can see, and it is deliberately every deposit
+   * address ever derived on the chain rather than only the ones with an invoice still open.
+   * Money that arrives late is money that arrived — the payer sent it to an address derived
+   * for their invoice and it cannot be anywhere else — and a filter that had forgotten the
+   * address would leave a real transfer credited to nothing.
+   */
+  watched(): Promise<readonly string[]>;
 }
 
 export interface EvmAdapterConfig {
@@ -163,14 +178,32 @@ export class EvmAdapter implements ChainAdapter {
     }
     if (byContract.size === 0) return { payments: [], cursor: String(to) };
 
-    const logs = await this.rpc<RpcLog[]>('eth_getLogs', [
-      {
-        fromBlock: `0x${from.toString(16)}`,
-        toBlock: `0x${to.toString(16)}`,
-        address: [...byContract.keys()],
-        topics: [TRANSFER_TOPIC],
-      },
-    ]);
+    /**
+     * Our own addresses, as the third topic of `Transfer`.
+     *
+     * Nothing to watch means nothing to ask: the cursor still advances, because blocks with
+     * no invoice of ours in them are blocks that have been looked at. Asking without this
+     * filter — which is what this did — requests every transfer of every accepted token on
+     * the chain, and BNB Chain answers "limit exceeded" instead of answering.
+     */
+    const recipients = (await this.addressBook.watched())
+      .map((address) => addressTopicOrNull(address))
+      .filter((topic): topic is string => topic !== null);
+    if (recipients.length === 0) return { payments: [], cursor: String(to) };
+
+    const logs: RpcLog[] = [];
+    for (const batch of inBatches(recipients, RECIPIENTS_PER_FILTER)) {
+      logs.push(
+        ...(await this.rpc<RpcLog[]>('eth_getLogs', [
+          {
+            fromBlock: `0x${from.toString(16)}`,
+            toBlock: `0x${to.toString(16)}`,
+            address: [...byContract.keys()],
+            topics: [TRANSFER_TOPIC, null, batch],
+          },
+        ])),
+      );
+    }
 
     for (const log of logs) {
       /**

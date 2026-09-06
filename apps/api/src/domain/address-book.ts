@@ -80,4 +80,31 @@ export class DatabaseAddressBook {
     this.hits.set(key, row.id);
     return row.id;
   }
+
+  /**
+   * Every deposit address on this chain, so the poll can ask about ours and nobody else's.
+   *
+   * Asked on every poll and answered from the database every time, deliberately. The set
+   * changes whenever an invoice is created — which is exactly when a new address has to be
+   * watched — and a cache here would be a cache whose staleness costs a payment.
+   *
+   * `distinct` is what keeps this small in the shape that matters. A merchant's own wallet
+   * is reused by every invoice on it, so a pooled chain collapses to the number of wallets:
+   * ten per chain at the most. Forwarder invoices each derive their own address, so a busy
+   * EVM chain grows this list one row per invoice, and the poll then asks in batches of a
+   * hundred. If that ever becomes the bottleneck, the answer is not a cap here — silently
+   * forgetting an address means a real transfer credited to nothing — but a narrower
+   * question: the addresses that could still receive, plus a slower sweep for late money.
+   *
+   * No filter on status, for the same reason `lookup` has none.
+   */
+  async watched(): Promise<readonly string[]> {
+    const rows = await this.db
+      .selectDistinct({ address: invoices.depositAddress })
+      .from(invoices)
+      .where(eq(invoices.chain, this.chain));
+    return rows
+      .map((row) => row.address)
+      .filter((address): address is string => typeof address === 'string' && address.length > 0);
+  }
 }
