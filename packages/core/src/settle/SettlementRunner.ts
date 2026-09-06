@@ -133,6 +133,16 @@ export interface Alert {
     | 'watcher_failing'
     | 'price_feed_suspended';
   readonly detail: string;
+  /**
+   * True when this says the condition has ended.
+   *
+   * The kind stays the condition — that is what the throttle is keyed on, and "the watcher is
+   * failing" and "the watcher is failing no longer" are one thing somebody needs to know
+   * about. But whatever logs these was writing `alert: watcher_failing` above the words "tron
+   * is polling successfully again", which is a line an operator reads as the opposite of what
+   * happened. So the recovery says so, and the log can say it too.
+   */
+  readonly resolved?: boolean;
 }
 
 interface SpendEntry {

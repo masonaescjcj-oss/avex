@@ -52,7 +52,17 @@ export class AlertForwarder {
    */
   async forward(alerts: readonly Alert[], now: number = Date.now()): Promise<void> {
     for (const alert of alerts) {
-      this.log(`alert: ${alert.kind}`, { severity: alert.severity, detail: alert.detail });
+      /**
+       * A cleared condition says so in the line, not only in the detail.
+       *
+       * This wrote `alert: watcher_failing` above "tron is polling successfully again" — the
+       * name of the condition over the news that it had ended. An operator scanning a journal
+       * reads the first four words, and those four words said the opposite.
+       */
+      this.log(`${alert.resolved === true ? 'alert cleared' : 'alert'}: ${alert.kind}`, {
+        severity: alert.severity,
+        detail: alert.detail,
+      });
 
       if (alert.severity !== 'critical') continue;
       if (this.to === undefined) continue;

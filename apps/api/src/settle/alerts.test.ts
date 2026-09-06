@@ -161,3 +161,30 @@ describe('forwarding settlement alerts', () => {
     assert.equal(mailer.sent.length, 1);
   });
 });
+
+test('a cleared condition is logged as cleared, not as the condition', async () => {
+  /**
+   * The line an operator actually reads. This wrote `alert: watcher_failing` above the words
+   * "tron is polling successfully again" — the name of the condition over the news that it had
+   * ended — and somebody scanning a journal reads the first four words.
+   *
+   * The kind stays the condition, because that is what the email throttle is keyed on and
+   * because the failing and the recovery are one thing to know about.
+   */
+  const lines: { message: string; data: unknown }[] = [];
+  const forwarder = new AlertForwarder(
+    { async sendOperatorAlert() {} } as unknown as Mailer,
+    undefined,
+    (message, data) => lines.push({ message, data }),
+  );
+
+  await forwarder.forward([
+    { severity: 'critical', kind: 'watcher_failing', detail: 'bsc has failed 5 polls in a row' },
+    { severity: 'warning', kind: 'watcher_failing', resolved: true, detail: 'bsc is polling successfully again' },
+  ]);
+
+  assert.deepEqual(
+    lines.map((line) => line.message),
+    ['alert: watcher_failing', 'alert cleared: watcher_failing'],
+  );
+});

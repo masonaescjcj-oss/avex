@@ -93,6 +93,7 @@ export class WatchHealth {
       return {
         severity: 'warning',
         kind: 'watcher_failing',
+        resolved: true,
         detail: `${chain} is polling successfully again`,
       };
     }
@@ -104,6 +105,7 @@ export class WatchHealth {
         ? {
             severity: 'warning',
             kind: 'watcher_stalled',
+            resolved: true,
             detail: `${chain} is advancing again, now at block ${scannedTo}`,
           }
         : null;

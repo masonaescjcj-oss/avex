@@ -126,7 +126,12 @@ export class GasWatch {
     if (previous !== undefined && previous < this.thresholds.criticalSettlements) {
       return {
         alerts: [
-          { severity: 'warning', kind: 'low_gas_balance', detail: `${detail} — recovered` },
+          {
+            severity: 'warning',
+            kind: 'low_gas_balance',
+            resolved: true,
+            detail: `${detail} — recovered`,
+          },
         ],
         reading,
       };

@@ -65,6 +65,9 @@ describe('watching the watcher', () => {
     assert.ok(recovered);
     assert.equal(recovered.severity, 'warning', 'good news is not critical');
     assert.match(recovered.detail, /advancing again, now at block 140/);
+    // Named as the condition, marked as ended: the log line reads "alert cleared" from this.
+    assert.equal(recovered.kind, 'watcher_stalled');
+    assert.equal(recovered.resolved, true);
 
     // And it is quiet again from there.
     assert.equal(health.observed('bsc', 180, STALL_AFTER_MS + 120_000), null);
@@ -117,6 +120,8 @@ describe('watching the watcher', () => {
     assert.ok(recovered);
     assert.equal(recovered.kind, 'watcher_failing');
     assert.match(recovered.detail, /polling successfully again/);
+    assert.equal(recovered.kind, 'watcher_failing');
+    assert.equal(recovered.resolved, true);
   });
 
   test('a suspended price feed is reported once, and so is its recovery', async () => {
