@@ -2790,11 +2790,29 @@
 
   function renderAssets() {
     const rows = cache.assets || [];
+    const support = cache.chains || { offered: null, forwarders: null };
+    const sweepable = (chain) => support.forwarders === null || support.forwarders.includes(chain);
+
+    /**
+     * Where the money would go, counting both kinds of destination.
+     *
+     * This read payout addresses only, which is how a merchant with wallets of their own on
+     * four chains was told on every one of them to add a wallet. A wallet is a destination in
+     * its own right — it is the whole point of the pool. A payout address is one only where we
+     * have forwarders to sweep into it, which is the same rule the checkout applies.
+     */
+    const walletChains = new Set(
+      (((cache.wallets || {}).wallets) || [])
+        .filter((wallet) => !wallet.retiredAt)
+        .map((wallet) => wallet.chain),
+    );
     const payoutChains = new Set(
       ((cache.payouts || {}).active || [])
         .filter((row) => !row.supersededAt)
+        .filter((row) => sweepable(row.chain))
         .map((row) => row.chain),
     );
+    const hasDestination = (chain) => walletChains.has(chain) || payoutChains.has(chain);
 
     if (rows.length === 0) {
       fill(el('asset-groups'), [
@@ -2811,7 +2829,7 @@
      */
     const withStance = rows.map((asset) => ({
       ...asset,
-      stance: assetStance(asset, payoutChains.has(asset.chain)),
+      stance: assetStance(asset, hasDestination(asset.chain)),
     }));
 
     fill(
@@ -2820,10 +2838,23 @@
         (group) => [
           h('div', { class: 'group-head' }, [
             h('span', { class: 'group-chain', text: group.chain }),
-            payoutChains.has(group.chain)
-              ? h('span', { class: 'pill', 'data-tone': 'good', text: 'payout address set' })
-              : h('span', { class: 'pill', 'data-tone': 'warn', text: 'no payout address' }),
+            /**
+             * The chain first, the destination second.
+             *
+             * A chain this build has no endpoint for cannot be offered to a payer whatever the
+             * merchant does about wallets, so saying "no payout address" there would send them
+             * to fix the wrong thing. `offered` is null on an older API, and then nothing is
+             * claimed either way.
+             */
+            support.offered !== null && !support.offered.includes(group.chain)
+              ? h('span', { class: 'pill', 'data-tone': 'bad', text: 'not on this server' })
+              : hasDestination(group.chain)
+                ? h('span', { class: 'pill', 'data-tone': 'good', text: 'somewhere to land' })
+                : h('span', { class: 'pill', 'data-tone': 'warn', text: 'no wallet or payout address' }),
           ]),
+          support.offered !== null && !support.offered.includes(group.chain)
+            ? h('p', { class: 'note', text: 'This server has no endpoint for ' + group.chain + ', so the checkout cannot offer it and a payment on it could not be credited. Set EVM_RPC_URLS for it in api.env and restart.' })
+            : null,
           ...group.assets.map((asset) => assetRow(asset)),
         ],
       ),
@@ -2978,6 +3009,27 @@
   }
 
   /**
+   * Which chains this deployment can offer at all, as the currency endpoint reports them.
+   *
+   * A currency can be approved, enabled, and pointed at a wallet of the merchant's own and
+   * still never reach a payer: the checkout only offers a chain this build has an endpoint
+   * for, because a payment it cannot watch is one it could never credit. The page used to
+   * have no way of knowing that, so it said "Needs a wallet" to somebody who had added four.
+   *
+   * An older API sends no `chains`, and then nothing here claims a chain is missing.
+   */
+  function chainSupport(response) {
+    const offered = response?.chains?.offered;
+    const forwarders = response?.chains?.forwarders;
+    return {
+      offered: Array.isArray(offered) ? offered : null,
+      // Null, not empty: an API that does not say which chains have forwarders has not said
+      // that none do, and reading it as none would disqualify every payout address there is.
+      forwarders: Array.isArray(forwarders) ? forwarders : null,
+    };
+  }
+
+  /**
    * The payout endpoint's two lists, as it actually returns them.
    *
    * `GET /payout-addresses` answers `{ active, pending }`. This page used to read
@@ -2999,12 +3051,22 @@
 
   async function reloadAssets() {
     const base = '/v1/organizations/' + orgId;
-    const [assets, payouts] = await Promise.all([
+    /**
+     * The wallets too, because the currency rows are read against them.
+     *
+     * A merchant who opens this tab first has none of the overview's answers cached, and
+     * without this every chain would claim there was nowhere for the money to land — which
+     * is exactly the wrong sentence to show somebody who has already added four wallets.
+     */
+    const [assets, payouts, wallets] = await Promise.all([
       api(base + '/assets'),
       api(base + '/payout-addresses'),
+      api(base + '/deposit-wallets'),
     ]);
     cache.assets = assetList(assets);
+    cache.chains = chainSupport(assets);
     cache.payouts = payoutLists(payouts);
+    cache.wallets = wallets;
     renderAssets();
   }
 
@@ -3045,10 +3107,29 @@
 
   // ── payouts ───────────────────────────────────────────────────────────────
 
+  /**
+   * A chain to choose, and whether choosing it would be any use.
+   *
+   * A chain this build has no endpoint for is left in the list and disabled, with the reason
+   * on it. Removing it would leave a merchant hunting for a chain their currency list clearly
+   * has; leaving it selectable is how somebody came to register wallets on four chains and
+   * then found the checkout offering one — every one of them accepted, none of them served.
+   */
+  function chainOptions() {
+    const offered = (cache.chains || {}).offered;
+    return [...new Set((cache.assets || []).map((asset) => asset.chain))].sort().map((chain) => {
+      const served = offered === null || offered === undefined || offered.includes(chain);
+      return h('option', {
+        value: chain,
+        disabled: !served,
+        text: served ? chain : chain + ' — not on this server',
+      });
+    });
+  }
+
   function renderPayouts() {
     const { active, pending } = cache.payouts || { active: [], pending: [] };
-    const chains = [...new Set((cache.assets || []).map((asset) => asset.chain))].sort();
-    fill(el('payout-chain'), chains.map((chain) => h('option', { value: chain, text: chain })));
+    fill(el('payout-chain'), chainOptions());
 
     if (active.length === 0 && pending.length === 0) {
       fill(el('payout-list'), [h('p', { class: 'empty', text: 'No payout addresses yet. Add one per chain you accept.' })]);
@@ -3128,7 +3209,7 @@
     }
     panel.hidden = false;
 
-    fill(el('wallet-chain'), chains.map((chain) => h('option', { value: chain, text: chain })));
+    fill(el('wallet-chain'), chainOptions());
 
     const wallets = data.wallets || [];
     const pending = data.pending || [];
@@ -4128,7 +4209,10 @@
           ['me', '/v1/auth/me', (body) => body],
           ['commission', base + '/commission', (body) => body],
           ['report', base + '/reports/volume', (body) => body],
-          ['assets', base + '/assets', assetList],
+          ['assets', base + '/assets', (body) => {
+            cache.chains = chainSupport(body);
+            return assetList(body);
+          }],
           ['payouts', base + '/payout-addresses', payoutLists],
           // For the checklist too: a wallet of the merchant's own is somewhere for money to land.
           ['wallets', base + '/deposit-wallets', (body) => body],

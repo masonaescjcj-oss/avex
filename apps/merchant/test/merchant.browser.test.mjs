@@ -131,6 +131,15 @@ const FIXTURE = {
       // TRON, so the wallet pool has a chain to be about. It is the only pooled one today.
       { id: 'a4', symbol: 'USDT', chain: 'tron', contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', decimals: 6, kind: 'trc20', curated: true, verdict: 'approved', listed: true, requiresFixedRate: false, enabled: true, pricingMode: 'fiat', fixedRateValidUntil: null },
     ],
+    /**
+     * What the deployment can offer, which the endpoint sends beside the list.
+     *
+     * TON is here as a currency and absent from `offered`, which is the real arrangement:
+     * the asset exists, and this build has no adapter that could credit a payment on it. BSC
+     * has our forwarders, so a payout address is a destination there; TRON does not, so on
+     * TRON only a wallet of the merchant's own counts.
+     */
+    chains: { offered: ['bsc', 'tron'], forwarders: ['bsc'] },
   },
   /**
    * `{ active, pending }` — the shape `GET /payout-addresses` actually returns.
@@ -1519,18 +1528,36 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
-  test('each chain says whether it has a payout address', async () => {
+  test('each chain says whether the money has anywhere to land, and whether we serve it', async () => {
     /**
      * The page a merchant opens when an invoice was refused, so the answer belongs here
-     * rather than only in the checklist — and per chain, because that is what a payout
-     * address is per.
+     * rather than only in the checklist — and per chain, because that is what a destination
+     * is per.
+     *
+     * Three distinct answers, and the bug that made this test worth widening: a merchant with
+     * their own wallet on TRON was told to add a wallet, because the header counted payout
+     * addresses only. A wallet is a destination in its own right. A payout address is one
+     * where our forwarders sweep into it, which is BSC in the fixture and not TRON. And a
+     * chain this build has no endpoint for — TON — cannot be offered at all, whatever the
+     * merchant does about either.
      */
     const { page, context } = await open();
     await openTab(page, 'Currencies');
     await page.waitForTimeout(200);
-    const body = await text(page, '#asset-groups');
-    assert.match(body, /payout address set/);
-    assert.match(body, /no payout address/);
+    const groups = await page.$$eval('#asset-groups .group-head', (heads) =>
+      heads.map((head) => ({
+        chain: head.querySelector('.group-chain').textContent.trim(),
+        pill: head.querySelector('.pill').textContent.trim(),
+      })),
+    );
+    const pillFor = (chain) => groups.find((group) => group.chain === chain)?.pill;
+    // BSC: a payout address, and forwarders to sweep it there.
+    assert.equal(pillFor('bsc'), 'somewhere to land');
+    // TRON: no payout address, but the merchant's own wallet, which is the whole point of it.
+    assert.equal(pillFor('tron'), 'somewhere to land');
+    // TON: not a chain this build can credit, so nothing about wallets would help.
+    assert.equal(pillFor('ton'), 'not on this server');
+    assert.match(await text(page, '#asset-groups'), /This server has no endpoint for ton/);
     await context.close();
   });
 

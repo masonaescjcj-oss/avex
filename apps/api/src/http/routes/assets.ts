@@ -3,6 +3,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { AssetConfigError } from '../../domain/asset-service.js';
+import { depositAddressConfig } from '../../domain/deposit-address-config.js';
+import { DepositAddressDeriver } from '../../domain/deposit-address.js';
 import {
   UnauthenticatedError,
   requireOrganizationAccess,
@@ -32,6 +34,22 @@ const configureBody = z.object({
 });
 
 export function registerAssetRoutes(app: FastifyInstance, context: AppContext): void {
+  /**
+   * What this deployment can offer at all, from the same configuration the checkout filters by.
+   *
+   * Built once, here, because it is configuration rather than per-request state. It is sent
+   * with the currency list so the dashboard can tell a merchant the truth: an asset can be
+   * approved, enabled and pointed at a wallet of theirs and still never reach a payer, because
+   * this build has no endpoint for its chain and so could not credit a payment on it. Without
+   * this the page could only guess, and it guessed "Needs a wallet" at somebody who had one.
+   */
+  const deriver = new DepositAddressDeriver(depositAddressConfig(context.env), context.env.MEMO_SECRET);
+  const chains = {
+    offered: deriver.supportedChains(),
+    /** Where a payout address is a destination on its own — the chains with our contracts. */
+    forwarders: deriver.forwarderChains(),
+  };
+
   app.get('/v1/organizations/:orgId/assets', async (request, reply) => {
     const { orgId } = orgParams.parse(request.params);
     if (!request.principal) throw new UnauthenticatedError();
@@ -39,7 +57,7 @@ export function registerAssetRoutes(app: FastifyInstance, context: AppContext): 
     const access = await requireOrganizationAccess(context.db, request.principal, orgId);
     requirePermission(access, 'asset:read');
 
-    return reply.send({ data: await context.assets.listForMerchant(orgId) });
+    return reply.send({ data: await context.assets.listForMerchant(orgId), chains });
   });
 
   /**

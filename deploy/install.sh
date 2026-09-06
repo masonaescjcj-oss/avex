@@ -513,6 +513,20 @@ PROMPT
   fi
   ask "The public domain of the static pages" app_url "https://avexpay.net"
   ask "TRON JSON-RPC endpoint (blank to skip TRON)" tron_rpc "https://api.trongrid.io/jsonrpc"
+
+  # One endpoint per chain you want to take money on.
+  #
+  # This asked for TRON and nothing else, which quietly made TRON the only chain any merchant
+  # could be offered — somebody who registered wallets on BNB Chain, Ethereum and Polygon saw
+  # them accepted and then found the checkout offering one network. An endpoint is the whole
+  # requirement: no contract of ours has to be deployed for a merchant's own wallet to take
+  # payments, but a chain this build cannot watch is one it could never credit, so a chain
+  # without one is not offered at all.
+  info "An endpoint per chain is what turns that chain on. No contracts needed: payments go"
+  info "straight into each merchant's own wallet. Leave one blank to leave the chain off."
+  ask "BNB Chain JSON-RPC endpoint (blank to skip)" bsc_rpc "https://bsc-dataseed.bnbchain.org"
+  ask "Polygon JSON-RPC endpoint (blank to skip)" polygon_rpc "https://polygon-rpc.com"
+  ask "Ethereum JSON-RPC endpoint (blank to skip)" ethereum_rpc ""
 }
 
 # Single-quote a value for the environment file.
@@ -552,8 +566,12 @@ optional_line() {
 }
 
 write_env_file() {
-  local rpc_urls='' memo_secret
-  [[ -n $tron_rpc ]] && rpc_urls="tron=$tron_rpc"
+  local rpc_urls='' memo_secret entry
+  for entry in "tron=$tron_rpc" "bsc=$bsc_rpc" "polygon=$polygon_rpc" "ethereum=$ethereum_rpc"; do
+    # `chain=` with nothing after it is a chain left off, not a chain with an empty endpoint.
+    [[ ${entry#*=} ]] || continue
+    rpc_urls="${rpc_urls:+$rpc_urls,}$entry"
+  done
   memo_secret=$(openssl rand -hex 24)
 
   umask 077
