@@ -1308,7 +1308,14 @@
     const response = await fetch(API + path, {
       ...options,
       headers: {
-        'content-type': 'application/json',
+        /**
+         * Only when there is a body. Fastify refuses an *empty* body that claims to be JSON
+         * — `FST_ERR_CTP_EMPTY_JSON_BODY` — and this helper used to send that header on
+         * every request. So every bodiless POST this page makes (enrolling an authenticator,
+         * signing out, replaying a webhook) was a 400 the server reported as a 500, and the
+         * one a merchant met first read "Something went wrong on our side".
+         */
+        ...(options?.body !== undefined ? { 'content-type': 'application/json' } : {}),
         ...(token ? { authorization: 'Bearer ' + token } : {}),
         ...(options?.headers ?? {}),
       },

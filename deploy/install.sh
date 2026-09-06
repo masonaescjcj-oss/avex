@@ -1375,6 +1375,21 @@ report() {
   [[ -n $health ]] || health='no answer — the API is not listening on this port'
   line "health on :$API_PORT" "$(printf '%s' "$health" | head -c 200)"
 
+  # The one comparison the whole report exists for, made explicitly rather than left to the
+  # reader: the commit on disk against the commit the running process reports. A run of this
+  # script that stopped before the restart — at a prompt, at a failed migration — leaves new
+  # code beside an old process, and the two lines above look fine on their own.
+  local running stamped
+  running=$(printf '%s' "$health" | sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p')
+  stamped=$(sed -n 's/^commit=//p' "$CONF_DIR/build" 2>/dev/null || true)
+  if [[ -n $running && -n $stamped && $running != "$stamped" ]]; then
+    warn "the running API is $running but the code on disk is $stamped."
+    warn "It was built and not restarted. Run:  sudo systemctl restart avex-api avex-watcher"
+  elif [[ -n $stamped && -z $running && $health != no* ]]; then
+    warn "the running API reports no build, so it predates the code on disk. Restart it:"
+    warn "  sudo systemctl restart avex-api avex-watcher"
+  fi
+
   step "Database"
   if [[ ! -f $ENV_FILE ]]; then
     warn "$ENV_FILE does not exist, so there is nothing to check against."

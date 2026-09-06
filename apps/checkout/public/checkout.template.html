@@ -1276,7 +1276,11 @@
   async function getJson(url, options) {
     const response = await fetch(url, {
       ...options,
-      headers: { 'content-type': 'application/json', ...(options?.headers ?? {}) },
+      headers: {
+        // Only with a body: Fastify refuses an empty body that claims to be JSON.
+        ...(options?.body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...(options?.headers ?? {}),
+      },
       // Never send credentials: this endpoint takes none, and asking for them would
       // require the API to relax its CORS policy for no gain.
       credentials: 'omit',

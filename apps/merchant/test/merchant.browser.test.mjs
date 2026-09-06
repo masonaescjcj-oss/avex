@@ -281,7 +281,11 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         );
       }
       if (method === 'POST' && path.endsWith('/v1/auth/totp/enroll')) {
-        posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
+        posts.push({
+          path,
+          body: JSON.parse(route.request().postData() ?? '{}'),
+          contentType: route.request().headers()['content-type'] ?? null,
+        });
         return route.fulfill(overrides.enroll ?? json(ENROLLMENT));
       }
       if (method === 'POST' && path.endsWith('/v1/auth/totp/confirm')) {
@@ -1923,10 +1927,14 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       { timeout: 5000 },
     );
 
-    assert.ok(
-      posts.some((post) => post.path.endsWith('/v1/auth/totp/enroll')),
-      'the page must ask the API for the secret',
-    );
+    const enroll = posts.find((post) => post.path.endsWith('/v1/auth/totp/enroll'));
+    assert.ok(enroll, 'the page must ask the API for the secret');
+    /**
+     * And ask without claiming a JSON body it does not have. The helper used to send
+     * `content-type: application/json` on every request; Fastify refuses an empty body
+     * under that header, and every bodiless POST this page makes was a 500 in production.
+     */
+    assert.equal(enroll.contentType, null, 'a bodiless POST must not claim a JSON body');
 
     const qr = await page.$eval('#totp-qr', (node) => ({
       svgs: node.querySelectorAll('svg').length,

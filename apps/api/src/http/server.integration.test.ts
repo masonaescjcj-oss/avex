@@ -571,6 +571,23 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     assert.equal(response.json().error, 'mfa_required');
   });
 
+  test('an empty body that claims to be JSON is a 400, not a 500', async () => {
+    /**
+     * Found on the live server, by its request id. The dashboard sent
+     * `content-type: application/json` on every request, body or none, and Fastify refuses
+     * an empty JSON body with a 400 — which this handler did not recognise and reported as
+     * "Something went wrong on our side". Two requests were wrong; only one was ours.
+     */
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/totp/enroll',
+      headers: { ...asOwner(), 'content-type': 'application/json' },
+    });
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal(response.json().error, 'bad_request');
+    assert.match(response.json().message, /empty/i);
+  });
+
   test('replacing the authenticator takes the authenticator being replaced', async () => {
     /**
      * The session here is signed in with two-factor on and the factor not yet proven —

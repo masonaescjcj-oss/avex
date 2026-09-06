@@ -537,6 +537,26 @@ export function buildServer(context: AppContext): FastifyInstance {
      * per-process counter — and it is the difference between a five-minute diagnosis and
      * an afternoon of guessing which request failed.
      */
+    /**
+     * Fastify's own refusals carry the status they mean, and used to lose it here.
+     *
+     * A body that is empty while claiming to be JSON, a payload over the limit, an
+     * unsupported media type — Fastify raises each as an error with `statusCode` in the
+     * 400s. None of them is an instance of anything this handler knew, so they fell
+     * through to the 500 below: a client sending the wrong header was told something had
+     * gone wrong on our side, and the log filled with "unhandled error" for requests that
+     * were handled exactly right. The dashboard did precisely this on every bodiless POST.
+     */
+    const status = (error as { statusCode?: unknown }).statusCode;
+    if (typeof status === 'number' && status >= 400 && status < 500) {
+      const raised = error as { message?: unknown; code?: unknown };
+      return reply.status(status).send({
+        error: 'bad_request',
+        message: typeof raised.message === 'string' ? raised.message : 'Bad request.',
+        code: raised.code,
+      });
+    }
+
     request.log.error({ err: error }, 'unhandled error');
     return reply.status(500).send({
       error: 'internal_error',
