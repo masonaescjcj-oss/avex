@@ -376,15 +376,19 @@ export class InvoiceCreationService {
     const networkFeeBps = fee?.networkFeeBps ?? 0;
     const charged = applyFeePayer(quote.amountDue, surchargeBps(fee), feePayer, networkFeeBps);
     /**
-     * What the payer is asked for, rounded up to three decimals.
+     * What the payer is asked for, rounded up to the token's grid: three decimals, or up to
+     * five on a token dear enough that a thousandth is real money.
      *
      * `charged.amountDue` is exact to the token's own precision — eighteen decimals on most EVM
      * tokens — and that is not a number a person types or checks. Up, so the merchant is never
      * short by the rounding; the fraction of a cent goes to them. On a pooled wallet the
-     * disambiguator is added on top of this figure, so it too stays within three decimals. See
-     * `amount-grid` in `@avex/core` for the rule and its cost on dear tokens.
+     * disambiguator is added on top of this figure, on the same grid. See `amount-grid` in
+     * `@avex/core` for the rule.
      */
-    const asked = ceilToGrid(charged.amountDue, config.asset.decimals);
+    const unitPriceUsd = quote.effectiveRate
+      ? Number(quote.effectiveRate.priceScaled) / Number(RATE_SCALE)
+      : null;
+    const asked = ceilToGrid(charged.amountDue, config.asset.decimals, unitPriceUsd);
     /** Whether the *commission* was grossed onto the payer, which the network fee no longer implies. */
     const commissionPassedOn: FeePayer =
       feePayer === 'payer' && surchargeBps(fee) > 0 ? 'payer' : 'merchant';
@@ -546,9 +550,7 @@ export class InvoiceCreationService {
              * cents on a stablecoin, something worth about a cent on anything dearer. Null on
              * a token-priced invoice, where the allocator falls back to the token's own scale.
              */
-            unitPriceUsd: quote.effectiveRate
-              ? Number(quote.effectiveRate.priceScaled) / Number(RATE_SCALE)
-              : null,
+            unitPriceUsd,
           });
           const [row] = await tx
             .insert(invoices)

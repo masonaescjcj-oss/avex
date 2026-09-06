@@ -1,4 +1,4 @@
-import { MAX_AMOUNT_DECIMALS, amountGrid, ceilToGrid } from '@avex/core';
+import { amountGrid, ceilToGrid, gridDecimals } from '@avex/core';
 
 /**
  * Which wallet an invoice gets, and what exact amount identifies it.
@@ -58,13 +58,14 @@ export class WalletPoolError extends Error {
  *
  * ## The shape a payer can type
  *
- * Every amount a payer is asked for has at most three decimals — that rule lives in
- * `@avex/core`'s `amount-grid`, and it applies to every currency on every chain. The nudge that
- * tells one invoice from another on a shared wallet therefore lives in the third decimal: a $20
- * order is issued as 20.001, the next one at that price on the same wallet as 20.002, and so on.
- * The payer is asked for a tenth of a cent more than the price. There are 999 such steps before
- * a wallet runs out of amounts for one price, which at a hundred wallets per chain is not a
- * limit anybody reaches.
+ * Every amount a payer is asked for has three decimals, or up to five on a token dear enough
+ * that a thousandth is real money — that rule lives in `@avex/core`'s `amount-grid`, and it
+ * applies to every currency on every chain. The nudge that tells one invoice from another on a
+ * shared wallet therefore lives in the last of those decimals: a $20 order in USDT is issued as
+ * 20.001, the next one at that price on the same wallet as 20.002, and so on; in BNB the step
+ * is 0.00001. The payer is asked for under a dime more than the price on any token. There are
+ * 999 such steps before a wallet runs out of amounts for one price, which at a hundred wallets
+ * per chain is not a limit anybody reaches.
  *
  * ## Why the smallest free step, not a random one
  *
@@ -76,23 +77,24 @@ export class WalletPoolError extends Error {
  *
  * ## Tokens too dear for the rule
  *
- * A thousandth of a token worth $600 is sixty cents, which a payer can be asked for. A
- * thousandth of one worth $60,000 is sixty dollars, which they cannot. `MAX_TICK_USD` is where
- * that line is drawn, and a token above it is refused on pooled wallets rather than issued
- * with a surcharge nobody agreed to.
+ * The grid stops at five decimals, and a hundred-thousandth of a token worth half a million
+ * dollars is five dollars — which a payer cannot be asked to round up by. `MAX_TICK_USD` is
+ * where that line is drawn, and a token above it is refused on pooled wallets rather than
+ * issued with a surcharge nobody agreed to. No listed token is near it; the check exists so
+ * that one never quietly becomes so.
  */
 export interface DisambiguatorPlan {
-  /** One step, in smallest units: the third decimal place. Every offset is a multiple. */
+  /** One step, in smallest units: the last decimal place issued. Every offset is a multiple. */
   readonly unit: bigint;
   /** Offsets available, as multiples of `unit`: 1 to this. */
   readonly ticks: number;
   /** The largest amount that can be added, in smallest units. */
   readonly max: bigint;
-  /** Decimal places the amount is issued with. Always `MAX_AMOUNT_DECIMALS`. */
+  /** Decimal places the amount is issued with: three, up to five on a dear token. */
   readonly decimals: number;
 }
 
-/** Steps available for one price on one wallet: 0.001 to 0.999 of a token. */
+/** Steps available for one price on one wallet: 1 to 999 of the last decimal issued. */
 export const DISAMBIGUATOR_TICKS = 999;
 
 /**
@@ -121,8 +123,9 @@ export function disambiguatorPlan(input: {
   }
 
   const price = input.unitPriceUsd;
+  const decimals = gridDecimals(input.decimals, price);
   if (price !== undefined && price !== null && Number.isFinite(price) && price > 0) {
-    const stepUsd = price / 10 ** Math.min(input.decimals, MAX_AMOUNT_DECIMALS);
+    const stepUsd = price / 10 ** decimals;
     if (stepUsd > MAX_TICK_USD) {
       throw new WalletPoolError(
         'tick_too_dear',
@@ -133,12 +136,12 @@ export function disambiguatorPlan(input: {
     }
   }
 
-  const unit = amountGrid(input.decimals);
+  const unit = amountGrid(input.decimals, price);
   return {
     unit,
     ticks: DISAMBIGUATOR_TICKS,
     max: unit * BigInt(DISAMBIGUATOR_TICKS),
-    decimals: Math.min(input.decimals, MAX_AMOUNT_DECIMALS),
+    decimals,
   };
 }
 
@@ -195,9 +198,9 @@ export function chooseWallet(pool: readonly WalletLoad[]): WalletLoad {
  * The exact amount this invoice will ask for.
  *
  * `base` is what the merchant charged, in smallest units and at the token's full precision.
- * It is first rounded up to three decimals, then a step is added. The return value is always
- * strictly greater than `base`, always has at most three decimals, and never equals an amount
- * another invoice on the same wallet is still waiting for or was recently paid with.
+ * It is first rounded up to the token's grid, then a step is added. The return value is always
+ * strictly greater than `base`, always has at most the grid's decimals, and never equals an
+ * amount another invoice on the same wallet is still waiting for or was recently paid with.
  *
  * Two properties are deliberate and worth stating, because both are load-bearing:
  *
@@ -216,7 +219,7 @@ export function chooseAmount(input: {
   readonly unitPriceUsd?: number | null | undefined;
 }): bigint {
   const plan = disambiguatorPlan(input);
-  const base = ceilToGrid(input.base, input.decimals);
+  const base = ceilToGrid(input.base, input.decimals, input.unitPriceUsd);
 
   /**
    * Only the collisions that could actually happen are considered.

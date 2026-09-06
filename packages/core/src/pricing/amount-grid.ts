@@ -4,48 +4,77 @@
  * A checkout that says "send 25.253529057985269131 USDC" is asking for a number nobody can
  * type, check, or read back over the phone, and on a shared address a mistyped amount is a
  * payment that cannot be attributed. So every amount a payer is asked for — quoted on the
- * checkout, written on the invoice — is rounded *up* to three decimal places, whatever the
- * token's own precision. Up, never down: rounding an amount owed downwards would leave every
- * invoice a fraction short, and the merchant is the one who would be short.
+ * checkout, written on the invoice — is rounded *up* to a small number of decimal places,
+ * whatever the token's own precision. Up, never down: rounding an amount owed downwards would
+ * leave every invoice a fraction short, and the merchant is the one who would be short.
  *
- * Three rather than two because the disambiguator on a pooled wallet needs a digit of its own
- * beneath the cents: a $20 order becomes 20.001, 20.002, … rather than 20.01, 20.02, and the
- * payer is asked for a tenth of a cent more than the price instead of a whole one.
+ * ## How many decimals
  *
- * The cost of the rule, stated plainly because it is the merchant's to weigh: on a token worth
- * hundreds of dollars a thousandth is not a rounding. A thousandth of BNB at $600 is sixty
- * cents; of ETH at $3,000 it is three dollars. The rounding goes to the merchant — it lands in
- * their wallet — so nobody is short, but a payer on such a token is asked for up to one
- * thousandth more than the price. Tokens dear enough for that to be a real surcharge are
- * refused on pooled wallets by `wallet-pool-allocator`, which is where that limit is written.
+ * Three on a stablecoin and on anything cheap. Three rather than two because the disambiguator
+ * on a pooled wallet needs a digit of its own beneath the cents: a $20 order becomes 20.001,
+ * 20.002, … rather than 20.01, 20.02, and the payer is asked for a tenth of a cent more than
+ * the price instead of a whole one.
+ *
+ * More on a dear token, up to five. A thousandth of BNB at $600 is sixty cents and a
+ * thousandth of ETH is three dollars — not a rounding but a surcharge — so the grid is chosen
+ * from the token's dollar price: the fewest decimals, from three to five, at which one step is
+ * worth no more than `MAX_STEP_USD`. BNB and ETH land on five, where a step is under a dime.
+ * Without a price — a token-priced invoice — three is used, which is right for the
+ * stablecoins that are nearly all such invoices.
+ *
+ * Tokens so dear that even the fifth decimal is a real surcharge are refused on pooled
+ * wallets by `wallet-pool-allocator`, which is where that limit is written. At five decimals
+ * that takes a token worth more than half a million dollars.
  */
 
-export const MAX_AMOUNT_DECIMALS = 3;
+/** The grid on a stablecoin, and the fewest decimals ever used. */
+export const MIN_AMOUNT_DECIMALS = 3;
+/** The most decimals a payer is ever asked to type, however dear the token. */
+export const MAX_AMOUNT_DECIMALS = 5;
+/** The most one step of the grid should be worth; decides how many decimals a dear token gets. */
+export const MAX_STEP_USD = 0.05;
 
 /**
- * One step of the three-decimal grid, in the token's smallest units.
+ * How many decimals amounts in this token are issued with, from its price.
  *
- * On a six-decimal token that is 1,000 units; on an eighteen-decimal one 10^15. A token with
- * three or fewer decimals is already on the grid, so its step is one unit.
+ * Never more than the token itself has: a two-decimal token is asked for in its own units.
  */
-export function amountGrid(decimals: number): bigint {
+export function gridDecimals(decimals: number, unitPriceUsd?: number | null | undefined): number {
   if (!Number.isInteger(decimals) || decimals < 0) {
     throw new Error(`decimals must be a non-negative integer, got ${decimals}`);
   }
-  return 10n ** BigInt(Math.max(0, decimals - MAX_AMOUNT_DECIMALS));
+  let places = MIN_AMOUNT_DECIMALS;
+  if (unitPriceUsd !== undefined && unitPriceUsd !== null && Number.isFinite(unitPriceUsd) && unitPriceUsd > 0) {
+    while (places < MAX_AMOUNT_DECIMALS && unitPriceUsd / 10 ** places > MAX_STEP_USD) places += 1;
+  }
+  return Math.min(decimals, places);
+}
+
+/**
+ * One step of the grid, in the token's smallest units.
+ *
+ * On a six-decimal stablecoin that is 1,000 units; on eighteen-decimal ETH 10^13. A token with
+ * no more decimals than the grid is already on it, so its step is one unit.
+ */
+export function amountGrid(decimals: number, unitPriceUsd?: number | null | undefined): bigint {
+  return 10n ** BigInt(decimals - gridDecimals(decimals, unitPriceUsd));
 }
 
 /** The smallest multiple of the grid that is not below `amount`. Zero stays zero. */
-export function ceilToGrid(amount: bigint, decimals: number): bigint {
+export function ceilToGrid(
+  amount: bigint,
+  decimals: number,
+  unitPriceUsd?: number | null | undefined,
+): bigint {
   if (amount < 0n) throw new Error('an amount owed cannot be negative');
-  const grid = amountGrid(decimals);
+  const grid = amountGrid(decimals, unitPriceUsd);
   const remainder = amount % grid;
   return remainder === 0n ? amount : amount + (grid - remainder);
 }
 
-/** Whether an amount already sits on the grid, i.e. has at most three decimals. */
-export function isOnGrid(amount: bigint, decimals: number): boolean {
-  return amount % amountGrid(decimals) === 0n;
+/** Whether an amount already sits on the grid for its token. */
+export function isOnGrid(amount: bigint, decimals: number, unitPriceUsd?: number | null | undefined): boolean {
+  return amount % amountGrid(decimals, unitPriceUsd) === 0n;
 }
 
 /**

@@ -88,10 +88,10 @@ no settlement, on any chain.
 The rules that make amount-matching survive what section 3 warns about are written out
 in `apps/api/src/domain/pooled-matching.ts`, and every scenario is a test. In short:
 
-- **Every asked amount has at most three decimals**, on every currency and network
-  (`@avex/core` `amount-grid`). The disambiguator lives in the third decimal: 20.001,
-  20.002, … A payer is asked for a tenth of a cent more than the price on a stablecoin.
-  Tokens so dear that a thousandth is real money (over $5) are refused on shared wallets.
+- **Every asked amount has three decimals, or up to five on a dear token** — the fewest at
+  which one step is worth no more than five cents, so BNB and ETH get five (`@avex/core`
+  `amount-grid`). The disambiguator lives in the last decimal: 20.001, 20.002, … in USDT;
+  0.50001 in ETH. A payer is asked for under a dime more than the price on any token.
 - **Idle wallets first, quietest first.** With a hundred wallets and three-hour invoices,
   nearly every invoice has a wallet to itself — and on a wallet with one open invoice a
   wrong amount, or the wrong stablecoin, is still credited: there is nothing else it could

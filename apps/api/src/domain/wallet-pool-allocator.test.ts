@@ -87,10 +87,10 @@ describe('choosing a wallet', () => {
 });
 
 describe('where the nudge goes, for one token', () => {
-  test('the step is the third decimal, on every token', () => {
+  test('the step is the third decimal on a stablecoin', () => {
     /**
-     * The whole reason the plan exists: a payer is never asked for more than three decimals,
-     * so the nudge that tells invoices apart lives in the last of them. On USDT that is a tenth
+     * The whole reason the plan exists: a payer is never asked for more than three decimals of
+     * a stablecoin, so the nudge that tells invoices apart lives in the last of them — a tenth
      * of a cent; 999 of them before a wallet runs out of amounts for one price.
      */
     const usdt = disambiguatorPlan({ decimals: 6, unitPriceUsd: 1 });
@@ -98,12 +98,21 @@ describe('where the nudge goes, for one token', () => {
     assert.equal(usdt.decimals, 3);
     assert.equal(usdt.ticks, DISAMBIGUATOR_TICKS);
     assert.equal(usdt.max, 999_000n, 'at most 0.999 added');
-
-    const bnbLike = disambiguatorPlan({ decimals: 18, unitPriceUsd: 600 });
-    assert.equal(bnbLike.unit, 10n ** 15n, '0.001 of an 18-decimal token');
   });
 
-  test('with no price the plan is the same: the grid does not depend on it', () => {
+  test('a dear token is nudged in its fifth decimal, so a step is under a dime', () => {
+    /**
+     * The merchant's rule. Three decimals of BNB would make every step sixty cents; five make
+     * it six tenths of a cent. The grid comes from the price, not from a list of tickers.
+     */
+    const bnb = disambiguatorPlan({ decimals: 18, unitPriceUsd: 600 });
+    assert.equal(bnb.decimals, 5);
+    assert.equal(bnb.unit, 10n ** 13n, '0.00001 of an 18-decimal token');
+    const eth = disambiguatorPlan({ decimals: 18, unitPriceUsd: 3_000 });
+    assert.equal(eth.decimals, 5);
+  });
+
+  test('with no price the grid is three decimals', () => {
     assert.equal(disambiguatorPlan({ decimals: 6 }).unit, 1_000n);
     assert.equal(disambiguatorPlan({ decimals: 18, unitPriceUsd: null }).unit, 10n ** 15n);
   });
@@ -135,16 +144,18 @@ describe('where the nudge goes, for one token', () => {
     }
   });
 
-  test('a token so dear that one step is real money is refused', () => {
+  test('a token so dear that even the fifth decimal is real money is refused', () => {
     /**
-     * A thousandth of ETH at $3,000 is three dollars: steep, but under the line, and the merchant
-     * chose three decimals knowing it. A thousandth of a $60,000 token is sixty dollars, which
-     * is not a rounding anybody agreed to — so that token cannot be paid into a shared wallet.
+     * At five decimals a $60,000 token steps in sixty cents, which is fine. A token worth a
+     * million dollars would step in ten — not a rounding anybody agreed to — so that token
+     * cannot be paid into a shared wallet. Nothing listed is near this; the line exists so that
+     * nothing quietly crosses it.
      */
     assert.equal(MAX_TICK_USD, 5);
     assert.doesNotThrow(() => disambiguatorPlan({ decimals: 18, unitPriceUsd: 3_000 }));
+    assert.doesNotThrow(() => disambiguatorPlan({ decimals: 8, unitPriceUsd: 60_000 }));
     assert.throws(
-      () => disambiguatorPlan({ decimals: 8, unitPriceUsd: 60_000 }),
+      () => disambiguatorPlan({ decimals: 8, unitPriceUsd: 1_000_000 }),
       (error: unknown) => {
         assert.ok(error instanceof WalletPoolError);
         assert.equal(error.code, 'tick_too_dear');
@@ -263,12 +274,12 @@ describe('choosing the amount that identifies an invoice', () => {
     assert.equal(b, 20_003_000n, 'the next free step above 20.002');
   });
 
-  test('the same rule on a dear token costs the payer one step', () => {
-    // 0.5 ETH at $3000, in wei. One thousandth added, and no more: $3.
+  test('the same rule on a dear token costs the payer one step of the fifth decimal', () => {
+    // 0.5 ETH at $3000, in wei. One hundred-thousandth added, and no more: three cents.
     const base = 5n * 10n ** 17n;
     const amount = chooseAmount({ base, decimals: 18, unitPriceUsd: 3000, taken: [] });
-    assert.equal(amount, base + 10n ** 15n);
+    assert.equal(amount, base + 10n ** 13n, '0.50001 ETH');
     const addedUsd = (Number(amount - base) / 1e18) * 3000;
-    assert.ok(addedUsd > 2.9 && addedUsd < 3.1, `added $${addedUsd}`);
+    assert.ok(addedUsd > 0.029 && addedUsd < 0.031, `added $${addedUsd}`);
   });
 });

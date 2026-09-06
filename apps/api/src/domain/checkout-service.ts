@@ -492,13 +492,18 @@ export class CheckoutService {
         chain: entry.chain,
         decimals: entry.decimals,
         /**
-         * Rounded up to three decimals, as the invoice will be.
+         * Rounded up to the token's grid — three decimals, up to five on a dear one — as the
+         * invoice will be.
          *
          * The figure the payer compares against the invoice a moment later. Invoice creation
          * applies the same rounding to the same input, so the two agree to the digit — except
          * for the disambiguator a shared wallet adds, which the page explains as such.
          */
-        amount: ceilToGrid(charged.amountDue, entry.decimals).toString(),
+        amount: ceilToGrid(
+          charged.amountDue,
+          entry.decimals,
+          rate === null ? null : Number(rate) / 1e18,
+        ).toString(),
         // The surcharge, not the whole commission: when the merchant absorbs it there is
         // nothing here for the payer to be told about.
         feeIncluded: disclosed.commission.toString(),
