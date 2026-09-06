@@ -905,6 +905,25 @@
   .foot-end a { color: var(--muted); }
   .foot-end a:hover { color: var(--ink); }
 
+  /* Three states, one of which is "whatever the device says" — the default, and the only
+     one that keeps following the device when it changes at sunset. */
+  .seg { display: flex; gap: 2px; padding: 2px; border-radius: var(--r-md); background: var(--surface-3); }
+  .seg button {
+    min-height: 1.875rem; padding: 0 var(--sp-3);
+    border: 0; border-radius: calc(var(--r-md) - 3px);
+    background: transparent; color: var(--muted);
+    font: inherit; font-size: var(--s-2); font-weight: 550; cursor: pointer;
+    transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  }
+  .seg button:hover { color: var(--ink); }
+  .seg button[aria-pressed="true"] {
+    background: var(--surface); color: var(--ink); font-weight: 650;
+    /* The token, not a hand-mixed rgba: it is the one shadow that also inverts in the dark
+       theme, which is the whole reason the site refuses a literal colour here. */
+    box-shadow: var(--shadow-1);
+  }
+  .seg button:focus-visible { outline: none; box-shadow: var(--focus); }
+
   /* ── motion ───────────────────────────────────────────────────────────── */
 
   /* The hero rises once on load; everything below fades in as it enters the viewport. */
@@ -1633,6 +1652,15 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
   </div>
   <div class="wrap foot-end">
     <span>AVEX Pay · Non-custodial payments infrastructure</span>
+    <!--
+      Appearance. The page follows the device by default; this is for the reader whose
+      device says one thing and who wants the other.
+    -->
+    <div class="seg" id="theme-seg" role="group" aria-label="Appearance">
+      <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+      <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+    </div>
     <span><a href="#main">Back to top</a></span>
   </div>
 </footer>
@@ -1649,6 +1677,57 @@ expected = hmac.new(secret, signed.encode(), hashlib.sha256).hexdigest()
 (() => {
   'use strict';
   document.documentElement.classList.add('js');
+
+  /**
+   * Light, dark, or the device's own answer.
+   *
+   * `tokens.css` answers to `data-theme` on the root and, with nothing set, to
+   * `prefers-color-scheme` — so this only writes the attribute. The choice is stored under
+   * the same key the dashboard uses, on the same origin, so a reader who picks light here
+   * gets light there.
+   *
+   * In the chrome script rather than the main one: the main script inlines four of the
+   * product's modules and a name collision between them takes that whole script down. A
+   * page stuck in the wrong theme is not as bad as a page with no menu, but it is the kind
+   * of thing that should not depend on unrelated code parsing.
+   */
+  const THEME_KEY = 'avex-theme';
+  const THEME_IDS = ['system', 'light', 'dark'];
+  const themeSeg = document.getElementById('theme-seg');
+
+  const showTheme = (choice) => {
+    if (choice === 'system') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = choice;
+    if (themeSeg) {
+      for (const button of themeSeg.querySelectorAll('button')) {
+        button.setAttribute('aria-pressed', String(button.dataset.themeChoice === choice));
+      }
+    }
+  };
+
+  let stored = 'system';
+  try {
+    const found = localStorage.getItem(THEME_KEY);
+    if (THEME_IDS.includes(found)) stored = found;
+  } catch {
+    // Private browsing, or storage switched off. The device's preference is the default.
+  }
+  showTheme(stored);
+
+  if (themeSeg) {
+    themeSeg.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-theme-choice]');
+      if (!button) return;
+      const choice = button.dataset.themeChoice;
+      showTheme(choice);
+      try {
+        if (choice === 'system') localStorage.removeItem(THEME_KEY);
+        else localStorage.setItem(THEME_KEY, choice);
+      } catch {
+        // The page changes either way; only remembering it fails.
+      }
+    });
+  }
 
   const bar = document.querySelector('.bar');
   const toggle = bar.querySelector('.nav-toggle');

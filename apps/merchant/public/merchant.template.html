@@ -129,6 +129,42 @@
   nav.tabs button[aria-current="page"] { background: var(--accent-soft); color: var(--ink); font-weight: 600; }
   nav.tabs button[aria-current="page"] svg { color: var(--accent); }
   .tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* The bar's shorter word for a section. Hidden everywhere the full name fits. */
+  .tab-short { display: none; }
+
+  /*
+    The appearance choice and the way out, in the same list as the sections.
+
+    Pushed to the bottom of the sidebar by the nav's own `flex: 1`, which is why they are
+    inside the nav rather than beside it: one list, one order, one place a phone's sheet has
+    to find them.
+  */
+  .tab-extra { margin-top: auto; padding: var(--sp-3) var(--sp-3) var(--sp-2); }
+  /* Only where the sidebar's own account block is not on screen. */
+  .tab-acct { display: none; }
+  .tab-extra-label {
+    display: block; font-size: var(--s-2); font-weight: 650; color: var(--faint);
+    letter-spacing: var(--tracking-caps); text-transform: uppercase; margin-bottom: var(--sp-2);
+  }
+  .seg { display: flex; gap: 2px; padding: 2px; border-radius: var(--r-md); background: var(--surface-3); }
+  .seg button {
+    flex: 1 1 0; min-width: 0; min-height: 1.875rem;
+    border: 0; border-radius: calc(var(--r-md) - 3px);
+    background: transparent; color: var(--muted);
+    font: inherit; font-size: var(--s-2); font-weight: 550; cursor: pointer;
+    transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  }
+  .seg button:hover { color: var(--ink); }
+  .seg button[aria-pressed="true"] {
+    background: var(--surface); color: var(--ink); font-weight: 650;
+    /* The token, not a hand-mixed rgba: it is the one shadow that also inverts in the dark
+       theme, which is the whole reason the site refuses a literal colour here. */
+    box-shadow: var(--shadow-1);
+  }
+  .seg button:focus-visible { outline: none; box-shadow: var(--focus); }
+  /* The way out reads as an action, not as a section: no icon, and it says what it does. */
+  nav.tabs button.tab-out { color: var(--danger); font-weight: 600; }
+  nav.tabs button.tab-out:hover { background: var(--danger-soft); color: var(--danger); }
 
   /* "More" exists only for the bottom bar. */
   .more { display: none; }
@@ -799,14 +835,20 @@
     .shell { display: block; }
     /* The strip scrolls away on a phone: four lines of it pinned to the top would be most of the screen. */
     .banner.strip { position: static; font-size: var(--s-2); }
+    /*
+      No header.
+
+      It carried the mark, the account's name and the way out — and on the account's own
+      dashboard none of the three earns 56px of a phone screen every time you scroll. The
+      name is on the sheet behind "More" with the way out; the mark is on the sign-in card
+      and in the tab. What is left of `.side` is a container for two fixed children, so it
+      takes no space and paints nothing.
+    */
     .side {
-      top: 0; height: var(--topbar-h);
-      flex-direction: row; align-items: center; justify-content: space-between; gap: var(--sp-3);
-      padding: 0 var(--sp-4);
-      border-right: 0; border-bottom: 1px solid var(--line);
+      position: static; height: 0; padding: 0; gap: 0; overflow: visible;
+      background: none; border-right: 0; border-bottom: 0;
     }
-    .side .brand { padding: 0; font-size: var(--s0); }
-    .brand-mark { width: 1.75rem; height: 1.75rem; }
+    .side .brand { display: none; }
 
     /* The bar. Four sections in four fifths of it; the fifth column belongs to "More". */
     nav.tabs {
@@ -827,8 +869,12 @@
     nav.tabs button[aria-current="page"] { background: transparent; color: var(--accent); }
     nav.tabs button[aria-current="page"] svg { color: var(--accent); }
     .tab-label { white-space: normal; overflow: visible; }
-    /* The six that do not fit are in the sheet, which grows out of the bar when it is open. */
-    nav.tabs button[data-dock="sheet"] { display: none; }
+    /* In the bar, the short word wins where a section has one. The button says which it
+       has, rather than the stylesheet inferring it from the order of two spans. */
+    nav.tabs button[data-dock="bar"][data-short] .tab-short { display: inline; }
+    nav.tabs button[data-dock="bar"][data-short] .tab-label { display: none; }
+    /* The six that do not fit, and the two that are not sections, are in the sheet. */
+    nav.tabs button[data-dock="sheet"], nav.tabs .tab-extra[data-dock="sheet"] { display: none; }
     nav.tabs[data-sheet="open"] button[data-dock="sheet"] {
       display: flex; flex-direction: row; justify-content: flex-start; gap: var(--sp-4);
       grid-column: 1 / -1; order: -1;
@@ -837,6 +883,29 @@
       border-bottom: 1px solid var(--line);
     }
     nav.tabs[data-sheet="open"] button[data-dock="sheet"][aria-current="page"] { background: var(--accent-soft); color: var(--ink); }
+    /* The appearance choice, laid out like the rows above it. */
+    nav.tabs[data-sheet="open"] .tab-extra[data-dock="sheet"] {
+      display: block; grid-column: 1 / -1; order: -1;
+      margin: 0; padding: var(--sp-3) var(--sp-5);
+      border-bottom: 1px solid var(--line);
+    }
+    nav.tabs[data-sheet="open"] .seg button { min-height: var(--control); font-size: var(--s-1); }
+    nav.tabs[data-sheet="open"] .tab-acct {
+      display: grid; grid-template-columns: 2.25rem minmax(0, 1fr); align-items: center;
+      column-gap: var(--sp-3); margin-bottom: var(--sp-4); min-width: 0;
+    }
+    nav.tabs[data-sheet="open"] .tab-acct::before {
+      content: attr(data-initial);
+      width: 2.25rem; height: 2.25rem; border-radius: 50%;
+      display: grid; place-items: center;
+      background: var(--accent-soft); color: var(--accent);
+      font-weight: 700; font-size: var(--s0);
+    }
+    .tab-acct-org { font-size: var(--s0); font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tab-acct-mail { font-size: var(--s-2); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* The sidebar's account block has no room here, and no reason to be: the sheet says it. */
+    .whoami { display: none; }
     nav.tabs[data-sheet="open"] { box-shadow: var(--shadow-3); border-top-left-radius: var(--r-lg); border-top-right-radius: var(--r-lg); }
     nav.tabs[data-sheet="open"] button[data-dock="sheet"]:first-of-type { border-top-left-radius: var(--r-lg); border-top-right-radius: var(--r-lg); }
     nav.tabs[data-sheet="open"] button[data-dock="bar"] { border-top: 1px solid var(--line-strong); }
@@ -856,25 +925,6 @@
     nav.tabs[data-sheet="open"] ~ .more { border-top-color: var(--line-strong); }
     /* Beneath the header, which holds the bar and the sheet: the header is its own stacking context. */
     .backdrop { position: fixed; inset: 0; z-index: 19; background: rgba(15, 17, 20, 0.45); }
-
-    /*
-      The top bar is the identity row: the mark, whose account this is, whether it is live,
-      and the way out. The wordmark goes — "AVEX Pay" beside the mark, on the account's own
-      dashboard, is the one thing on that row nobody needs told.
-    */
-    .side .brand-text { display: none; }
-    .whoami { display: flex; align-items: center; gap: var(--sp-2); padding: 0; border-top: 0; min-width: 0; flex: 1 1 auto; }
-    .whoami::before { display: none; }
-    .whoami > span { flex: 0 1 auto; font-size: var(--s0); color: var(--ink); max-width: 11rem; }
-    /*
-      No live/test pill beside the name, though the design sketches one: an organisation has
-      no mode. Keys do, and the page already says which of those exist on the checklist —
-      a green "live" chip here would be claiming a state nothing in the API reports.
-    */
-    .whoami code { display: none; }
-    .whoami button.ghost { margin-left: auto; }
-    .whoami code { display: none; }
-    .whoami button.ghost { margin: 0; width: auto; min-height: var(--control); padding: 0 var(--sp-3); font-size: var(--s-2); }
 
     .main { padding: var(--sp-5) var(--sp-4) calc(var(--dock-h) + var(--sp-10)); }
     .page-head { margin-bottom: var(--sp-5); }
@@ -1007,7 +1057,6 @@
     <div class="whoami" id="whoami" data-initial="" hidden>
       <span id="whoami-org"></span>
       <code id="whoami-mode"></code>
-      <button class="ghost" type="button" id="sign-out">Sign out</button>
     </div>
   </aside>
   <div class="backdrop" id="tabs-backdrop" hidden></div>
@@ -2001,7 +2050,14 @@
     }
   }
 
-  el('sign-out').addEventListener('click', async () => {
+  /**
+   * Named rather than inline, because the button that calls it is drawn by `renderTabs`.
+   *
+   * The way out belongs with the sections now: on a phone the header is gone, so it lives
+   * in the sheet behind "More" alongside them, and on a desktop it is the last row of the
+   * sidebar. Either way there is one of it, wherever the sections are.
+   */
+  async function signOut() {
     try {
       await api('/v1/auth/logout', { method: 'POST' });
     } catch {
@@ -2016,7 +2072,7 @@
     // Somebody who signed out wants to sign back in, not to make a second account.
     mode = 'signin';
     renderAuthMode();
-  });
+  }
 
   // ── tabs ──────────────────────────────────────────────────────────────────
 
@@ -2075,22 +2131,127 @@
     return svg;
   }
 
+  /**
+   * Light, dark, or whatever the device says.
+   *
+   * `tokens.css` already answers to `data-theme` on the root and, with nothing set, to the
+   * system preference — so the control's whole job is to write that attribute. The choice
+   * is kept in `localStorage`, which this page otherwise refuses to touch: the session
+   * token stays in memory because a token in storage survives an XSS, and a preference
+   * about colour is not a credential.
+   */
+  const THEMES = [
+    ['system', 'System'],
+    ['light', 'Light'],
+    ['dark', 'Dark'],
+  ];
+  const THEME_KEY = 'avex-theme';
+
+  function readTheme() {
+    try {
+      const stored = localStorage.getItem(THEME_KEY);
+      return THEMES.some(([id]) => id === stored) ? stored : 'system';
+    } catch {
+      // Private browsing, or storage switched off. The system preference is the default
+      // anyway, so there is nothing to recover from.
+      return 'system';
+    }
+  }
+
+  let theme = readTheme();
+
+  function setTheme(choice) {
+    theme = choice;
+    if (choice === 'system') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = choice;
+    try {
+      if (choice === 'system') localStorage.removeItem(THEME_KEY);
+      else localStorage.setItem(THEME_KEY, choice);
+    } catch {
+      // The attribute is set either way; only remembering it fails.
+    }
+  }
+
+  /**
+   * Writing the attribute is separate from redrawing the control.
+   *
+   * The stored choice is applied the moment the script runs, which is before the tab list
+   * exists — calling the renderer there reached `current` and `orgName` in their temporal
+   * dead zone and took the whole page's script down with a ReferenceError, so the sign-in
+   * form never got its listener. The control redraws only when somebody presses it.
+   */
+  function applyTheme(choice) {
+    setTheme(choice);
+    renderTabs();
+  }
+
+  setTheme(theme);
+
   let current = 'overview';
+
+  /**
+   * The bottom bar has room for a word, not a phrase.
+   *
+   * "Take a payment" is the section's name and stays that in the sidebar and in the sheet,
+   * where there is room for it. In the bar it is "New" — both spans are in the document and
+   * the stylesheet picks one, because CSS cannot rewrite text and two renderers would drift.
+   */
+  const SHORT = { new: 'New' };
 
   function renderTabs() {
     const nav = el('tabs');
-    fill(
-      nav,
-      VIEWS.map(([id, label]) =>
+    fill(nav, [
+      ...VIEWS.map(([id, label]) =>
         h('button', {
           type: 'button',
           'data-view': id,
           'data-dock': DOCK.has(id) ? 'bar' : 'sheet',
+          'data-short': SHORT[id] ? 'true' : null,
           'aria-current': id === current ? 'page' : null,
           onclick: () => show(id),
-        }, [icon(id), h('span', { class: 'tab-label', text: label })]),
+        }, [
+          icon(id),
+          h('span', { class: 'tab-label', text: label }),
+          SHORT[id] ? h('span', { class: 'tab-short', text: SHORT[id] }) : null,
+        ]),
       ),
-    );
+      // Not sections, so not in the bar: the appearance choice and the way out sit with the
+      // sections in the sheet on a phone, and at the foot of the sidebar on a desktop.
+      h('div', { class: 'tab-extra', 'data-dock': 'sheet' }, [
+        /**
+         * Whose account this is, in the sheet, because the phone header that used to say it
+         * is gone. Drawn here and hidden on a desktop, where the sidebar's own account block
+         * is still on screen — one of it, wherever it is.
+         */
+        h('div', { class: 'tab-acct', 'data-initial': (orgName.trim().charAt(0) || '?').toUpperCase() }, [
+          h('div', {}, [
+            h('div', { class: 'tab-acct-org', text: orgName || 'Your account' }),
+            myEmail ? h('div', { class: 'tab-acct-mail', text: myEmail }) : null,
+          ]),
+        ]),
+        h('span', { class: 'tab-extra-label', text: 'Appearance' }),
+        h('div', { class: 'seg', role: 'group', 'aria-label': 'Appearance' },
+          THEMES.map(([id, label]) =>
+            h('button', {
+              type: 'button',
+              'data-theme-choice': id,
+              'aria-pressed': String(id === theme),
+              text: label,
+              onclick: () => applyTheme(id),
+            }),
+          ),
+        ),
+      ]),
+      h('button', {
+        type: 'button',
+        class: 'tab-out',
+        id: 'sign-out',
+        'data-dock': 'sheet',
+        onclick: () => void signOut(),
+      }, [
+        h('span', { class: 'tab-label', text: 'Sign out' }),
+      ]),
+    ]);
     // "More" lights up when the open section is one of the ones behind it.
     el('tabs-more').dataset.active = String(!DOCK.has(current));
   }
@@ -2360,7 +2521,7 @@
    * renamed one cannot leave a shortcut pointing at a view that no longer exists.
    */
   const SHORTCUTS = [
-    ['new', 'Take payment'],
+    ['new', 'New'],
     ['payouts', 'Wallets'],
     ['keys', 'API keys'],
     ['security', 'Security'],

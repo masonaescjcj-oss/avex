@@ -2444,10 +2444,21 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
     const bar = await page.$eval('nav.tabs', (nav) => {
       const box = nav.getBoundingClientRect();
-      const buttons = [...nav.querySelectorAll('button')].map((button) => ({
-        label: button.textContent.trim(),
-        box: button.getBoundingClientRect(),
-      }));
+      /**
+       * Sections are the buttons that name a view. The list also holds the appearance
+       * choice and the way out, which are not sections and are not in the bar — and each
+       * section button carries two labels, the full name and the short word the bar shows,
+       * so the label read here is the one actually drawn.
+       */
+      const buttons = [...nav.querySelectorAll('button[data-view]')].map((button) => {
+        const spans = [...button.querySelectorAll('span')].filter(
+          (span) => span.getBoundingClientRect().width > 0,
+        );
+        return {
+          label: (spans[0] ?? button).textContent.trim(),
+          box: button.getBoundingClientRect(),
+        };
+      });
       const visible = buttons.filter(({ box }) => box.height > 0);
       return {
         left: box.left, right: box.right, top: box.top, bottom: box.bottom, height: box.height,
@@ -2462,7 +2473,8 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.ok(Math.abs(bar.bottom - bar.viewport.height) <= 1, `the bar ends at ${bar.bottom}px in a ${bar.viewport.height}px viewport`);
     assert.ok(bar.left <= 1 && bar.right >= bar.viewport.width - 1, 'the bar spans the screen');
     assert.ok(bar.height >= 48 && bar.height <= 100, `a bar, not a sheet: ${bar.height}px tall`);
-    assert.deepEqual(bar.visible, ['Overview', 'Take a payment', 'Invoices', 'Payouts']);
+    // "New" in the bar, "Take a payment" everywhere there is room for the section's name.
+    assert.deepEqual(bar.visible, ['Overview', 'New', 'Invoices', 'Payouts']);
     assert.equal(bar.rows, 1, 'one row');
     assert.ok(bar.heights.every((height) => height >= 44), `tap targets: ${bar.heights.join(', ')}`);
     assert.deepEqual(bar.hidden, ['Currencies', 'Webhooks', 'API keys', 'Team', 'Security', 'Commission']);
@@ -2472,7 +2484,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     // The sheet: the six appear above the bar, inside the viewport, and go away once one is chosen.
     await page.click('#tabs-more');
     await page.waitForTimeout(120);
-    const sheet = await page.$$eval('nav.tabs button', (buttons) =>
+    const sheet = await page.$$eval('nav.tabs button[data-view]', (buttons) =>
       buttons
         .map((button) => ({ label: button.textContent.trim(), box: button.getBoundingClientRect() }))
         .filter(({ box }) => box.height > 0)
@@ -2486,11 +2498,25 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.equal(await shown(page, 'nav.tabs button:has-text("Team")'), false, 'choosing a section closes the sheet');
     assert.equal(await shown(page, '#tabs-backdrop'), false);
 
-    // And all ten, by their labels, the way a thumb reaches them.
+    /**
+     * And all ten, by their labels, the way a thumb reaches them.
+     *
+     * The open one is read by the label actually drawn, not by `textContent`: a section with
+     * a short word for the bar carries both, so the whole text node reads
+     * "Take a paymentNew" and says nothing about what is on screen.
+     */
+    const drawnLabel = (page) =>
+      page.$eval('nav.tabs button[aria-current="page"]', (button) => {
+        const spans = [...button.querySelectorAll('span')].filter(
+          (span) => span.getBoundingClientRect().width > 0,
+        );
+        return (spans[0] ?? button).textContent.trim();
+      });
+    const IN_BAR = { 'Take a payment': 'New' };
     for (const label of EVERY_TAB) {
       await openTab(page, label);
       await page.waitForTimeout(120);
-      assert.equal(await text(page, 'nav.tabs button[aria-current="page"]'), label);
+      assert.equal(await drawnLabel(page), IN_BAR[label] ?? label);
     }
     assert.equal(await shown(page, '#view-commission'), true);
     await context.close();
@@ -2506,13 +2532,15 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       const { page, context } = await open({ viewport: { width, height: 800 } });
       const side = await page.$eval('nav.tabs', (nav) => {
         const box = nav.getBoundingClientRect();
-        const buttons = [...nav.querySelectorAll('button')].map((button) => button.getBoundingClientRect());
+        // Sections only: the appearance choice and the way out share the list but are not
+        // sections, and counting them here would say the sidebar has fourteen of them.
+        const buttons = [...nav.querySelectorAll('button[data-view]')].map((button) => button.getBoundingClientRect());
         return {
           left: box.left, right: box.right, top: box.top,
           visible: buttons.filter((button) => button.height > 0).length,
           columns: new Set(buttons.map((button) => Math.round(button.left))).size,
           rows: new Set(buttons.map((button) => Math.round(button.top))).size,
-          labelled: [...nav.querySelectorAll('button')].every((button) => {
+          labelled: [...nav.querySelectorAll('button[data-view]')].every((button) => {
             const label = button.querySelector('.tab-label') ?? button;
             return label.getBoundingClientRect().width > 0 && getComputedStyle(label).opacity !== '0';
           }),
@@ -2638,15 +2666,35 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
   test('fields and buttons are big enough to tap on a phone', async () => {
     // 44px is the floor both platforms' guidelines give for a touch target.
     const { page, context } = await open({ viewport: PHONE });
+    /**
+     * Half a pixel of slack, because the floor is what the stylesheet asks for.
+     *
+     * Controls here are `min-height: var(--tap)`, which is 44px — and a layout that lands on
+     * 43.996px is the browser rounding a rem, not a target somebody made too small. Without
+     * the tolerance this test failed on the amount field at "44px", which is a failure message
+     * nobody can act on.
+     */
+    const small = (page, selector) =>
+      page.$$eval(selector, (nodes) =>
+        nodes
+          .map((node) => ({ node, height: node.getBoundingClientRect().height }))
+          .filter(({ height }) => height > 0 && height < 43.5)
+          .map(({ node, height }) => `${node.id || node.textContent.trim()} is ${height.toFixed(1)}px`),
+      );
+
     await openTab(page, 'Take a payment');
     await page.waitForTimeout(120);
-    const tooSmall = await page.$$eval('#view-new input, #view-new select, #view-new button, #sign-out', (nodes) =>
-      nodes
-        .map((node) => ({ node, height: node.getBoundingClientRect().height }))
-        .filter(({ height }) => height > 0 && height < 44)
-        .map(({ node, height }) => `${node.id || node.textContent.trim()} is ${Math.round(height)}px`),
-    );
-    assert.deepEqual(tooSmall, []);
+    assert.deepEqual(await small(page, '#view-new input, #view-new select, #view-new button'), []);
+
+    /**
+     * The way out and the appearance choice are in the sheet behind "More" — the phone header
+     * that used to hold the first is gone. So they are measured with the sheet open, which is
+     * the only state they are drawn in: measuring them closed reads a height of zero, and
+     * measuring them mid-animation reads whatever the transition was passing through.
+     */
+    await page.click('#tabs-more');
+    await page.waitForTimeout(200);
+    assert.deepEqual(await small(page, '#sign-out, .tab-extra .seg button'), []);
     await context.close();
   });
 
