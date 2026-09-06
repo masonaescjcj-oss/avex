@@ -1,0 +1,19 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html",           "title": "Sign in",            "x": 0,    "y": 0,    "w": 390, "h": 844 },
+    { "file": "SignUp.dc.html",         "title": "Create account",     "x": 470,  "y": 0,    "w": 390, "h": 844 },
+    { "file": "CheckEmail.dc.html",     "title": "Check your email",   "x": 940,  "y": 0,    "w": 390, "h": 844 },
+    { "file": "Authenticator.dc.html",  "title": "Authenticator code", "x": 1410, "y": 0,    "w": 390, "h": 844 },
+    { "file": "RecoveryCodes.dc.html",  "title": "Recovery codes",     "x": 1880, "y": 0,    "w": 390, "h": 844 },
+
+    { "file": "Overview.dc.html",       "title": "Overview",           "x": 0,    "y": 1004, "w": 390, "h": 844 },
+    { "file": "TakePayment.dc.html",    "title": "Take a payment",     "x": 470,  "y": 1004, "w": 390, "h": 844 },
+    { "file": "Invoice.dc.html",        "title": "Invoice (buyer)",    "x": 940,  "y": 1004, "w": 390, "h": 844 },
+    { "file": "Payouts.dc.html",        "title": "Payouts",            "x": 1410, "y": 1004, "w": 390, "h": 844 },
+    { "file": "Security.dc.html",       "title": "Security",           "x": 1880, "y": 1004, "w": 390, "h": 844 },
+
+    { "file": "SignInDark.dc.html",     "title": "Sign in — dark",     "x": 0,    "y": 2008, "w": 390, "h": 844 },
+    { "file": "OverviewDark.dc.html",   "title": "Overview — dark",    "x": 470,  "y": 2008, "w": 390, "h": 844 }
+  ],
+  "launch": { "view": "canvas" }
+}

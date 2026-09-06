@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<div style="--n0:#ffffff;--n50:#f7f8f9;--n100:#eef0f2;--n200:#e3e6ea;--n300:#cfd4da;--n400:#a6adb7;--n500:#6b7480;--n600:#5b6370;--n700:#414853;--n900:#1a1d22;--lime:#c8f135;--lime-ink:#1a2400;--accent:#5f7a00;--accent-soft:#eef7c9;--accent-edge:#b9d95a;--ok:#0f7a4f;--ok-soft:#e3f5ec;--warn:#9a5b00;--warn-soft:#fff1d6;--danger:#b42318;--danger-soft:#fde8e6;--info:#175cd3;--info-soft:#e6effc;--bg:#f7f8f9;--surface:#ffffff;--surface-2:#f7f8f9;--surface-3:#eef0f2;--line:#e3e6ea;--line-strong:#cfd4da;--ink:#1a1d22;--ink-2:#414853;--muted:#5b6370;--faint:#6b7480;font-family:ui-sans-serif,-apple-system,Inter,Roboto,Arial,sans-serif;width:390px;height:844px;overflow:hidden;display:flex;flex-direction:column;box-sizing:border-box;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased">
+  <div style="flex:1;padding:22px 24px 0;">
+    <div style="width:44px;height:44px;margin-left:-10px;display:flex;align-items:center;justify-content:center;color:var(--ink-2);">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5.5 8.5 12l6.5 6.5"/></svg>
+    </div>
+
+    <h1 style="margin:26px 0 8px;font-size:28px;line-height:1.2;font-weight:650;letter-spacing:-0.02em;">Enter your code</h1>
+    <p style="margin:0 0 30px;color:var(--muted);">Open your authenticator app and type the six digits shown for <span style="color:var(--ink-2);font-weight:550;">AVEX Pay</span>.</p>
+
+    <div style="display:flex;gap:9px;">
+      <div style="flex:1;height:60px;border:1px solid var(--line-strong);border-radius:12px;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;">4</div>
+      <div style="flex:1;height:60px;border:1px solid var(--line-strong);border-radius:12px;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;">0</div>
+      <div style="flex:1;height:60px;border:1px solid var(--line-strong);border-radius:12px;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;">2</div>
+      <div style="flex:1;height:60px;border:1px solid var(--accent-edge);border-radius:12px;background:var(--surface);box-shadow:0 0 0 3px rgba(95,122,0,0.18);display:flex;align-items:center;justify-content:center;">
+        <div style="width:2px;height:26px;background:var(--accent);border-radius:2px;"></div>
+      </div>
+      <div style="flex:1;height:60px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2);"></div>
+      <div style="flex:1;height:60px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2);"></div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;margin-top:16px;color:var(--muted);font-size:13px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><circle cx="12" cy="12" r="9"/><path d="M12 7v5.5l3.5 2"/></svg>
+      <span>The code changes every 30 seconds.</span>
+    </div>
+
+    <div style="margin-top:28px;"><button style="width:100%;box-sizing:border-box;height:48px;border:0;border-radius:10px;background:var(--lime);color:var(--lime-ink);font-size:15px;font-weight:600;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">Verify and continue</button></div>
+
+    <div style="margin-top:14px;"><button style="width:100%;box-sizing:border-box;height:48px;border:1px solid var(--line-strong);border-radius:10px;background:var(--surface);color:var(--ink);font-size:15px;font-weight:550;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">Use a recovery code</button></div>
+  </div>
+
+  <div style="padding:0 24px 34px;">
+    <div style="display:flex;gap:11px;padding:13px 14px;border-radius:12px;background:var(--surface-3);color:var(--muted);font-size:13px;line-height:1.45;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px;"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/></svg>
+      <span>Lost the phone with your authenticator? A recovery code is the only way back in — we cannot reset the secret for you.</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
