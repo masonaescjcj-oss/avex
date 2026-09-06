@@ -1266,14 +1266,15 @@
         <div class="panel-body">
           <p class="note">
             Your customers pay straight into a wallet of yours, on any chain — no contract of ours
-            in the path, no gas, and no minimum. Up to ten addresses per chain, and each invoice
-            asks for a very slightly different amount — 20.05, 20.03 — which is how two payments
-            to one address are told apart.
+            in the path, no gas, and a $0.50 minimum. Up to a hundred addresses per chain, and
+            each invoice asks for a very slightly different amount — 20.001, 20.002 — which is
+            how two payments to one address are told apart.
           </p>
           <p class="warn-note">
-            Your first wallet on a chain works at once. Every one after it waits 24 hours and
-            everyone in your organization is emailed, because this is where your money lands.
-            Retiring one is immediate.
+            Every wallet works at once, and everyone in your organization is emailed the moment
+            one is added, because this is where your money lands. Retiring one is immediate.
+            Wallets are used in turn: an idle one first, and only when every wallet has an open
+            invoice do two invoices share one.
           </p>
           <div class="rows" id="wallet-list"></div>
           <form id="wallet-form">

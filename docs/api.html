@@ -764,13 +764,13 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
         <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations/<em>:orgId</em>/deposit-wallets</span></div>
         <div class="params">
           <div class="param"><code>wallets</code><span>Your pool. A retired wallet stays listed — invoices already open on it are still paid.</span></div>
-          <div class="param"><code>pending</code><span>Additions waiting out their 24 hours.</span></div>
+          <div class="param"><code>pending</code><span>Always empty now that additions are immediate; kept so older clients keep parsing.</span></div>
         </div>
       </div>
       <div class="endpoint" data-route="POST /v1/organizations/:orgId/deposit-wallets">
         <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/deposit-wallets</span></div>
         <div class="params">
-          <div class="param"><code>chain</code><span><span class="req">required</span> — any supported network. Up to a hundred wallets per network, counting ones still waiting to join.</span></div>
+          <div class="param"><code>chain</code><span><span class="req">required</span> — any supported network. Up to a hundred wallets per network.</span></div>
           <div class="param"><code>address</code><span><span class="req">required</span> — your own address. Checked, so a mistyped one is refused rather than accepted.</span></div>
           <div class="param"><code>label</code><span>Your name for it, so a support conversation can refer to one.</span></div>
         </div>
@@ -788,12 +788,10 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
         </div>
       </div>
       <p class="note">
-        <strong>The first wallet is immediate; every one after it waits 24 hours.</strong> These
-        are addresses your customers' money lands in, so adding one is protected exactly as
-        changing a payout address is: owner-only, your second factor proven again, a day before
-        it takes effect, and an email to everyone in your organization in between. Any of them
-        can cancel it. The first wallet on a network is immediate because there is nothing to
-        redirect — without one you cannot take payments on that network at all.
+        <strong>Every wallet is live the moment it is added.</strong> These are addresses your
+        customers' money lands in, so adding one is owner-only, needs your second factor proven
+        again, and emails everyone in your organization at once. A member who does not recognise
+        an address retires it, which is immediate, and changes their password.
       </p>
       <p class="note">
         <strong>Retiring is immediate.</strong> Deliberately not symmetrical: adding an address

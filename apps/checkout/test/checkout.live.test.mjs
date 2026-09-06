@@ -205,7 +205,14 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
       });
     });
 
-    await page.goto(`${PAGE}?s=${SESSION}`);
+    /**
+     * Where the page is opened from. The file's own URL with the session in the query, or —
+     * `at: 'path'` — the address the host serves it at, `/pay/<session>`, which is what decides
+     * where a relative link goes.
+     */
+    const served = `https://checkout.test/pay/${SESSION}`;
+    await page.route(served, (route) => route.fulfill({ path: pageFile, contentType: 'text/html' }));
+    await page.goto(behaviour.at === 'path' ? served : `${PAGE}?s=${SESSION}`);
     await page.waitForFunction(
       () => document.querySelectorAll('#currencies .coin').length > 0 ||
         document.querySelector('#choose-hint')?.dataset.error === 'true',
@@ -327,6 +334,46 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
     assert.equal(await shown(page, '#receipt-offer'), true);
     const href = await page.$eval('#receipt-link', (node) => node.getAttribute('href'));
     assert.equal(href, `receipt.html?s=${SESSION}`);
+    await context.close();
+  });
+
+  test('served at /pay/<session>, the receipt link is /pay/<session>/receipt', async () => {
+    /**
+     * The link a payer reported dead. The host serves this page at `/pay/<session>` and the
+     * receipt at `/pay/<session>/receipt`; a relative `receipt.html?s=` from there resolved to
+     * `/pay/receipt.html`, which the host's rewrite served as this page again.
+     */
+    const paid = {
+      id: SESSION,
+      merchantName: 'Example Store',
+      description: 'Order 42',
+      amountFiatMicros: '500000',
+      status: 'paid',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      payment: {
+        invoiceId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        chain: 'bsc',
+        symbol: 'USDT',
+        decimals: 18,
+        amountDue: '508000000000000000',
+        amountPaid: '508000000000000000',
+        depositAddress: BSC_ADDRESS,
+        memo: null,
+        status: 'paid',
+        toleranceBps: 50,
+        feeIncluded: '0',
+        feeBps: 0,
+        expiresAt: new Date(Date.now() + 900_000).toISOString(),
+      },
+    };
+    const { page, context } = await open({ session: paid, at: 'path' });
+
+    assert.equal(await page.evaluate(() => location.pathname), `/pay/${SESSION}`);
+    const href = await page.$eval('#receipt-link', (node) => node.getAttribute('href'));
+    assert.equal(href, `/pay/${SESSION}/receipt`);
+    // And the summary carries this payment's figure, not the demo's twenty dollars.
+    assert.equal(await text(page, '#summary-amount'), '$0.50');
+    assert.equal(await text(page, '#amount'), '0.508');
     await context.close();
   });
 

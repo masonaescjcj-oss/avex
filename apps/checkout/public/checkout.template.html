@@ -1078,8 +1078,8 @@
           <p class="eyebrow" id="amount-label">Amount due</p>
           <div class="amount-row">
             <div class="amount">
-              <span class="amount-value" id="amount">20.00</span>
-              <span class="amount-unit" id="amount-unit">USD</span>
+              <span class="amount-value" id="amount"></span>
+              <span class="amount-unit" id="amount-unit"></span>
             </div>
             <button class="copy-btn" type="button" id="copy-amount" data-copy="amount" aria-label="Copy the amount" hidden>Copy</button>
           </div>
@@ -1187,7 +1187,7 @@
         <div class="panel-head"><h2>Summary</h2></div>
         <div class="body">
           <dl class="summary">
-            <div class="summary-row"><dt>Item</dt><dd class="prose" id="summary-item">Order #1048</dd></div>
+            <div class="summary-row"><dt>Item</dt><dd class="prose" id="summary-item">—</dd></div>
             <div class="summary-row"><dt>Amount</dt><dd id="summary-amount">—</dd></div>
             <div class="summary-row"><dt>Network</dt><dd id="summary-network">—</dd></div>
             <div class="summary-row"><dt>Settlement cost</dt><dd id="summary-cost">—</dd></div>
@@ -1300,6 +1300,12 @@
   ];
 
   const INVOICE_USD = 20;
+  /**
+   * The fiat figure the page shows. The demo's twenty dollars, or nothing at all until the API
+   * has said what this payment is for — a placeholder that reads "$20.00" for half a second and
+   * then changes is a number a payer has already started to trust.
+   */
+  let fiatUsd = null;
 
   const MEMO = 'AVEX-INV-8F2C41';
   const LOCK_SECONDS = 15 * 60;
@@ -1319,6 +1325,21 @@
    * string: a page that let its caller redirect the payment endpoint would be a page
    * that could be pointed at an attacker's address list.
    */
+  /**
+   * Where the receipt lives, from where this page lives.
+   *
+   * Served as `/pay/<session>`, the receipt is `/pay/<session>/receipt` — the host rewrites both
+   * to their pages. A relative `receipt.html?s=` from there resolved to `/pay/receipt.html`,
+   * which the same rewrite served as *this* page again: the one link a payer certainly presses
+   * reloaded the checkout. Opened as a file, or with the session in the query, the relative
+   * form is the right one.
+   */
+  function receiptHref() {
+    const served = location.pathname.match(/^(.*\/pay\/[0-9a-fA-F-]{36})\/?$/);
+    if (served) return served[1] + '/receipt';
+    return 'receipt.html?s=' + encodeURIComponent(SESSION_ID);
+  }
+
   const SESSION_ID = (() => {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const query = new URLSearchParams(location.search).get('s');
@@ -1884,16 +1905,18 @@
       // before a network is picked. It stays true after a currency is picked too:
       // the settlement cost differs per chain, so the crypto amount is not yet
       // knowable even once the asset is.
-      el('amount').textContent = INVOICE_USD.toFixed(2);
-      el('amount-unit').textContent = 'USD';
-      el('amount-note').textContent = currency === null
+      el('amount').textContent = fiatUsd === null ? '' : fiatUsd.toFixed(2);
+      el('amount-unit').textContent = fiatUsd === null ? '' : 'USD';
+      el('amount-note').textContent = fiatUsd === null
+        ? ''
+        : currency === null
         ? 'The exact amount depends on the currency and network you choose — each ' +
           'one costs a different amount to settle.'
         : 'Choose a network to see the exact amount of ' + currency.id + ' to send.';
       for (const id of ['summary-network', 'summary-cost', 'summary-total']) {
         el(id).textContent = '—';
       }
-      el('summary-amount').textContent = '$' + INVOICE_USD.toFixed(2);
+      el('summary-amount').textContent = fiatUsd === null ? '—' : '$' + fiatUsd.toFixed(2);
       // Nothing is chosen, so there is no chain and therefore no known commission.
       el('summary-fee-row').hidden = true;
       el('summary-network-fee-row').hidden = true;
@@ -1923,7 +1946,7 @@
     el('amount-unit').textContent = selected.asset;
     el('amount-note').textContent = LIVE
       ? 'Includes the network fee — the rate holds until the countdown below runs out.'
-      : 'Equal to $' + INVOICE_USD.toFixed(2) + ' including the ' +
+      : 'Equal to $' + (fiatUsd ?? INVOICE_USD).toFixed(2) + ' including the ' +
         (selected.cost === 0 ? 'free' : '$' + selected.cost.toFixed(4)) +
         ' network fee — the rate holds until the countdown below runs out.';
 
@@ -1941,7 +1964,7 @@
       : selected.cost === 0
         ? '$0.0000'
         : '$' + selected.cost.toFixed(4);
-    el('summary-amount').textContent = '$' + INVOICE_USD.toFixed(2);
+    el('summary-amount').textContent = fiatUsd === null ? '—' : '$' + fiatUsd.toFixed(2);
     renderFeeLine();
     /**
      * The rate, from the API in live mode and from the demo catalogue otherwise.
@@ -2113,7 +2136,8 @@
     if (typeof view.merchantName === 'string' && view.merchantName.trim() !== '') {
       el('pay-heading').textContent = 'Pay ' + view.merchantName.trim();
     }
-    el('amount').textContent = (Number(view.amountFiatMicros) / 1e6).toFixed(2);
+    fiatUsd = Number(view.amountFiatMicros) / 1e6;
+    el('amount').textContent = fiatUsd.toFixed(2);
     el('amount-unit').textContent = 'USD';
     if (view.description) {
       el('invoice-ref').textContent = view.description;
@@ -2326,7 +2350,7 @@
      * one control on this screen a payer will certainly press.
      */
     el('receipt-offer').hidden = !(settled && LIVE);
-    if (settled && LIVE) el('receipt-link').href = 'receipt.html?s=' + encodeURIComponent(SESSION_ID);
+    if (settled && LIVE) el('receipt-link').href = receiptHref();
     for (const row of el('networks').children) row.disabled = settled;
 
     // Confirmation progress is only meaningful while a transfer is maturing.
@@ -2413,6 +2437,8 @@
     setState('awaiting');
     void loadLive();
   } else {
+    fiatUsd = INVOICE_USD;
+    el('summary-item').textContent = 'Order #1048';
     renderCurrencies();
     renderNetworks();
     renderSelection();

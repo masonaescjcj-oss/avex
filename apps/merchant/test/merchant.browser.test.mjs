@@ -1788,19 +1788,19 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
-  test('the pool says plainly that the first wallet is immediate and the rest are not', async () => {
+  test('the pool says plainly that every wallet is immediate and everyone is told', async () => {
     /**
-     * A merchant who adds their second wallet and finds it does nothing for a day, with no
-     * warning, will conclude the panel is broken and try again — which is how somebody ends up
-     * with three scheduled wallets they did not want.
+     * There is no delay any more, so the notice is the whole protection — and a merchant has to
+     * know that adding a wallet emails every member, or the first such email reads as an alarm.
      */
     const { page, context } = await open();
     await openTab(page, 'Payouts');
     await page.waitForTimeout(200);
     const body = await text(page, '#wallets-panel');
     // The fact, not the phrasing: the copy has been tightened twice for a phone.
-    assert.match(body, /first wallet on a chain[^.]*at once/);
-    assert.match(body, /waits 24 hours/);
+    assert.match(body, /Every wallet works at once/);
+    assert.match(body, /everyone in your organization is emailed/);
+    assert.ok(!/24 hours/.test(body), 'no delay is promised');
     assert.match(body, /Retiring one is\s+immediate/);
     await context.close();
   });
@@ -1824,7 +1824,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     const order = await page.$$eval('#view-payouts .panel h2', (nodes) => nodes.map((n) => n.textContent.trim()));
     assert.match(order[0], /Your own wallets/, order.join(' | '));
     assert.match(await text(page, '#wallets-panel'), /any chain/);
-    assert.match(await text(page, '#wallets-panel'), /20\.05/);
+    assert.match(await text(page, '#wallets-panel'), /20\.001/);
     await context.close();
   });
 

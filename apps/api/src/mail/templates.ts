@@ -89,6 +89,30 @@ export function roleChanged(
   };
 }
 
+/**
+ * A deposit wallet was added, and it is live.
+ *
+ * Every member hears about it, at once, because this is an address customers' money lands in
+ * and the person who most needs the notice is the one who did not add it. There is no delay
+ * to cancel; what a member who does not recognise the address can do is retire it, which is
+ * immediate, and change their password.
+ */
+export function depositWalletAdded(
+  appUrl: string,
+  details: { chain: string; address: string },
+): MailMessage {
+  return {
+    subject: `Deposit wallet added on ${details.chain}`,
+    body: [
+      `A wallet was added to your ${details.chain} pool and is taking payments now.`,
+      `Address: ${details.address}`,
+      '',
+      'If you did not add this, retire it now and change your password:',
+      `${appUrl}/dashboard?tab=payouts`,
+    ].join('\n'),
+  };
+}
+
 export function payoutChangeQueued(
   appUrl: string,
   details: { chain: string; newAddress: string; effectiveAt: Date },

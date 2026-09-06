@@ -173,7 +173,7 @@ export function registerDepositWalletRoutes(app: FastifyInstance, context: AppCo
       });
     }
 
-    // 202: accepted, not done. Saying otherwise would hide the whole point of the delay.
+    // Unreachable since additions became immediate; kept so the outcome type stays honest.
     return reply.status(202).send({
       status: 'pending',
       address: outcome.address,

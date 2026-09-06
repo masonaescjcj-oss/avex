@@ -96,49 +96,12 @@ describe('adding a wallet to the pool', { skip: !databaseUrl }, () => {
     assert.equal(live[0]!.retiredAt, null);
   });
 
-  test('the second waits a day, and is not in the pool until it does', async () => {
+  test('every wallet after the first is live at once too, and everyone is emailed', async () => {
     /**
-     * The assertion that matters. A scheduled wallet that was already allocatable would make the
-     * delay decorative — and the way that fails is silent: the merchant sees "scheduled", and
-     * the attacker's address is already taking payments.
-     */
-    const { orgId, ownerId } = await freshOrg();
-    await changes.requestAdd({
-      organizationId: orgId,
-      chain: 'tron',
-      address: tronAddress(),
-      actor: { userId: ownerId },
-    });
-
-    const second = tronAddress();
-    const outcome = await changes.requestAdd({
-      organizationId: orgId,
-      chain: 'tron',
-      address: second,
-      actor: { userId: ownerId },
-    });
-
-    assert.equal(outcome.status, 'pending');
-    assert.ok(outcome.effectiveAt !== null);
-    assert.ok(
-      outcome.effectiveAt.getTime() - Date.now() > 23 * 60 * 60 * 1000,
-      'the delay is a day, not a token pause',
-    );
-
-    const live = await pool.list({ organizationId: orgId, chain: 'tron' });
-    assert.equal(live.length, 1, 'the scheduled wallet is not in the pool yet');
-    assert.ok(!live.some((row) => row.address === second));
-
-    // And it is listed as pending, so the merchant can see and cancel it.
-    const pending = await changes.pending(orgId);
-    assert.equal(pending.length, 1);
-    assert.equal(pending[0]!.address, second);
-  });
-
-  test('everyone is emailed, not just whoever asked', async () => {
-    /**
-     * A delay nobody is told about protects nothing, and the person who needs the notice is
-     * precisely the one who did not make the request.
+     * The delay is gone at the merchant's request: a pool of a hundred is built by adding a
+     * hundred addresses, and a day's wait on each is a day the shop cannot take payments on
+     * them. What remains of the protection is the notice — so it must reach every member, at
+     * once, and say where to act.
      */
     const { orgId, ownerId, otherEmail } = await freshOrg();
     await changes.requestAdd({
@@ -148,67 +111,8 @@ describe('adding a wallet to the pool', { skip: !databaseUrl }, () => {
       actor: { userId: ownerId },
     });
 
+    const second = tronAddress();
     const before = mailer.sent.length;
-    await changes.requestAdd({
-      organizationId: orgId,
-      chain: 'tron',
-      address: tronAddress(),
-      actor: { userId: ownerId },
-    });
-
-    const sent = mailer.sent.slice(before);
-    assert.equal(sent.length, 2, 'both members');
-    assert.ok(sent.some((mail) => mail.to === otherEmail));
-    // And the notice links straight to where it can be stopped.
-    assert.ok(sent.every((mail) => mail.body.includes('/dashboard?tab=payouts')));
-  });
-
-  test('the delay elapsing is what puts it in the pool', async () => {
-    const { orgId, ownerId } = await freshOrg();
-    await changes.requestAdd({
-      organizationId: orgId,
-      chain: 'tron',
-      address: tronAddress(),
-      actor: { userId: ownerId },
-    });
-    const second = tronAddress();
-    await changes.requestAdd({
-      organizationId: orgId,
-      chain: 'tron',
-      address: second,
-      actor: { userId: ownerId },
-    });
-
-    // Nothing due yet — every scheduled change in this suite is a day out.
-    assert.equal(await changes.applyDueChanges(new Date()), 0);
-
-    /**
-     * Counted as "at least one", not "exactly one".
-     *
-     * The applier is the job: it sweeps every organisation, so the cases above have left their
-     * own scheduled wallets in the queue. Asserting an exact count here would be asserting the
-     * order the tests happen to run in. What matters is that *this* wallet arrived.
-     */
-    const tomorrow = new Date(Date.now() + 25 * 60 * 60 * 1000);
-    assert.ok((await changes.applyDueChanges(tomorrow)) >= 1);
-
-    const live = await pool.list({ organizationId: orgId, chain: 'tron' });
-    assert.equal(live.length, 2);
-    assert.ok(live.some((row) => row.address === second && row.retiredAt === null));
-
-    // Idempotent: a second tick must not apply anything again.
-    assert.equal(await changes.applyDueChanges(tomorrow), 0);
-  });
-
-  test('a cancelled change never arrives', async () => {
-    const { orgId, ownerId } = await freshOrg();
-    await changes.requestAdd({
-      organizationId: orgId,
-      chain: 'tron',
-      address: tronAddress(),
-      actor: { userId: ownerId },
-    });
-    const second = tronAddress();
     const outcome = await changes.requestAdd({
       organizationId: orgId,
       chain: 'tron',
@@ -216,25 +120,19 @@ describe('adding a wallet to the pool', { skip: !databaseUrl }, () => {
       actor: { userId: ownerId },
     });
 
-    await changes.cancel({
-      organizationId: orgId,
-      changeId: outcome.pendingChangeId!,
-      actor: { userId: ownerId },
-    });
-
-    assert.equal(await changes.applyDueChanges(new Date(Date.now() + 25 * 60 * 60 * 1000)), 0);
+    assert.equal(outcome.status, 'active');
+    assert.equal(outcome.effectiveAt, null);
     const live = await pool.list({ organizationId: orgId, chain: 'tron' });
-    assert.ok(!live.some((row) => row.address === second));
+    assert.equal(live.length, 2);
+    assert.ok(live.some((row) => row.address === second && row.retiredAt === null));
+    assert.equal((await changes.pending(orgId)).length, 0, 'nothing is queued');
 
-    // Cancelling twice is refused rather than silently accepted.
-    await assert.rejects(
-      changes.cancel({
-        organizationId: orgId,
-        changeId: outcome.pendingChangeId!,
-        actor: { userId: ownerId },
-      }),
-      (error: unknown) => error instanceof WalletPoolChangeError && error.code === 'not_found',
-    );
+    const sent = mailer.sent.slice(before);
+    assert.equal(sent.length, 2, 'both members');
+    assert.ok(sent.some((mail) => mail.to === otherEmail));
+    assert.ok(sent.every((mail) => mail.body.includes(second)));
+    // And the notice links straight to where an unrecognised wallet can be retired.
+    assert.ok(sent.every((mail) => mail.body.includes('/dashboard?tab=payouts')));
   });
 
   test('a wallet already in the pool is refused, in any of its forms', async () => {

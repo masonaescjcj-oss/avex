@@ -393,17 +393,19 @@ export class WalletPoolChangeError extends Error {
  *
  * A pooled chain's deposit wallet *is* where the money lands — the payer's transfer goes into it
  * and nothing ever moves it — so somebody who adds their own address to a merchant's pool is
- * redirecting that merchant's income. Exactly the payout-address threat, so exactly the payout
- * address's protection: owner-only, elevation-gated at the route, twenty-four hours before it
- * takes effect, and an email to every member in between.
+ * redirecting that merchant's income. Exactly the payout-address threat, so most of the payout
+ * address's protection: owner-only, elevation-gated at the route, and an email to every member
+ * the moment it happens.
  *
- * The first wallet on a chain is immediate. There is nothing to redirect: a merchant with no
- * wallet cannot take payments on that chain at all, so a delay would only stop them starting.
- * That is the same rule the payout service applies to a first address, and for the same reason.
+ * What it does not have is the payout address's twenty-four-hour delay. The merchant asked for
+ * it to go: a pool of a hundred wallets is built by adding a hundred addresses, and a day's wait
+ * on each is a day the shop cannot take payments on them. The trade is stated plainly here: a
+ * stolen owner session can add a wallet that takes payments at once, and the defence is the
+ * notice every member receives at once, plus retirement being immediate. The scheduling
+ * machinery below (`pending`, `cancel`, `applyDueChanges`) is kept for rows already queued
+ * before this change and for the dashboard that lists them; nothing new is queued.
  *
- * Retiring is immediate too, and deliberately asymmetric. Taking a destination away can only
- * stop money arriving somewhere; a delay on it would mean a merchant who spotted a wrong address
- * had to wait a day to stop using it.
+ * Retiring is immediate too. Taking a destination away can only stop money arriving somewhere.
  */
 /**
  * The most wallets a merchant may hold on one chain, active and scheduled together.
@@ -507,59 +509,38 @@ export class WalletPoolChanges {
     }
 
     const first = live.every((row) => row.retiredAt !== null);
-    if (first) {
-      const created = await this.pool.register({
-        organizationId: input.organizationId,
-        chain: input.chain,
-        address,
-        ...(input.label === undefined ? {} : { label: input.label }),
-        createdByUserId: input.actor.userId,
-      });
-      await this.audit.record({
-        organizationId: input.organizationId,
-        userId: input.actor.userId,
-        ip: input.actor.ip ?? null,
-        action: 'deposit_wallet.added',
-        targetType: 'deposit_wallet',
-        targetId: created.id,
-        metadata: { chain: input.chain, address, firstForChain: true },
-      });
-      return { status: 'active', address, effectiveAt: null, pendingChangeId: null };
-    }
-
-    const effectiveAt = new Date(now.getTime() + this.delayMs);
-    const payload: WalletChangePayload = {
+    const created = await this.pool.register({
+      organizationId: input.organizationId,
       chain: input.chain,
       address,
       ...(input.label === undefined ? {} : { label: input.label }),
-    };
-    const [change] = await this.db
-      .insert(pendingChanges)
-      .values({
-        organizationId: input.organizationId,
-        kind: DEPOSIT_WALLET_CHANGE_KIND,
-        payload: payload as unknown as Record<string, unknown>,
-        requestedByUserId: input.actor.userId,
-        requestedAt: now,
-        effectiveAt,
-      })
-      .returning({ id: pendingChanges.id });
-
+      createdByUserId: input.actor.userId,
+    });
     await this.audit.record({
       organizationId: input.organizationId,
       userId: input.actor.userId,
       ip: input.actor.ip ?? null,
-      action: 'deposit_wallet.add_requested',
-      targetType: 'pending_change',
-      targetId: change!.id,
-      metadata: { chain: input.chain, address, effectiveAt: effectiveAt.toISOString() },
+      action: 'deposit_wallet.added',
+      targetType: 'deposit_wallet',
+      targetId: created.id,
+      metadata: { chain: input.chain, address, firstForChain: first },
     });
-
-    // Everyone, not just the requester. A delay nobody is told about protects nothing, and the
-    // person who needs to see it is precisely the one who did not make the request.
-    await this.notifyMembers(input.organizationId, input.chain, address, effectiveAt);
-
-    return { status: 'pending', address, effectiveAt, pendingChangeId: change!.id };
+    /**
+     * Everyone, not just the requester, and at once. Without a delay this notice is the whole
+     * of the protection against a stolen session adding its own address: the member who did not
+     * add it is the one who has to see it.
+     */
+    const recipients = await this.db
+      .select({ email: users.email })
+      .from(memberships)
+      .innerJoin(users, eq(users.id, memberships.userId))
+      .where(eq(memberships.organizationId, input.organizationId));
+    for (const recipient of recipients) {
+      await this.mailer
+        .sendDepositWalletAdded(recipient.email, { chain: input.chain, address })
+        .catch(() => undefined);
+    }
+    return { status: 'active', address, effectiveAt: null, pendingChangeId: null };
   }
 
   /** Scheduled additions not yet applied or cancelled. */
@@ -701,32 +682,5 @@ export class WalletPoolChanges {
   private async pendingFor(organizationId: string, chain: string, address: string) {
     const rows = await this.pending(organizationId);
     return rows.find((row) => row.chain === chain && row.address === address);
-  }
-
-  private async notifyMembers(
-    organizationId: string,
-    chain: string,
-    address: string,
-    effectiveAt: Date,
-  ): Promise<void> {
-    const recipients = await this.db
-      .select({ email: users.email })
-      .from(memberships)
-      .innerJoin(users, eq(users.id, memberships.userId))
-      .where(eq(memberships.organizationId, organizationId));
-
-    for (const recipient of recipients) {
-      /**
-       * The payout-change notice, reused, because the claim is the same one.
-       *
-       * On a pooled chain the deposit wallet *is* the payout address — the payer's transfer
-       * lands in it and nothing ever moves the funds — so "a change to your payout address is
-       * scheduled" is accurate rather than approximate. A second template saying the same thing
-       * in different words would be one more place for the two to drift.
-       */
-      await this.mailer
-        .sendPayoutChangeQueued(recipient.email, { chain, newAddress: address, effectiveAt })
-        .catch(() => undefined);
-    }
   }
 }

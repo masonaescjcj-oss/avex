@@ -1,5 +1,6 @@
 import type { Role } from './domain/rbac.js';
 import {
+  depositWalletAdded,
   emailAlreadyRegistered,
   emailVerification,
   memberInvite,
@@ -57,6 +58,8 @@ export interface Mailer {
     email: string,
     details: { chain: string; newAddress: string; effectiveAt: Date },
   ): Promise<void>;
+  /** Sent to every member when a deposit wallet is added; it is live at once. */
+  sendDepositWalletAdded(email: string, details: { chain: string; address: string }): Promise<void>;
   /**
    * An operational alert, to us rather than to a merchant.
    *
@@ -114,6 +117,13 @@ export abstract class ComposedMailer implements Mailer {
     details: { chain: string; newAddress: string; effectiveAt: Date },
   ): Promise<void> {
     await this.deliver(email, payoutChangeQueued(this.appUrl, details));
+  }
+
+  async sendDepositWalletAdded(
+    email: string,
+    details: { chain: string; address: string },
+  ): Promise<void> {
+    await this.deliver(email, depositWalletAdded(this.appUrl, details));
   }
 
   async sendOperatorAlert(
