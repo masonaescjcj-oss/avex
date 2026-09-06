@@ -1247,8 +1247,8 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
   test('the period volume is shown as money and as progress towards a cheaper rate', async () => {
     const { page, context } = await open();
-    const stats = await all(page, '#overview-stats .stat-value');
-    assert.ok(stats.includes('$10,000.00'), stats.join(' | '));
+    // The period's volume is the card's headline now rather than one of four equal KPIs.
+    assert.equal(await text(page, '#overview-stats .hero-figure'), '$10,000.00');
 
     const width = await page.$eval('#tier-bar', (node) => node.style.width);
     // $10,000 of the $50,000 that reaches 0.45%.

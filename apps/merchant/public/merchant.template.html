@@ -298,6 +298,95 @@
   .auth-alt button:hover { text-decoration: underline; }
   @media (max-width: 39.99em) { #auth-panel { margin: var(--sp-5) var(--sp-3) var(--sp-8); } }
 
+  /* ── the overview's hero ──────────────────────────────────────────────── */
+
+  /*
+    One figure, large, on a card that is not the colour of the page.
+
+    Four equal KPI cards gave the merchant's own volume the same weight as the count of
+    invoices beside it. This says the money first and puts the rest underneath it, which is
+    the order somebody reads it in. Dark on a light page; in the dark theme the card is the
+    brand lime, because a dark card on a dark page is not a card.
+  */
+  .hero {
+    background: #14171c; color: #f2f4f6;
+    border-radius: var(--r-xl); padding: var(--sp-5);
+    margin-bottom: var(--gap); box-shadow: var(--shadow-2);
+  }
+  .hero-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+  .hero-label { font-size: var(--s-2); font-weight: 550; color: #a3abb6; }
+  .hero-when { font-size: var(--s-2); color: #7d8591; text-align: right; }
+  .hero-figure {
+    font-size: var(--s5); font-weight: 650; letter-spacing: -0.03em; line-height: 1.05;
+    font-variant-numeric: tabular-nums; margin: var(--sp-2) 0 var(--sp-4);
+    overflow-wrap: anywhere;
+  }
+  .hero-split { display: flex; border-top: 1px solid #262c35; padding-top: var(--sp-3); gap: var(--sp-4); }
+  .hero-split > div { flex: 1 1 0; min-width: 0; }
+  .hero-k { font-size: var(--s-2); color: #7d8591; }
+  .hero-v { font-size: var(--s1); font-weight: 600; margin-top: 1px; font-variant-numeric: tabular-nums; }
+  .hero-v[data-tone="warn"] { color: #fbbf24; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .hero { background: var(--lime); color: var(--lime-ink); box-shadow: none; }
+    :root:not([data-theme="light"]) .hero-label { color: #43520a; }
+    :root:not([data-theme="light"]) .hero-when,
+    :root:not([data-theme="light"]) .hero-k { color: #43520a; }
+    :root:not([data-theme="light"]) .hero-split { border-top-color: rgba(26, 36, 0, 0.2); }
+    :root:not([data-theme="light"]) .hero-v[data-tone="warn"] { color: #6b3d00; }
+  }
+  :root[data-theme="dark"] .hero { background: var(--lime); color: var(--lime-ink); box-shadow: none; }
+  :root[data-theme="dark"] .hero-label,
+  :root[data-theme="dark"] .hero-when,
+  :root[data-theme="dark"] .hero-k { color: #43520a; }
+  :root[data-theme="dark"] .hero-split { border-top-color: rgba(26, 36, 0, 0.2); }
+  :root[data-theme="dark"] .hero-v[data-tone="warn"] { color: #6b3d00; }
+
+  /* ── shortcuts ────────────────────────────────────────────────────────── */
+
+  /*
+    Four things a merchant does, as targets rather than as menu entries.
+
+    Only where the sidebar is not open: on a desktop every section is one click away in the
+    rail beside this, and a second copy of four of them is noise.
+  */
+  .quick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-2); margin-bottom: var(--gap); }
+  .quick button {
+    font: inherit; cursor: pointer; background: none; border: 0; padding: 0;
+    display: flex; flex-direction: column; align-items: center; gap: var(--sp-2);
+    color: var(--ink); min-width: 0;
+  }
+  .quick button > svg {
+    width: 100%; height: 3.25rem; padding: 0.9rem 0; box-sizing: border-box;
+    border: 1px solid var(--line); border-radius: var(--r-lg);
+    background: var(--surface); color: var(--ink-2);
+    transition: background-color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+  }
+  .quick button:first-child > svg { background: var(--lime); border-color: var(--lime); color: var(--lime-ink); }
+  .quick button:hover > svg { border-color: var(--line-strong); }
+  .quick button:first-child:hover > svg { filter: brightness(0.96); }
+  .quick button > span {
+    font-size: var(--s-2); font-weight: 550; text-align: center; line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  .quick button:focus-visible { outline: none; }
+  .quick button:focus-visible > svg { box-shadow: var(--focus); }
+  @media (min-width: 64em) { .quick { display: none; } }
+
+  /* ── a list of rows, where a table would be four columns of nothing ───── */
+
+  .rows { display: flex; flex-direction: column; }
+  .row-item {
+    display: flex; align-items: center; gap: var(--sp-3);
+    padding: var(--sp-3) 0; border-top: 1px solid var(--line); min-width: 0;
+  }
+  .row-item:first-child { border-top: 0; padding-top: 0; }
+  .row-main { flex: 1 1 auto; min-width: 0; }
+  .row-title { font-size: var(--s0); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-sub { font-size: var(--s-2); color: var(--faint); }
+  .row-side { text-align: right; flex: none; }
+  .row-amount { font-size: var(--s0); font-weight: 600; font-variant-numeric: tabular-nums; }
+
   /* ── stats ────────────────────────────────────────────────────────────── */
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: var(--gap); }
@@ -891,7 +980,11 @@
         <span class="note" id="period-note"></span>
       </header>
 
-      <div class="grid kpi" id="overview-stats"></div>
+      <div id="overview-stats"></div>
+
+      <!-- Four things a merchant does. Filled by the script so the icons are the same
+           ones the sections themselves carry. -->
+      <div class="quick" id="quick-actions" aria-label="Shortcuts"></div>
 
       <div class="cols">
         <div class="panel">
@@ -910,6 +1003,14 @@
           <div class="panel-head"><h2>Before your first live payment</h2><span class="note" id="setup-progress"></span></div>
           <div class="panel-body"><ol class="checklist" id="checklist"></ol></div>
         </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Recent payments</h2>
+          <button class="quiet" type="button" id="recent-all">All invoices</button>
+        </div>
+        <div class="panel-body"><div class="rows" id="recent-list"></div></div>
       </div>
 
       <div class="panel">
@@ -2028,6 +2129,8 @@
      */
     renderChecklist();
     renderAttention();
+    renderRecent();
+    renderShortcuts();
     renderVolumeChart();
 
     if (!commission || !report) return;
@@ -2043,19 +2146,43 @@
     const byStatus = report.invoicesByStatus || {};
     const attention = (byStatus.underpaid || 0) + (byStatus.overpaid || 0);
 
+    /**
+     * The money first, the rest under it.
+     *
+     * This was four cards of equal weight, which gave the count of paid invoices the same
+     * size as the volume it counted. The figure a merchant opens this page for is the one
+     * that gets the card.
+     *
+     * "Processed this period" says what the figure is, not what it is not: an earlier draft
+     * read "nothing owed on it", which put the word "owed" in front of somebody who owes
+     * nothing.
+     */
+    const rate = commissionParts(commission.commission.feeBps);
     fill(el('overview-stats'), [
-      // Says what the figure is, not what it is not. An earlier draft read "nothing owed
-      // on it", which put the word "owed" in front of a merchant who owes nothing.
-      stat('Processed this period', progress.processedUsd, 'credited, unreversed', true),
-      // The percentage as the headline and the money underneath: joined at headline size
-      // it wraps and shouts louder than the merchant's own volume beside it.
-      stat(
-        'Commission',
-        commissionParts(commission.commission.feeBps).percent,
-        commissionParts(commission.commission.feeBps).perThousand,
-      ),
-      stat('Paid invoices', String(byStatus.paid || 0), 'lifetime'),
-      stat('Needs a look', String(attention), attention > 0 ? 'under- or overpaid' : 'nothing outstanding'),
+      h('div', { class: 'hero' }, [
+        h('div', { class: 'hero-top' }, [
+          h('span', { class: 'hero-label', text: 'Processed this period' }),
+          h('span', { class: 'hero-when', text: 'credited, unreversed' }),
+        ]),
+        h('div', { class: 'hero-figure', text: progress.processedUsd }),
+        h('div', { class: 'hero-split' }, [
+          h('div', {}, [
+            h('div', { class: 'hero-k', text: 'Commission' }),
+            // The percentage alone. "$12 per $1,000" is the useful gloss on a wide screen
+            // and two wrapped lines on a phone, so it stays on the commission tab where
+            // there is room for it.
+            h('div', { class: 'hero-v', text: rate.percent }),
+          ]),
+          h('div', {}, [
+            h('div', { class: 'hero-k', text: 'Paid invoices' }),
+            h('div', { class: 'hero-v', text: String(byStatus.paid || 0) }),
+          ]),
+          h('div', {}, [
+            h('div', { class: 'hero-k', text: 'Needs a look' }),
+            h('div', { class: 'hero-v', 'data-tone': attention > 0 ? 'warn' : null, text: String(attention) }),
+          ]),
+        ]),
+      ]),
     ]);
 
     const bar = el('tier-bar');
@@ -2171,6 +2298,70 @@
       }
     }).observe(el('volume-chart'));
   }
+
+  /**
+   * The four shortcuts, drawn from the same icons and the same `show` the sections use.
+   *
+   * Rendered rather than written into the markup so there is one list of sections, and a
+   * renamed one cannot leave a shortcut pointing at a view that no longer exists.
+   */
+  const SHORTCUTS = [
+    ['new', 'Take payment'],
+    ['payouts', 'Wallets'],
+    ['keys', 'API keys'],
+    ['security', 'Security'],
+  ];
+
+  function renderShortcuts() {
+    fill(
+      el('quick-actions'),
+      SHORTCUTS.map(([id, label]) => {
+        const known = VIEWS.some(([view]) => view === id);
+        if (!known) return null;
+        return h('button', { type: 'button', onclick: () => show(id) }, [
+          icon(id),
+          h('span', { text: label }),
+        ]);
+      }),
+    );
+  }
+
+  /**
+   * The last few payments, as rows rather than as a table.
+   *
+   * Five columns of short values is a table on a desktop and a horizontal scroll on a
+   * phone. The same facts — which currency, on which chain, how much, and what state —
+   * fit one row per invoice at any width.
+   */
+  function renderRecent() {
+    const rows = (cache.invoices || []).slice(0, 5);
+    if (rows.length === 0) {
+      fill(el('recent-list'), [h('p', { class: 'note', text: 'No payments yet. They appear here as they arrive.' })]);
+      return;
+    }
+    fill(
+      el('recent-list'),
+      rows.map((invoice) => {
+        const view = statusView(invoice.status);
+        // What the invoice asks for. Whether it was met is the pill's job, and the
+        // difference — when there is one — is what the panel below this is for.
+        const due = formatUnits(invoice.amountDue, invoice.assetDecimals ?? 0);
+        return h('div', { class: 'row-item' }, [
+          coinBadge(invoice.assetSymbol),
+          h('div', { class: 'row-main' }, [
+            h('div', { class: 'row-title', text: (invoice.assetSymbol || '?') + ' on ' + (invoice.chain || '?') }),
+            h('div', { class: 'row-sub', text: (invoice.reference || 'no reference') + ' · ' + formatAgo(invoice.createdAt) }),
+          ]),
+          h('div', { class: 'row-side' }, [
+            h('div', { class: 'row-amount', text: due + ' ' + (invoice.assetSymbol || '') }),
+            h('span', { class: 'pill', 'data-tone': view.tone, text: view.label }),
+          ]),
+        ]);
+      }),
+    );
+  }
+
+  el('recent-all').addEventListener('click', () => show('invoices'));
 
   function stat(label, value, sub, lime) {
     return h('div', { class: 'stat' }, [
@@ -2296,6 +2487,7 @@
     cache.invoices = body.invoices || [];
     renderInvoices();
     renderAttention();
+    renderRecent();
   }
 
   // ── take a payment ────────────────────────────────────────────────────────
