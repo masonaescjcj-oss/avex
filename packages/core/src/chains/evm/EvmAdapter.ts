@@ -17,7 +17,13 @@ import type {
   SettlementResult,
 } from '../ChainAdapter.js';
 import { chainConfig } from '../registry.js';
-import { RECIPIENTS_PER_FILTER, addressTopicOrNull, inBatches } from '../transfer-topics.js';
+import {
+  RECIPIENTS_PER_FILTER,
+  addressTopicOrNull,
+  inBatches,
+  isLogQueryLimitError,
+  narrowedRange,
+} from '../transfer-topics.js';
 import {
   NO_FEE,
   invoiceSalt,
@@ -120,12 +126,22 @@ export class EvmAdapter implements ChainAdapter {
   readonly addressModel = 'unique' as const;
 
   private rpcId = 0;
+  /**
+   * How many blocks the next poll asks for.
+   *
+   * Starts at the configured range and halves each time a node refuses a log query for its
+   * size, then grows back once queries succeed. A fixed range met a public node's limit after
+   * every restart: the gap the restart left was hundreds of blocks, the node refused a query
+   * that wide, and the watcher retried the same width for as long as it was left running.
+   */
+  private rangeCap: number;
 
   constructor(
     private readonly config: EvmAdapterConfig,
     private readonly oracle: PriceOracle,
     private readonly addressBook: AddressBook,
   ) {
+    this.rangeCap = config.pollRange;
     this.chain = config.chain;
   }
 
@@ -174,7 +190,7 @@ export class EvmAdapter implements ChainAdapter {
     const from = cursor === null ? safeHead : Number(cursor) + 1;
     if (from > safeHead) return { payments: [], cursor: cursor ?? String(safeHead) };
 
-    const to = Math.min(safeHead, from + this.config.pollRange - 1);
+    const to = Math.min(safeHead, from + this.rangeCap - 1);
     const payments: IncomingPayment[] = [];
 
     /**
@@ -211,17 +227,40 @@ export class EvmAdapter implements ChainAdapter {
     if (recipients.length === 0) return { payments: [], cursor: String(to) };
 
     const logs: RpcLog[] = [];
-    for (const batch of inBatches(recipients, RECIPIENTS_PER_FILTER)) {
-      logs.push(
-        ...(await this.rpc<RpcLog[]>('eth_getLogs', [
-          {
-            fromBlock: `0x${from.toString(16)}`,
-            toBlock: `0x${to.toString(16)}`,
-            address: [...byContract.keys()],
-            topics: [TRANSFER_TOPIC, null, batch],
-          },
-        ])),
-      );
+    try {
+      for (const batch of inBatches(recipients, RECIPIENTS_PER_FILTER)) {
+        logs.push(
+          ...(await this.rpc<RpcLog[]>('eth_getLogs', [
+            {
+              fromBlock: `0x${from.toString(16)}`,
+              toBlock: `0x${to.toString(16)}`,
+              address: [...byContract.keys()],
+              topics: [TRANSFER_TOPIC, null, batch],
+            },
+          ])),
+        );
+      }
+    } catch (error) {
+      /**
+       * Refused for size: ask for less next time, and say so in the error the loop logs.
+       *
+       * Not retried here. The watcher's loop already backs off and polls again, and the
+       * narrower range is what the next poll uses; retrying inside one poll would hide how
+       * often this happens from the log that is supposed to show it.
+       */
+      if (isLogQueryLimitError(error) && this.rangeCap > narrowedRange(this.rangeCap)) {
+        const before = this.rangeCap;
+        this.rangeCap = narrowedRange(this.rangeCap);
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} — the node refused a ` +
+            `${to - from + 1}-block query; narrowing from ${before} to ${this.rangeCap} blocks per poll`,
+        );
+      }
+      throw error;
+    }
+    // A query that went through means the node can take this much; try a little more.
+    if (this.rangeCap < this.config.pollRange) {
+      this.rangeCap = Math.min(this.config.pollRange, this.rangeCap * 2);
     }
 
     for (const log of logs) {

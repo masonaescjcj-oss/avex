@@ -292,7 +292,7 @@ const schema = z.object({
 
   EVM_RPC_URLS: z
     .string()
-    .default('bsc=https://bsc-dataseed.binance.org')
+    .default('bsc=https://bsc-rpc.publicnode.com')
     .transform((value) => {
       const map: Record<string, string[]> = {};
       for (const entry of value.split(',')) {

@@ -67,12 +67,28 @@ function transferLog(input: {
  * would return an empty list from a real node, and a test that only checked the outcome could
  * not tell that apart from a quiet chain.
  */
-function responder(input: { readonly head: number; readonly logs: readonly unknown[] }) {
+function responder(input: {
+  readonly head: number;
+  readonly logs: readonly unknown[];
+  /** When set, a log query this wide or wider is refused the way a public node refuses it. */
+  readonly refuseRangeAbove?: number;
+}) {
   const calls: { method: string; params: unknown[] }[] = [];
 
   const fetchMock = mock.fn(async (_url: string, init?: { body?: string }) => {
     const request = JSON.parse(init?.body ?? '{}') as { method: string; params: unknown[] };
     calls.push({ method: request.method, params: request.params });
+
+    if (request.method === 'eth_getLogs' && input.refuseRangeAbove !== undefined) {
+      const filter = request.params[0] as { fromBlock: string; toBlock: string };
+      const width = Number(BigInt(filter.toBlock)) - Number(BigInt(filter.fromBlock)) + 1;
+      if (width > input.refuseRangeAbove) {
+        return {
+          ok: true,
+          json: async () => ({ jsonrpc: '2.0', id: 1, error: { code: -32005, message: 'limit exceeded' } }),
+        } as unknown as Response;
+      }
+    }
 
     const result =
       request.method === 'eth_blockNumber'
@@ -96,8 +112,13 @@ function adapterWith(options: {
   readonly known?: readonly string[];
   readonly assets?: readonly Asset[];
   readonly confirmationLag?: number;
+  readonly refuseRangeAbove?: number;
 }) {
-  const { calls, fetchMock } = responder({ head: options.head, logs: options.logs });
+  const { calls, fetchMock } = responder({
+    head: options.head,
+    logs: options.logs,
+    ...(options.refuseRangeAbove === undefined ? {} : { refuseRangeAbove: options.refuseRangeAbove }),
+  });
   const known = new Set((options.known ?? [WALLET]).map((address) => normalizeTronAddress(address)));
 
   const adapter = new TronAdapter(
@@ -357,6 +378,36 @@ describe('watching TRON', () => {
     const idle = await adapter.poll('982');
     assert.equal(idle.cursor, '982');
     assert.deepEqual(idle.payments, []);
+  });
+
+  test('a node that refuses a wide log query is asked for fewer blocks next time', async (t) => {
+    /**
+     * The failure from the BNB Chain log: "eth_getLogs: limit exceeded", ten polls in a row,
+     * for hours, while a payment sat in the merchant's wallet. The public node refuses a query
+     * over more than a few hundred blocks, the watcher had fallen that far behind during a
+     * restart, and it asked for the same width every time. Now a refusal halves the width for
+     * the next poll, and the width grows back once queries go through.
+     */
+    const { adapter, calls, fetchMock } = adapterWith({ head: 2000, logs: [], refuseRangeAbove: 60 });
+    t.mock.method(globalThis, 'fetch', fetchMock);
+
+    // 200 blocks: refused. 100: refused. 50: accepted.
+    await assert.rejects(adapter.poll('1000'), /limit exceeded.*narrowing from 200 to 100/);
+    await assert.rejects(adapter.poll('1000'), /narrowing from 100 to 50/);
+    const result = await adapter.poll('1000');
+    assert.equal(result.cursor, '1050', 'fifty blocks, and the cursor moved');
+
+    // The one that went through asked for exactly fifty.
+    const widths = calls
+      .filter((call) => call.method === 'eth_getLogs')
+      .map((call) => {
+        const filter = call.params[0] as { fromBlock: string; toBlock: string };
+        return Number(BigInt(filter.toBlock)) - Number(BigInt(filter.fromBlock)) + 1;
+      });
+    assert.deepEqual(widths, [200, 100, 50]);
+
+    // Growing back: the next poll may ask for a hundred again, and is refused, and narrows.
+    await assert.rejects(adapter.poll('1050'), /narrowing from 100 to 50/);
   });
 
   test('nothing here settles, and it says so rather than pretending', async () => {

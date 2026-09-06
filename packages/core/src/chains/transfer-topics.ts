@@ -65,3 +65,28 @@ export function inBatches<T>(items: readonly T[], size: number): readonly T[][] 
  * deployment has ever needed to tune it, and a knob nobody turns is a knob that is wrong.
  */
 export const RECIPIENTS_PER_FILTER = 100;
+
+/**
+ * Whether a node refused a log query for being too big, rather than failing for any reason.
+ *
+ * Public nodes say this in several dialects — BNB Chain's dataseed answers "limit exceeded",
+ * TRON "query returned more than 10000 results", geth "query exceeds max block range" — and
+ * none of them is a fault of ours to back off from. The watcher's answer is to ask for fewer
+ * blocks at a time, which is `narrowedRange`; a query that was refused for size and asked
+ * again unchanged after a minute is refused again after a minute, forever, which is exactly
+ * how the BNB Chain watcher sat at "10 polls in a row" while a payment waited in the wallet.
+ */
+export function isLogQueryLimitError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /limit exceeded|block range|more than \d+ results|too many|exceeds? max|response size|query timeout|-3200[15]\b/i.test(
+    message,
+  );
+}
+
+/** The fewest blocks a poll will ever ask for. Below this the query is not the problem. */
+export const MIN_POLL_RANGE = 8;
+
+/** Half the range, never below the floor. */
+export function narrowedRange(current: number): number {
+  return Math.max(MIN_POLL_RANGE, Math.floor(current / 2));
+}

@@ -524,7 +524,10 @@ PROMPT
   # without one is not offered at all.
   info "An endpoint per chain is what turns that chain on. No contracts needed: payments go"
   info "straight into each merchant's own wallet. Leave one blank to leave the chain off."
-  ask "BNB Chain JSON-RPC endpoint (blank to skip)" bsc_rpc "https://bsc-dataseed.bnbchain.org"
+  # The dataseed nodes refuse a log query over more than a few hundred blocks with "limit
+  # exceeded", which is what a watcher catching up after a restart asks for. publicnode takes
+  # the same query; the watcher narrows its range on refusal either way.
+  ask "BNB Chain JSON-RPC endpoint (blank to skip)" bsc_rpc "https://bsc-rpc.publicnode.com"
   # `polygon-rpc.com` answers 401 without a key, which the watcher reports as a chain it
   # cannot see. The publicnode endpoint needs none.
   ask "Polygon JSON-RPC endpoint (blank to skip)" polygon_rpc "https://polygon-bor-rpc.publicnode.com"
