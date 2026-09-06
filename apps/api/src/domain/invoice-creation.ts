@@ -1,4 +1,4 @@
-import { applyFeePayer, createQuote, DEFAULT_MAX_ROUNDING_BPS, DEFAULT_QUOTE_TTL_MS, fiatToTokenAmount, QuoteInputError, RATE_SCALE, tokenAmountToFiat, type Asset, type ChainId, type FeePayer, type FeeSplit, type PriceSymbol, type PricingMode, type Rate } from '@avex/core';
+import { applyFeePayer, ceilToGrid, createQuote, DEFAULT_MAX_ROUNDING_BPS, DEFAULT_QUOTE_TTL_MS, fiatToTokenAmount, QuoteInputError, RATE_SCALE, tokenAmountToFiat, type Asset, type ChainId, type FeePayer, type FeeSplit, type PriceSymbol, type PricingMode, type Rate } from '@avex/core';
 import { and, eq, isNull } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
@@ -45,6 +45,7 @@ export class InvoiceCreationError extends Error {
       | 'chain_unsupported'
       | 'balance_owed'
       | 'amount_below_minimum'
+      | 'asset_unsuitable'
       | 'not_configured',
     message: string,
   ) {
@@ -126,6 +127,20 @@ export const TELEGRAM_RAIL = 'telegram';
 
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const MIN_TTL_MS = 60 * 1000;
+
+/**
+ * How long an invoice paid into the merchant's own wallet stays open, unless the caller says.
+ *
+ * Three hours, where a forwarder invoice keeps the quote's fifteen minutes. The two differ
+ * because what the deadline protects differs. On a forwarder chain the deadline is the rate
+ * lock and nothing else: a late payment still reaches its own address and is credited. On a
+ * shared wallet the deadline is also how long the invoice's amount stays reserved and how long
+ * it counts as a candidate for a wrong-amount payment, and a payer sending from an exchange
+ * routinely takes an hour between reading the amount and the transfer landing. Three hours is
+ * the merchant's own figure for that; the rate risk inside it is theirs and they have accepted
+ * it. A day is the ceiling either way.
+ */
+export const POOLED_INVOICE_TTL_MS = 3 * 60 * 60 * 1000;
 
 export class InvoiceCreationService {
   constructor(
@@ -236,7 +251,7 @@ export class InvoiceCreationService {
 
     // 3. The rate, and from it the amount. `createQuote` is pure, so every rounding
     //    decision it makes is testable without a network.
-    const quote = await this.buildQuote(config, request);
+    const quote = await this.buildQuote(config, request, pooled);
 
     /**
      * 3b. Whether this chain can carry an order this small.
@@ -260,10 +275,15 @@ export class InvoiceCreationService {
       if (!verdict.ok) {
         throw new InvoiceCreationError(
           'amount_below_minimum',
-          `An order this small cannot carry its own settlement on ${config.asset.chain} ` +
-            `right now — the minimum is ${formatUsdMicros(verdict.minUsdMicros)}, and it moves ` +
-            'with the chain. Paying into one of your own wallets has no such floor, on any ' +
-            'chain: the payment lands there and nothing has to be settled.',
+          pooled
+            ? `The smallest order we take is ${formatUsdMicros(verdict.minUsdMicros)}, on every ` +
+              'currency and every network. Below that the amount is dust: an exchange fee ' +
+              'exceeds it and a stray transfer of that size cannot sensibly be reconciled.'
+            : `An order this small cannot carry its own settlement on ${config.asset.chain} ` +
+              `right now — the minimum is ${formatUsdMicros(verdict.minUsdMicros)}, and it moves ` +
+              `with the chain. The floor is ${formatUsdMicros(this.minimums.absoluteMinUsdMicros())} ` +
+              'everywhere; paying into one of your own wallets has only that floor, on any ' +
+              'chain, because the payment lands there and nothing has to be settled.',
         );
       }
     }
@@ -355,6 +375,16 @@ export class InvoiceCreationService {
      */
     const networkFeeBps = fee?.networkFeeBps ?? 0;
     const charged = applyFeePayer(quote.amountDue, surchargeBps(fee), feePayer, networkFeeBps);
+    /**
+     * What the payer is asked for, rounded up to three decimals.
+     *
+     * `charged.amountDue` is exact to the token's own precision — eighteen decimals on most EVM
+     * tokens — and that is not a number a person types or checks. Up, so the merchant is never
+     * short by the rounding; the fraction of a cent goes to them. On a pooled wallet the
+     * disambiguator is added on top of this figure, so it too stays within three decimals. See
+     * `amount-grid` in `@avex/core` for the rule and its cost on dear tokens.
+     */
+    const asked = ceilToGrid(charged.amountDue, config.asset.decimals);
     /** Whether the *commission* was grossed onto the payer, which the network fee no longer implies. */
     const commissionPassedOn: FeePayer =
       feePayer === 'payer' && surchargeBps(fee) > 0 ? 'payer' : 'merchant';
@@ -509,7 +539,7 @@ export class InvoiceCreationService {
              * put a fraction of a cent of commission on a fraction of a cent of disambiguator,
              * which is arithmetic nobody could reproduce from the invoice.
              */
-            base: charged.amountDue,
+            base: asked,
             decimals: config.asset.decimals,
             /**
              * Dollars per whole token, so the disambiguator lands in the digits a payer reads —
@@ -537,7 +567,11 @@ export class InvoiceCreationService {
            * missing payout address, rather than as an internal failure.
            */
           throw new InvoiceCreationError(
-            error.code === 'pool_empty' ? 'no_deposit_wallet' : 'not_configured',
+            error.code === 'pool_empty'
+              ? 'no_deposit_wallet'
+              : error.code === 'tick_too_dear' || error.code === 'decimals_too_few'
+                ? 'asset_unsuitable'
+                : 'not_configured',
             error.message,
           );
         }
@@ -546,7 +580,7 @@ export class InvoiceCreationService {
     } else {
       [created] = await this.db
         .insert(invoices)
-        .values(invoiceRow(target.address, charged.amountDue))
+        .values(invoiceRow(target.address, asked))
         .onConflictDoNothing()
         .returning();
     }
@@ -757,8 +791,9 @@ export class InvoiceCreationService {
   private async buildQuote(
     config: Awaited<ReturnType<InvoiceCreationService['resolveAsset']>>,
     request: CreateInvoiceRequest,
+    pooled: boolean,
   ) {
-    const ttlMs = clampTtl(request.ttlMs);
+    const ttlMs = clampTtl(request.ttlMs, pooled);
     let rate: Rate | undefined;
     let sources: string[] = [];
 
@@ -899,7 +934,7 @@ export class InvoiceCreationService {
   }
 }
 
-function clampTtl(ttlMs: number | undefined): number {
-  if (ttlMs === undefined) return DEFAULT_QUOTE_TTL_MS;
+function clampTtl(ttlMs: number | undefined, pooled: boolean): number {
+  if (ttlMs === undefined) return pooled ? POOLED_INVOICE_TTL_MS : DEFAULT_QUOTE_TTL_MS;
   return Math.min(MAX_TTL_MS, Math.max(MIN_TTL_MS, Math.floor(ttlMs)));
 }

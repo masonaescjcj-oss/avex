@@ -238,16 +238,26 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
     await context.close();
   });
 
-  test('only currencies the API says are available are offered', async () => {
+  test('an unavailable currency is shown greyed with its reason, and cannot be chosen', async () => {
     /**
-     * `WEIRD` is returned by the API as unavailable, so the merchant can see it is
-     * configured. It must not be selectable here — a payer choosing it would be choosing
-     * something that cannot be invoiced.
+     * `WEIRD` is returned by the API as unavailable. It stays on the page — a coin that is there
+     * on one load and gone on the next reads as a broken page, and the payer who came for it
+     * should be told why it is off rather than left hunting — but a click on it does nothing:
+     * choosing it would be choosing something that cannot be invoiced.
      */
     const { page, context } = await open();
     const coins = await list(page, '#currencies .coin .coin-sym');
-    assert.deepEqual(coins, ['USDT']);
-    assert.ok(!coins.includes('WEIRD'));
+    assert.deepEqual(coins, ['USDT', 'WEIRD']);
+    const weird = page.locator('#currencies .coin:has-text("WEIRD")');
+    assert.equal(await weird.getAttribute('aria-disabled'), 'true');
+    assert.equal(
+      await weird.locator('.coin-name').textContent(),
+      'No trustworthy price for this currency right now.',
+    );
+    // Playwright refuses to click a disabled control on our behalf; a payer's tap is forced.
+    await weird.click({ force: true });
+    assert.equal(await page.$$eval('#networks .net-row', (rows) => rows.length), 0, 'nothing opened');
+    assert.equal(await weird.getAttribute('aria-checked'), 'false');
     await context.close();
   });
 

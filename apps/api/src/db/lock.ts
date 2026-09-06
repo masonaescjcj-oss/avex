@@ -44,6 +44,10 @@ export const JOB_LOCKS = {
    * exit rather than scan the same ranges and race the first one's cursor writes.
    */
   chainWatcher: 8_140_004,
+  /** Closing invoices past their deadline. */
+  invoiceExpiry: 8_140_005,
+  /** Re-examining transfers parked at shared wallets. */
+  reconcileParked: 8_140_006,
 } as const;
 
 export type JobLock = (typeof JOB_LOCKS)[keyof typeof JOB_LOCKS];

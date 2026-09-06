@@ -195,51 +195,76 @@ describe('the wallet pool', { skip: !databaseUrl }, () => {
     await openInvoice({ organizationId: org, address: only, amountDue: 20_000_007n });
 
     /**
-     * The random source is pinned to the offset that is already taken, so the allocator has to
-     * notice and move on. With a live `Math.random` this test would pass by luck 9998 times in
-     * 9999 and prove nothing.
+     * The first step above the price is taken — 20.001 is what the open invoice asks for — so
+     * the allocator has to notice and hand out the next one.
      */
+    await openInvoice({ organizationId: org, address: only, amountDue: 20_001_000n });
     const allocation = await db().transaction((tx) =>
       pool.allocate(tx, {
         organizationId: org,
         chain: 'tron',
         base: 20_000_000n,
         decimals: 6,
-        random: () => 6 / 9999,
       }),
     );
-    assert.notEqual(allocation.amountDue, 20_000_007n);
-    assert.ok(allocation.amountDue > 20_000_000n);
+    assert.notEqual(allocation.amountDue, 20_001_000n);
+    assert.equal(allocation.amountDue, 20_002_000n, 'the next free step');
   });
 
-  test('a paid invoice releases its amount', async () => {
+  test('a closed invoice keeps its amount for a day, then releases it', async () => {
     /**
-     * The uniqueness is over *open* invoices, which is why no database constraint can express
-     * it and why the lock exists. Once an invoice is paid its amount is free again — otherwise
-     * a merchant selling one popular price would exhaust the window in a week.
+     * The uniqueness is over invoices that still matter, which is why no database constraint
+     * can express it and why the lock exists. An invoice paid or expired an hour ago still
+     * holds its number — its payer may yet send the exact figure they were shown, and it must
+     * find them and nobody else. A day later the number is free again, or a merchant selling one
+     * popular price would exhaust the window in a week.
      */
     const org = await freshOrg();
     const only = tronAddress();
     await pool.register({ organizationId: org, chain: 'tron', address: only });
-    // 20.05 — the fifth whole cent, which `random: 0.5` lands on among nine.
-    const invoiceId = await openInvoice({
-      organizationId: org,
-      address: only,
-      amountDue: 20_050_000n,
-    });
-    await db().update(invoices).set({ status: 'paid' }).where(eq(invoices.id, invoiceId));
+    const recent = await openInvoice({ organizationId: org, address: only, amountDue: 20_001_000n });
+    await db().update(invoices).set({ status: 'paid' }).where(eq(invoices.id, recent));
+
+    const held = await db().transaction((tx) =>
+      pool.allocate(tx, { organizationId: org, chain: 'tron', base: 20_000_000n, decimals: 6 }),
+    );
+    assert.equal(held.amountDue, 20_002_000n, 'the just-paid amount is still spoken for');
+
+    // The same invoice, had it expired two days ago.
+    await db()
+      .update(invoices)
+      .set({ status: 'expired', expiresAt: new Date(Date.now() - 2 * 24 * 3_600_000) })
+      .where(eq(invoices.id, recent));
+    const freed = await db().transaction((tx) =>
+      pool.allocate(tx, { organizationId: org, chain: 'tron', base: 20_000_000n, decimals: 6 }),
+    );
+    assert.equal(freed.amountDue, 20_001_000n, 'the number is available again');
+  });
+
+  test('a wallet whose invoices all closed counts as idle, and the quietest idle wallet is used', async () => {
+    /**
+     * Two halves of the same rule. A paid invoice reserves its number but does not make the
+     * wallet busy — busy is about candidates for a wrong-amount payment, and a paid invoice is
+     * not one. And among idle wallets the one unused longest is chosen, so a late payment for
+     * an old invoice is least likely to land next to a new one.
+     */
+    const org = await freshOrg();
+    const recentlyUsed = tronAddress();
+    const longQuiet = tronAddress();
+    await pool.register({ organizationId: org, chain: 'tron', address: recentlyUsed });
+    await pool.register({ organizationId: org, chain: 'tron', address: longQuiet });
+    const fresh = await openInvoice({ organizationId: org, address: recentlyUsed, amountDue: 20_001_000n });
+    await db().update(invoices).set({ status: 'paid' }).where(eq(invoices.id, fresh));
+    const old = await openInvoice({ organizationId: org, address: longQuiet, amountDue: 30_001_000n });
+    await db()
+      .update(invoices)
+      .set({ status: 'paid', createdAt: new Date(Date.now() - 6 * 3_600_000) })
+      .where(eq(invoices.id, old));
 
     const allocation = await db().transaction((tx) =>
-      pool.allocate(tx, {
-        organizationId: org,
-        chain: 'tron',
-        base: 20_000_000n,
-        decimals: 6,
-        unitPriceUsd: 1,
-        random: () => 0.5,
-      }),
+      pool.allocate(tx, { organizationId: org, chain: 'tron', base: 20_000_000n, decimals: 6 }),
     );
-    assert.equal(allocation.amountDue, 20_050_000n, 'the freed amount is available again');
+    assert.equal(allocation.address, longQuiet);
   });
 
   test('concurrent allocations for one price never collide', async () => {
@@ -248,9 +273,9 @@ describe('the wallet pool', { skip: !databaseUrl }, () => {
      *
      * Eight requests allocate the same price on a one-wallet pool at the same moment, each
      * inserting its invoice inside the transaction that allocated it — which is the contract.
-     * Every random source offers the same offset, so nothing but the lock and the re-read can
+     * Every caller wants the smallest free step, so nothing but the lock and the re-read can
      * keep them apart: without them, all eight would read an empty wallet, all eight would
-     * choose offset 1, and eight invoices would sit on one address asking for one amount.
+     * choose 20.001, and eight invoices would sit on one address asking for one amount.
      */
     const org = await freshOrg();
     const only = tronAddress();
@@ -264,8 +289,6 @@ describe('the wallet pool', { skip: !databaseUrl }, () => {
             chain: 'tron',
             base: 20_000_000n,
             decimals: 6,
-            // Every caller wants offset 1. Only one can have it.
-            random: () => 0,
           });
           await tx.insert(invoices).values({
             organizationId: org,

@@ -7,22 +7,26 @@ import type { Asset, IncomingPayment } from '@avex/core';
 import { and, eq } from 'drizzle-orm';
 
 import { createDatabase } from '../db/client.js';
-import { assets, invoices, organizations } from '../db/schema.js';
+import { assets, invoices, organizations, payments, unmatchedPayments } from '../db/schema.js';
 import { AuditService } from './audit.js';
-import { DatabasePaymentSink, UnmatchedPaymentError } from './payment-sink.js';
+import { CONFIRMING_GRACE_MS, expireInvoices } from './invoice-expiry.js';
+import { DatabasePaymentSink } from './payment-sink.js';
+import { ReconciliationService } from './reconciliation-service.js';
 import { WebhookService } from './webhook-service.js';
 
 /**
- * Crediting a payment that arrived at a shared wallet.
+ * Crediting a payment that arrived at a shared wallet, end to end.
  *
  * On every other chain the deposit address answers "whose payment is this". On a pooled chain it
  * does not — several of the merchant's invoices are open at one of their own addresses, and the
- * exact amount is what separates them. So this file is about the three cases the amount produces
- * and about which of them may be decided without a human.
+ * exact amount is what separates them. The rules are unit-tested in `pooled-matching.test.ts`;
+ * this file is about what the sink does with a decision: which rows it writes, what it parks,
+ * what it converts, and what the sweep and the expiry pass do afterwards.
  *
- * The case that matters most is the one that must *not* be decided: two invoices open at one
- * address and a payment matching neither. There is nothing on the chain that says which it was
- * for, and crediting either is a coin flip with somebody's money.
+ * The case that matters most is still the one that must *not* be decided: two invoices open at
+ * one address and a payment matching neither. There is nothing on the chain that says which it
+ * was for, and crediting either is a coin flip with somebody's money — so it is parked, and
+ * credited later only once the other invoice has been paid.
  */
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -36,29 +40,45 @@ const USDT: Asset = {
   contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
 };
 
+/** A second stablecoin on the same chain, for the wrong-token cases. Fixture, never curated. */
+const USDC: Asset = {
+  symbol: 'USDC',
+  chain: 'tron',
+  decimals: 6,
+  kind: 'trc20',
+  contract: 'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8',
+};
+
+const PRICES: Record<string, number> = { USDT: 1, USDC: 1 };
+
 describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => {
   let database: ReturnType<typeof createDatabase> | undefined;
   const db = () => database!.db;
   let sink: DatabasePaymentSink;
+  let webhooks: WebhookService;
   let orgId = '';
   let assetId = '';
+  let usdcAssetId = '';
 
   before(async () => {
     database = createDatabase(databaseUrl!, { max: 4 });
     const audit = new AuditService(db());
-    const webhooks = new WebhookService(
+    webhooks = new WebhookService(
       db(),
       // Never dispatched in these tests: crediting enqueues rows, it does not deliver them.
       { deliver: async () => ({ ok: true, status: 200 }) } as never,
       () => {},
     );
     /**
-     * Confirmations reported as satisfied by valuing every payment at zero.
-     *
-     * TRON needs 19, and this file is about matching rather than about finality. A payment held
-     * as `confirming` would leave every assertion below testing the same thing.
+     * A price per symbol, so a payment in the wrong token can be converted. Dollar-pegged at one,
+     * which keeps the arithmetic in the assertions readable.
      */
-    sink = new DatabasePaymentSink(db(), audit, webhooks, () => 0);
+    sink = new DatabasePaymentSink(db(), audit, webhooks, (payment) => {
+      const price = PRICES[payment.asset.symbol];
+      if (price === undefined) throw new Error(`no price for ${payment.asset.symbol}`);
+      return (Number(payment.amount) / 10 ** payment.asset.decimals) * price;
+    });
+    sink.parkUnmatchedIn(new ReconciliationService(db(), audit, sink));
 
     const unique = randomBytes(4).toString('hex');
     const [org] = await db()
@@ -67,35 +87,41 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
       .returning({ id: organizations.id });
     orgId = org!.id;
 
-    const [existing] = await db()
-      .select({ id: assets.id })
-      .from(assets)
-      .where(and(eq(assets.chain, 'tron'), eq(assets.symbol, 'USDT'), eq(assets.curated, true)))
-      .limit(1);
-    if (existing) {
-      assetId = existing.id;
-    } else {
-      const [created] = await db()
-        .insert(assets)
-        .values({
-          chain: 'tron',
-          symbol: 'USDT',
-          contract: USDT.contract!,
-          decimals: 6,
-          kind: 'trc20',
-          curated: true,
-          verdict: 'approved',
-        })
-        .returning({ id: assets.id });
-      assetId = created!.id;
-    }
+    assetId = await ensureAsset(USDT, true);
+    usdcAssetId = await ensureAsset(USDC, false);
   });
 
   after(async () => {
     await database?.close();
   });
 
-  async function openInvoice(address: string, amountDue: bigint): Promise<string> {
+  async function ensureAsset(asset: Asset, curated: boolean): Promise<string> {
+    const [existing] = await db()
+      .select({ id: assets.id })
+      .from(assets)
+      .where(and(eq(assets.chain, asset.chain), eq(assets.contract, asset.contract!)))
+      .limit(1);
+    if (existing) return existing.id;
+    const [created] = await db()
+      .insert(assets)
+      .values({
+        chain: asset.chain,
+        symbol: asset.symbol,
+        contract: asset.contract!,
+        decimals: asset.decimals,
+        kind: asset.kind,
+        curated,
+        verdict: 'approved',
+      })
+      .returning({ id: assets.id });
+    return created!.id;
+  }
+
+  async function openInvoice(
+    address: string,
+    amountDue: bigint,
+    over: Partial<typeof invoices.$inferInsert> = {},
+  ): Promise<string> {
     const [row] = await db()
       .insert(invoices)
       .values({
@@ -115,13 +141,14 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
         toleranceBps: 0,
         feeBps: 0,
         expiresAt: new Date(Date.now() + 3_600_000),
+        ...over,
       })
       .returning({ id: invoices.id });
     return row!.id;
   }
 
   let transfer = 0;
-  function payment(to: string, amount: bigint): IncomingPayment {
+  function payment(to: string, amount: bigint, over: Partial<IncomingPayment> = {}): IncomingPayment {
     transfer += 1;
     return {
       chain: 'tron',
@@ -133,15 +160,21 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
       blockNumber: 1000 + transfer,
       // Far past TRON's 19, so matching is what is being tested.
       confirmations: 40,
+      ...over,
     };
   }
 
-  const statusOf = async (id: string): Promise<string> => {
+  const invoiceRow = async (id: string) => {
+    const [row] = await db().select().from(invoices).where(eq(invoices.id, id));
+    return row!;
+  };
+  const statusOf = async (id: string): Promise<string> => (await invoiceRow(id)).status;
+  const parkedFor = async (p: IncomingPayment) => {
     const [row] = await db()
-      .select({ status: invoices.status, amountPaid: invoices.amountPaid })
-      .from(invoices)
-      .where(eq(invoices.id, id));
-    return row!.status;
+      .select()
+      .from(unmatchedPayments)
+      .where(and(eq(unmatchedPayments.txHash, p.txHash), eq(unmatchedPayments.transferIndex, p.transferIndex)));
+    return row ?? null;
   };
 
   test('the exact amount picks its invoice out of several at one address', async () => {
@@ -150,11 +183,11 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
      * in the disambiguator — which is exactly the state the allocator creates.
      */
     const wallet = tronAddress();
-    const first = await openInvoice(wallet, 20_000_001n);
-    const second = await openInvoice(wallet, 20_000_002n);
-    const third = await openInvoice(wallet, 20_000_003n);
+    const first = await openInvoice(wallet, 20_001_000n);
+    const second = await openInvoice(wallet, 20_002_000n);
+    const third = await openInvoice(wallet, 20_003_000n);
 
-    await sink.credit(payment(wallet, 20_000_002n));
+    assert.equal(await sink.credit(payment(wallet, 20_002_000n)), 'credited');
 
     assert.equal(await statusOf(second), 'paid');
     assert.equal(await statusOf(first), 'pending', 'the neighbours must be untouched');
@@ -166,43 +199,50 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
      * The payer sent the round number — their exchange truncated it, or they typed $20.00
      * because that is the price. One invoice is open at this wallet, so there is no ambiguity
      * about whose payment it is, and refusing it would leave a real payment looking like no
-     * payment. Recorded as underpaid, with the shortfall kept.
+     * payment. Recorded as underpaid, with the shortfall kept — and the merchant is told the
+     * amount that arrived, which is what they credit their customer with.
      */
     const wallet = tronAddress();
-    const only = await openInvoice(wallet, 20_000_004n);
+    const only = await openInvoice(wallet, 20_001_000n);
 
-    await sink.credit(payment(wallet, 20_000_000n));
+    assert.equal(await sink.credit(payment(wallet, 20_000_000n)), 'credited');
 
-    assert.equal(await statusOf(only), 'underpaid');
+    const row = await invoiceRow(only);
+    assert.equal(row.status, 'underpaid');
+    assert.equal(row.amountPaid, '20000000');
   });
 
   test('an overpayment to a lone invoice is credited too', async () => {
     const wallet = tronAddress();
-    const only = await openInvoice(wallet, 20_000_004n);
+    const only = await openInvoice(wallet, 20_001_000n);
 
     await sink.credit(payment(wallet, 25_000_000n));
 
     assert.equal(await statusOf(only), 'overpaid');
   });
 
-  test('a wrong amount with two invoices open is refused, not guessed', async () => {
+  test('a wrong amount with two invoices open is parked, not guessed', async () => {
     /**
-     * The whole reason the design needs an admin queue. Two payers, one wallet, and a transfer
+     * The whole reason the design needs a queue. Two payers, one wallet, and a transfer
      * matching neither invoice: nothing on the chain says which of them sent it. Crediting
-     * either would be a coin flip, so this raises `UnmatchedPaymentError` — which is what puts
-     * it in front of an operator, where the payer's support ticket can be matched to it.
+     * either would be a coin flip, so it is parked — as a row an operator can see, with the
+     * sender recorded, not as a log line — and neither invoice moves.
      */
     const wallet = tronAddress();
-    const first = await openInvoice(wallet, 20_000_005n);
-    const second = await openInvoice(wallet, 20_000_006n);
+    const first = await openInvoice(wallet, 20_001_000n);
+    const second = await openInvoice(wallet, 20_002_000n);
+    const stray = payment(wallet, 20_000_000n, { from: 'TPayerWalletAddressXXXXXXXXXXXXXXX' });
 
-    await assert.rejects(
-      sink.credit(payment(wallet, 20_000_000n)),
-      (error: unknown) => error instanceof UnmatchedPaymentError,
-    );
+    assert.equal(await sink.credit(stray), 'unmatched');
 
     assert.equal(await statusOf(first), 'pending', 'neither invoice may move');
     assert.equal(await statusOf(second), 'pending');
+    const parked = await parkedFor(stray);
+    assert.ok(parked, 'the transfer is in the reconciliation queue');
+    assert.equal(parked.reason, 'ambiguous');
+    assert.equal(parked.resolution, 'pending');
+    assert.equal(parked.fromAddress, stray.from);
+    assert.equal(parked.assetId, assetId, 'the token is recorded so the sweep can value it');
   });
 
   test('the same rules hold on an EVM chain, decided by the row rather than the chain', async () => {
@@ -245,9 +285,9 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
       return row!.id;
     };
     const one = 10n ** 18n;
-    const first = await insert(wallet, 20n * one + 10n ** 16n, 'pooled'); // 20.01
-    const second = await insert(wallet, 20n * one + 2n * 10n ** 16n, 'pooled'); // 20.02
-    const third = await insert(wallet, 20n * one + 3n * 10n ** 16n, 'pooled'); // 20.03
+    const first = await insert(wallet, 20n * one + 10n ** 15n, 'pooled'); // 20.001
+    const second = await insert(wallet, 20n * one + 2n * 10n ** 15n, 'pooled'); // 20.002
+    const third = await insert(wallet, 20n * one + 3n * 10n ** 15n, 'pooled'); // 20.003
     const derived = await insert(forwarder, 20n * one, 'unique');
 
     const bscUsdt = { ...USDT, chain: 'bsc' as const, decimals: 18 };
@@ -258,58 +298,273 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
     });
 
     // The exact amount picks its row out of the three at the wallet.
-    await sink.credit(pay(wallet, 20n * one + 2n * 10n ** 16n));
+    await sink.credit(pay(wallet, 20n * one + 2n * 10n ** 15n));
     assert.equal(await statusOf(second), 'paid');
     assert.equal(await statusOf(first), 'pending');
     assert.equal(await statusOf(third), 'pending');
 
     // A wrong amount with two still open is nobody's until an operator says so.
-    await assert.rejects(
-      sink.credit(pay(wallet, 20n * one)),
-      (error: unknown) => error instanceof UnmatchedPaymentError,
-    );
+    const stray = pay(wallet, 20n * one);
+    assert.equal(await sink.credit(stray), 'unmatched');
+    assert.equal((await parkedFor(stray))?.reason, 'ambiguous');
 
     // And the forwarder invoice on the same chain is still matched by address, any amount.
     await sink.credit(pay(forwarder, 20n * one + 12345n));
     assert.equal(await statusOf(derived), 'overpaid');
   });
 
-  test('a payment to a pooled wallet with nothing open is refused', async () => {
+  test('a payment to a pooled wallet with nothing recent is parked for a person', async () => {
     /**
-     * Most often a payer whose invoice expired while they were away. Still their money, and
-     * still a human's problem: crediting an expired invoice automatically would let a transfer
-     * arriving days later reopen an order the merchant has already closed.
+     * A payer whose invoice expired days ago. Still their money, and still a human's problem:
+     * crediting an invoice that old automatically would let a transfer arriving long after
+     * reopen an order the merchant has already closed.
      */
     const wallet = tronAddress();
-    const expired = await openInvoice(wallet, 20_000_007n);
-    await db().update(invoices).set({ status: 'expired' }).where(eq(invoices.id, expired));
+    await openInvoice(wallet, 20_007_000n, {
+      status: 'expired',
+      expiresAt: new Date(Date.now() - 3 * 24 * 3_600_000),
+    });
 
-    await assert.rejects(
-      sink.credit(payment(wallet, 20_000_007n)),
-      (error: unknown) => error instanceof UnmatchedPaymentError,
-    );
+    const stray = payment(wallet, 20_007_000n);
+    assert.equal(await sink.credit(stray), 'unmatched');
+    assert.equal((await parkedFor(stray))?.reason, 'invoice_expired');
   });
 
-  test('a paid invoice does not keep claiming its amount', async () => {
+  test('a late payer who sent the exact amount is credited to the invoice that expired', async () => {
     /**
-     * Once an invoice is settled its amount is released back to the allocator, so a second
-     * payment for that same amount is no longer *its* payment. Two invoices at one wallet, the
-     * first already paid: a transfer for the paid invoice's amount must not be credited to it a
-     * second time, and must not be credited to the other one either.
+     * The invoice lapsed an hour ago; the pool kept its number reserved for the day, so nothing
+     * else at this wallet asks for 20.004. The money is that payer's and that merchant's, and
+     * the merchant hears `invoice.paid` for an order they may have to reopen — which is the
+     * truth, and better than the money sitting in a queue.
      */
     const wallet = tronAddress();
-    const done = await openInvoice(wallet, 20_000_008n);
-    const stillOpen = await openInvoice(wallet, 20_000_009n);
-    await db().update(invoices).set({ status: 'paid' }).where(eq(invoices.id, done));
+    const late = await openInvoice(wallet, 20_004_000n, {
+      status: 'expired',
+      expiresAt: new Date(Date.now() - 3_600_000),
+    });
+    const other = await openInvoice(wallet, 20_005_000n);
 
+    assert.equal(await sink.credit(payment(wallet, 20_004_000n)), 'credited');
+    assert.equal(await statusOf(late), 'paid');
+    assert.equal(await statusOf(other), 'pending');
+  });
+
+  test('a paid invoice keeps claiming its amount for a day', async () => {
     /**
-     * One invoice remains open here, so rule two applies and the payment is credited to it as a
-     * wrong-amount payment. That is the correct outcome and worth asserting rather than
-     * assuming: it is the merchant's own wallet, one order is outstanding, and a human would
-     * reach the same conclusion.
+     * Once an invoice is paid its number stays reserved for a day, so a second transfer for that
+     * exact amount is still *its* payment — a payer who paid twice, which the merchant refunds —
+     * and is never credited to the other invoice open on the wallet.
      */
-    await sink.credit(payment(wallet, 20_000_008n));
-    assert.equal(await statusOf(stillOpen), 'underpaid');
-    assert.equal(await statusOf(done), 'paid', 'the settled invoice must not be touched');
+    const wallet = tronAddress();
+    const done = await openInvoice(wallet, 20_008_000n, { status: 'paid', amountPaid: '20008000' });
+    const stillOpen = await openInvoice(wallet, 20_009_000n);
+
+    const second = payment(wallet, 20_008_000n);
+    assert.equal(await sink.credit(second), 'credited');
+    const [row] = await db().select({ invoiceId: payments.invoiceId }).from(payments).where(eq(payments.txHash, second.txHash));
+    assert.equal(row!.invoiceId, done, 'the second payment lands on the paid invoice');
+    assert.equal(await statusOf(stillOpen), 'pending', 'the other invoice must not be touched');
+  });
+
+  test('the right amount in the wrong token is credited by value', async () => {
+    /**
+     * The payer chose USDT and sent USDC to the same wallet. The number identifies the invoice;
+     * the value settles it. The payment row keeps what actually arrived, and `credited_amount`
+     * carries what it was worth in the invoiced token, so `amount_paid` stays a sum in one unit.
+     */
+    const wallet = tronAddress();
+    const first = await openInvoice(wallet, 20_001_000n);
+    const second = await openInvoice(wallet, 20_002_000n);
+
+    const inUsdc = payment(wallet, 20_002_000n, { asset: USDC });
+    assert.equal(await sink.credit(inUsdc), 'credited');
+
+    const row = await invoiceRow(second);
+    assert.equal(row.status, 'paid');
+    assert.equal(row.amountPaid, '20002000');
+    assert.equal(await statusOf(first), 'pending');
+
+    const [recorded] = await db().select().from(payments).where(eq(payments.txHash, inUsdc.txHash));
+    assert.equal(recorded!.assetSymbol, 'USDC');
+    assert.equal(recorded!.amount, '20002000', 'what arrived');
+    assert.equal(recorded!.creditedAmount, '20002000', 'what it was worth in USDT');
+  });
+
+  test('the wrong token with one invoice open is credited to it, by value', async () => {
+    const wallet = tronAddress();
+    const only = await openInvoice(wallet, 20_001_000n);
+
+    assert.equal(await sink.credit(payment(wallet, 20_000_000n, { asset: USDC })), 'credited');
+    const row = await invoiceRow(only);
+    assert.equal(row.status, 'underpaid');
+    assert.equal(row.amountPaid, '20000000');
+  });
+
+  test('a second transfer from the wallet that paid an invoice goes with the first', async () => {
+    /**
+     * Two invoices open. A's payer pays A exactly, then sends a round top-up from the same
+     * wallet. It belongs with A, not with B — though B is the only invoice still open.
+     */
+    const wallet = tronAddress();
+    const a = await openInvoice(wallet, 20_001_000n);
+    const b = await openInvoice(wallet, 20_002_000n);
+    const payer = 'TPayerWalletAddressYYYYYYYYYYYYYYYY';
+
+    await sink.credit(payment(wallet, 20_001_000n, { from: payer }));
+    assert.equal(await statusOf(a), 'paid');
+
+    assert.equal(await sink.credit(payment(wallet, 5_000_000n, { from: payer })), 'credited');
+    assert.equal(await statusOf(a), 'overpaid');
+    assert.equal(await statusOf(b), 'pending');
+  });
+
+  test('a transfer not yet final is deferred, and the invoice shows it coming', async () => {
+    /**
+     * The sink says `deferred` rather than pretending; the watcher holds its cursor and shows
+     * the transfer again. Nothing is written except the visible progress for the payer.
+     */
+    const wallet = tronAddress();
+    const only = await openInvoice(wallet, 20_001_000n);
+    const early = payment(wallet, 20_001_000n, { confirmations: 1 });
+
+    assert.equal(await sink.credit(early), 'deferred');
+    assert.equal(await statusOf(only), 'confirming');
+    assert.equal((await db().select().from(payments).where(eq(payments.txHash, early.txHash))).length, 0);
+
+    assert.equal(await sink.credit({ ...early, confirmations: 40 }), 'credited');
+    assert.equal(await statusOf(only), 'paid');
+  });
+
+  test('once the other invoice is paid exactly, the sweep credits the survivor with the stray', async () => {
+    /**
+     * The merchant's scenario. Two invoices open, one payer types the amount wrong: parked. The
+     * other payer pays exactly. Now the wrongly-typed transfer has one invoice it could be for —
+     * one that existed when it arrived — and the sweep credits it there, marks the queue row
+     * attached, and says which rule did it.
+     */
+    const wallet = tronAddress();
+    const a = await openInvoice(wallet, 20_001_000n);
+    const b = await openInvoice(wallet, 20_002_000n);
+
+    const stray = payment(wallet, 19_500_000n);
+    assert.equal(await sink.credit(stray), 'unmatched');
+    assert.equal((await sink.sweepParked()).credited, 0, 'still two candidates');
+
+    await sink.credit(payment(wallet, 20_001_000n));
+    assert.equal(await statusOf(a), 'paid');
+
+    const swept = await sink.sweepParked();
+    assert.ok(swept.credited >= 1);
+    assert.equal(await statusOf(b), 'underpaid');
+    assert.equal((await invoiceRow(b)).amountPaid, '19500000');
+
+    const parked = await parkedFor(stray);
+    assert.equal(parked?.resolution, 'attached');
+    assert.equal(parked?.attachedInvoiceId, b);
+    assert.match(parked?.note ?? '', /sole open/);
+  });
+
+  test('the sweep leaves a stray alone when a fresh invoice is the only thing open', async () => {
+    /**
+     * Both original invoices expired unpaid; a new invoice was then issued on the wallet. It
+     * cannot be what the stray's payer was paying, however alone it is, and the stray stays for
+     * a person.
+     */
+    const wallet = tronAddress();
+    await openInvoice(wallet, 20_001_000n);
+    await openInvoice(wallet, 20_002_000n);
+    const stray = payment(wallet, 19_500_000n);
+    assert.equal(await sink.credit(stray), 'unmatched');
+
+    await db()
+      .update(invoices)
+      .set({ status: 'expired', expiresAt: new Date(Date.now() - 2 * 3_600_000) })
+      .where(eq(invoices.depositAddress, wallet));
+    const fresh = await openInvoice(wallet, 20_003_000n);
+
+    await sink.sweepParked();
+    assert.equal((await parkedFor(stray))?.resolution, 'pending');
+    assert.equal(await statusOf(fresh), 'pending');
+  });
+});
+
+describe('closing invoices whose time has run out', { skip: !databaseUrl }, () => {
+  let database: ReturnType<typeof createDatabase> | undefined;
+  const db = () => database!.db;
+  let webhooks: WebhookService;
+  let orgId = '';
+  let assetId = '';
+
+  before(async () => {
+    database = createDatabase(databaseUrl!, { max: 2 });
+    webhooks = new WebhookService(db(), { deliver: async () => ({ ok: true, status: 200 }) } as never, () => {});
+    const unique = randomBytes(4).toString('hex');
+    const [org] = await db()
+      .insert(organizations)
+      .values({ name: `Expiry ${unique}`, slug: `expiry-${unique}` })
+      .returning({ id: organizations.id });
+    orgId = org!.id;
+    const [usdt] = await db()
+      .select({ id: assets.id })
+      .from(assets)
+      .where(and(eq(assets.chain, 'tron'), eq(assets.contract, USDT.contract!)))
+      .limit(1);
+    assetId = usdt!.id;
+  });
+
+  after(async () => {
+    await database?.close();
+  });
+
+  async function invoiceWith(status: 'pending' | 'confirming' | 'paid', expiresAt: Date): Promise<string> {
+    const address = tronAddress();
+    const [row] = await db()
+      .insert(invoices)
+      .values({
+        organizationId: orgId,
+        assetId,
+        reference: `exp-${randomBytes(5).toString('hex')}`,
+        chain: 'tron',
+        amountDue: '20001000',
+        amountPaid: '0',
+        depositAddress: address,
+        payoutAddress: address,
+        addressModel: 'pooled',
+        status,
+        mode: 'live',
+        toleranceBps: 0,
+        feeBps: 0,
+        expiresAt,
+      })
+      .returning({ id: invoices.id });
+    return row!.id;
+  }
+  const statusOf = async (id: string) =>
+    (await db().select({ status: invoices.status }).from(invoices).where(eq(invoices.id, id)))[0]!.status;
+
+  test('a pending invoice past its deadline is expired; one still inside it is not', async () => {
+    const past = await invoiceWith('pending', new Date(Date.now() - 60_000));
+    const live = await invoiceWith('pending', new Date(Date.now() + 3_600_000));
+
+    const expired = await expireInvoices(db(), webhooks);
+    assert.ok(expired >= 1);
+    assert.equal(await statusOf(past), 'expired');
+    assert.equal(await statusOf(live), 'pending');
+  });
+
+  test('a confirming invoice is given a day past its deadline before it is given up on', async () => {
+    /**
+     * Money was seen and is waiting for the chain. Expiring it in that window would make the
+     * credit that follows land on an expired invoice; a day later, the transfer was reorganised
+     * out and never came back.
+     */
+    const waiting = await invoiceWith('confirming', new Date(Date.now() - 3_600_000));
+    const abandoned = await invoiceWith('confirming', new Date(Date.now() - CONFIRMING_GRACE_MS - 60_000));
+    const paid = await invoiceWith('paid', new Date(Date.now() - 3_600_000));
+
+    await expireInvoices(db(), webhooks);
+    assert.equal(await statusOf(waiting), 'confirming');
+    assert.equal(await statusOf(abandoned), 'expired');
+    assert.equal(await statusOf(paid), 'paid', 'a settled invoice is never touched');
   });
 });

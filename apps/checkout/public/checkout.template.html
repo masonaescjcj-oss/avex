@@ -400,6 +400,14 @@
     grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
     gap: var(--sp-2);
   }
+  /* Many currencies: one per row, so the list scans top to bottom and a greyed one has
+     room for its reason. */
+  .coin-grid[data-layout="list"] { grid-template-columns: 1fr; }
+  .coin-grid[data-layout="list"] .coin { min-height: 2.75rem; padding-block: var(--sp-1); }
+
+  /* Shown, not offered: the API says this currency cannot be invoiced right now and why. */
+  .coin[aria-disabled="true"] { opacity: 0.55; cursor: default; }
+  .coin[aria-disabled="true"]:hover { background: var(--surface); border-color: var(--line); }
 
   /* Selectable cards with radio semantics: an outlined card, and a two-pixel ring in
      the accent when chosen, drawn inside so the grid never shifts. */
@@ -1372,13 +1380,22 @@
       bySymbol.get(option.symbol).networks.push(option);
     }
 
-    // A currency with nothing available anywhere is dropped; one with some networks
-    // available keeps only those. An unavailable network shown as selectable would let
-    // a payer choose something that cannot be invoiced.
+    /**
+     * Nothing is dropped. A currency with no network available right now is shown greyed,
+     * with the API's reason, rather than removed — a coin that is there on one load and gone
+     * on the next reads as a broken page, and a payer who came to pay in BNB deserves to be
+     * told "no price for BNB at the moment" rather than to hunt for it. An unavailable
+     * network is likewise shown disabled under its currency. Neither can be chosen: that is
+     * the guarantee, and it is enforced where the click lands, not by hiding.
+     */
     const grouped = [];
     for (const entry of bySymbol.values()) {
       const usable = entry.networks.filter((network) => network.available);
-      if (usable.length > 0) grouped.push({ ...entry, networks: usable });
+      const reason = usable.length > 0
+        ? null
+        : entry.networks.find((network) => network.unavailableReason)?.unavailableReason
+          ?? 'Not available right now.';
+      grouped.push({ ...entry, disabled: usable.length === 0, reason });
     }
     return grouped;
   }
@@ -1448,6 +1465,8 @@
   let screen = 'network';
   let state = 'awaiting';
   let remaining = LOCK_SECONDS;
+  /** What the lock bar is full at: the invoice's whole life once one exists, the demo's otherwise. */
+  let lockTotal = LOCK_SECONDS;
   let confirmations = 0;
 
   // Once a transfer has been seen, the address it went to is fixed and the network
@@ -1497,6 +1516,8 @@
         decimals: network.decimals,
         amount: formatUnits(network.amount, network.decimals),
         rateUsd: network.rateUsd,
+        available: network.available !== false,
+        reason: network.unavailableReason ?? null,
         /**
          * Our commission, as a token amount, and only when the payer is the one paying it.
          *
@@ -1522,8 +1543,13 @@
       ...CHAINS[id],
       asset: currencyRow.id,
       amount: amountFor(currencyRow, CHAINS[id]),
+      available: true,
+      reason: null,
     }));
   }
+
+  /** How many currencies a grid of cards stays readable at; past it, a list. */
+  const LIST_ABOVE = 6;
 
   /** The catalogue in play: the API's in live mode, the demo's otherwise. */
   let catalogue = CURRENCIES;
@@ -1557,6 +1583,9 @@
   function renderCurrencies() {
     const container = el('currencies');
     container.textContent = '';
+    // Cards for a handful, a list for many: a dozen currencies as a grid of cards is a
+    // wall the eye cannot scan, and the list puts the reasons beside the greyed ones.
+    container.dataset.layout = catalogue.length > LIST_ABOVE ? 'list' : 'grid';
 
     for (const row of catalogue) {
       const chip = document.createElement('button');
@@ -1564,6 +1593,10 @@
       chip.className = 'coin';
       chip.setAttribute('role', 'radio');
       chip.setAttribute('aria-checked', String(currency !== null && row.id === currency.id));
+      if (row.disabled) {
+        chip.setAttribute('aria-disabled', 'true');
+        chip.title = row.reason;
+      }
 
       const mark = coinBadge(row.id);
 
@@ -1576,8 +1609,14 @@
 
       text.append(symbol);
       // Only when it says something the ticker does not. Live, the API sends the symbol
-      // as the name, and "USDT / USDT" is two lines carrying one fact.
-      if (row.name && row.name !== row.id) {
+      // as the name, and "USDT / USDT" is two lines carrying one fact. A greyed currency
+      // shows why instead.
+      if (row.disabled) {
+        const name = document.createElement('span');
+        name.className = 'coin-name';
+        name.textContent = row.reason;
+        text.append(name);
+      } else if (row.name && row.name !== row.id) {
         const name = document.createElement('span');
         name.className = 'coin-name';
         name.textContent = row.name;
@@ -1586,7 +1625,7 @@
       chip.append(mark, text);
 
       chip.addEventListener('click', () => {
-        if (paymentSeen()) return;
+        if (paymentSeen() || row.disabled) return;
         chooseCurrency(row);
       });
       container.append(chip);
@@ -1608,7 +1647,7 @@
     // A currency carried by exactly one chain has no wrong choice to make, so
     // asking for a second click adds friction without adding safety. Where there
     // are several, nothing is preselected — see the note on `selected`.
-    const options = optionsFor(row);
+    const options = optionsFor(row).filter((option) => option.available);
     if (options.length === 1) selected = options[0];
 
     renderCurrencies();
@@ -1624,8 +1663,8 @@
 
     const options = optionsFor(currency);
     // Cheapest first, so the option that costs the payer least is the one they read
-    // before any other.
-    options.sort((a, b) => a.cost - b.cost);
+    // before any other; anything unavailable sinks to the bottom, greyed.
+    options.sort((a, b) => (a.available === b.available ? a.cost - b.cost : a.available ? -1 : 1));
 
     for (const network of options) {
       const row = document.createElement('button');
@@ -1633,6 +1672,10 @@
       row.className = 'net-row';
       row.setAttribute('role', 'radio');
       row.setAttribute('aria-checked', String(selected !== null && network.id === selected.id));
+      if (!network.available) {
+        row.disabled = true;
+        row.title = network.reason ?? '';
+      }
 
       const dot = document.createElement('span');
       dot.className = 'dot';
@@ -1644,7 +1687,7 @@
 
       const time = document.createElement('span');
       time.className = 'net-time';
-      time.textContent = network.confirm;
+      time.textContent = network.available ? network.confirm : (network.reason ?? 'Unavailable');
 
       const costEl = document.createElement('span');
       if (LIVE) {
@@ -1693,7 +1736,7 @@
     // The network step appears only once there is a currency to list chains for.
     el('net-step').hidden = currency === null;
     if (currency !== null) {
-      const count = currency.networks.length;
+      const count = optionsFor(currency).filter((option) => option.available).length;
       el('net-note').textContent =
         count === 1
           ? currency.id + ' exists on one network only, so it is already selected.'
@@ -1921,7 +1964,7 @@
       invoiceId: payment.invoiceId,
       toleranceBps: payment.toleranceBps,
     };
-    liveExpiresAt = Date.parse(payment.expiresAt);
+    setLiveExpiry(payment.expiresAt);
     renderSelection();
     applyInvoiceStatus(payment.status, payment.amountPaid);
   }
@@ -1996,6 +2039,16 @@
   let liveExpiresAt = null;
   let pollTimer = null;
 
+  /** Take the invoice's deadline as the clock, and size the lock bar to what is left of it. */
+  function setLiveExpiry(iso) {
+    const parsed = Date.parse(iso);
+    if (!Number.isFinite(parsed)) return;
+    liveExpiresAt = parsed;
+    remaining = Math.max(0, Math.round((parsed - Date.now()) / 1000));
+    lockTotal = Math.max(1, remaining);
+    renderLock();
+  }
+
   /**
    * Load the session, and everything the payer may choose from.
    *
@@ -2035,7 +2088,7 @@
     } else {
       el('summary-item').textContent = 'Payment';
     }
-    liveExpiresAt = Date.parse(view.expiresAt);
+    setLiveExpiry(view.expiresAt);
 
     if (view.status === 'cancelled' || view.status === 'expired') {
       renderFatal({
@@ -2172,12 +2225,24 @@
     const seconds = left % 60;
     el('lock-time').textContent =
       String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
-    el('lock-fill').style.transform = 'scaleX(' + left / LOCK_SECONDS + ')';
+    el('lock-fill').style.transform = 'scaleX(' + Math.min(1, left / lockTotal) + ')';
   }
 
+  /**
+   * The countdown follows the invoice, not a constant.
+   *
+   * The demo counts fifteen minutes from a constant. Live, the API says when the invoice
+   * expires — three hours on a merchant's own wallet — and the page reads that clock every
+   * second rather than its own, so a reload, a suspended tab or a slow phone cannot make it
+   * declare the rate lapsed while the invoice is still open.
+   */
   setInterval(() => {
     if (state === 'paid' || state === 'expired') return;
-    remaining -= 1;
+    if (liveExpiresAt !== null && Number.isFinite(liveExpiresAt)) {
+      remaining = Math.max(0, Math.round((liveExpiresAt - Date.now()) / 1000));
+    } else {
+      remaining -= 1;
+    }
     if (remaining <= 0) setState('expired');
     renderLock();
   }, 1000);

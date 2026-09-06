@@ -35,6 +35,15 @@ export interface PriceServiceConfig {
    * out of the staleness check on schedule regardless.
    */
   readonly cacheTtlMs: number;
+  /**
+   * How long the last good aggregate may stand in for a failed fetch.
+   *
+   * Zero, the default, means it never does: a failed fetch is "no price", as it always was.
+   * A deployment that turns this on is choosing a rate up to this old over a currency picker
+   * that flickers when one source has a bad minute — see `recent()`. Never longer than the
+   * aggregation's own staleness limit, whatever is configured.
+   */
+  readonly staleFallbackMs?: number | undefined;
 }
 
 export const DEFAULT_PRICE_SERVICE: PriceServiceConfig = {
@@ -117,8 +126,33 @@ export class PriceService {
     return pending;
   }
 
+  /**
+   * The last good aggregate, if it is still within the staleness limit.
+   *
+   * The reason this exists is a currency picker that flickered. Sources fail for a moment —
+   * one of two answers a 429, and "two fresh sources needed" is not met — and for that moment
+   * `requireRate` threw, the checkout marked BNB unavailable, and the next load had it back. A
+   * rate aggregated ninety seconds ago from the same sources is a better answer than "no price"
+   * for a payer who is choosing a currency, and it is exactly as old as an observation the
+   * aggregator would still accept from a source — `maxStalenessMs` is the one limit for both.
+   * Past that limit nothing is served, as before: stale is not a rate, it is a loss waiting.
+   */
+  private recent(symbol: PriceSymbol, now: number): RateResult | null {
+    const window = Math.min(
+      this.config.staleFallbackMs ?? 0,
+      this.config.aggregation.maxStalenessMs,
+    );
+    if (window <= 0) return null;
+    const cached = this.cache.get(symbol);
+    if (!cached) return null;
+    if (now - cached.fetchedAt >= window) return null;
+    return { ...cached.result, cached: true };
+  }
+
   private async fetchAndAggregate(symbol: PriceSymbol, now: number): Promise<RateResult> {
     if (!this.breakerAllows(symbol, now)) {
+      const recent = this.recent(symbol, now);
+      if (recent) return recent;
       const status = this.breaker.status(symbol, now);
       return {
         ok: false,
@@ -150,7 +184,10 @@ export class PriceService {
     const result = aggregate(observations, this.config.aggregation, now);
 
     if (!result.ok) {
+      // The breaker still learns of the failure; a feed that stays down is still suspended.
       this.breaker.recordFailure(symbol, result.reason, now);
+      const recent = this.recent(symbol, now);
+      if (recent) return recent;
       return {
         ok: false,
         reason: result.reason,

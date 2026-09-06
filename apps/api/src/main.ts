@@ -51,6 +51,7 @@ async function main(): Promise<void> {
           feePlans: context.feePlans,
           payouts: context.payouts,
           walletChanges: context.walletChanges,
+          paymentSink: context.paymentSink,
         },
         app.log,
       )

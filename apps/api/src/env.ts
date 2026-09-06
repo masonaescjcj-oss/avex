@@ -91,6 +91,15 @@ const schema = z.object({
   PRICE_MAX_DISPERSION_BPS: z.coerce.number().int().positive().default(300),
   PRICE_MAX_STALENESS_MS: z.coerce.number().int().positive().default(120_000),
   PRICE_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(10_000),
+  /**
+   * How long the last good price may stand in for a source that failed this second.
+   *
+   * Ninety seconds: inside the two-minute staleness limit the aggregator applies to a source's
+   * own observation, so nothing is quoted from a figure the engine would not otherwise accept.
+   * What it buys is a currency picker that does not lose BNB for one page load because one of
+   * two sources answered 429. Zero turns it off.
+   */
+  PRICE_STALE_FALLBACK_MS: z.coerce.number().int().nonnegative().default(90_000),
 
   /**
    * EVM RPC endpoints, as `chain=url` pairs separated by commas.

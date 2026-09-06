@@ -372,7 +372,8 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
      * Up, so the merchant is never left a fraction short of the fiat figure they
      * asked for.
      */
-    assert.equal(invoice.amountDue, '20100502512562814071');
+    // $20 at $1 with the 50bps spread is 20.1005…, asked as 20.101: three decimals, rounded up.
+    assert.equal(invoice.amountDue, '20101000000000000000');
     assert.match(invoice.depositAddress, /^0x[0-9a-fA-F]{40}$/);
     // A memo belongs only to shared-address chains; on BSC the address is the identity.
     assert.equal(invoice.memo, null);
@@ -577,8 +578,10 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     assert.equal(passedOn.feePayer, 'payer');
     // The payer is asked for more...
     assert.ok(BigInt(passedOn.amountDue) > BigInt(absorbed.amountDue));
-    // ...and what reaches the merchant is the price they asked for, not less.
-    assert.ok(BigInt(passedOn.amountNet) >= BigInt(absorbed.amountDue));
+    // ...and what reaches the merchant is the price they asked for, not less. The price, not
+    // the absorbed invoice's asked amount: that figure is rounded up to three decimals and so
+    // is a fraction above the price itself.
+    assert.ok(BigInt(passedOn.amountNet) >= await quotedAmount(absorbed.id));
     // The surcharge is the commission and not a penny more: one unit less would leave
     // the merchant short.
     assert.ok(BigInt(passedOn.amountDue) - 1n - (BigInt(passedOn.amountDue) - 1n) * 50n / 10_000n < BigInt(absorbed.amountDue));
@@ -1828,8 +1831,9 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     const base = await quotedAmount(invoice.id);
     const due = BigInt(invoice.amountDue);
     assert.ok(due > base, `${due} must exceed the quoted ${base}`);
-    assert.ok(due - base <= 99_900n, `${due - base} is outside the disambiguator's range`);
-    assert.equal((due - base) % 10_000n, 0n, `${due - base} should be a whole cent on USDT`);
+    // The first invoice at a price: rounded up to three decimals, plus one step of 0.001.
+    assert.ok(due - base <= 2_000n, `${due - base} is more than the rounding and one step`);
+    assert.equal(due % 1_000n, 0n, `${due} should have at most three decimals`);
   });
 
   test('two invoices at one price get two amounts on the same wallet', async () => {
@@ -1912,11 +1916,12 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
       assert.ok(row!.accruedFeeBps > 0, 'the commission is billed instead');
       assert.equal(row!.networkFeeBps, 0, 'no transfer of ours, so nothing to pass on');
 
-      // Nudged in the digits a payer reads: USDT at a dollar, so whole cents first.
+      // Asked with three decimals, whatever the token has: 20.1005… becomes 20.102.
       const base = await quotedAmount(invoice.id);
       const due = BigInt(invoice.amountDue);
       assert.ok(due > base);
-      assert.equal((due - base) % 10n ** 16n, 0n, `${due - base} wei should be a whole cent`);
+      assert.equal(due % 10n ** 15n, 0n, `${due} wei should have at most three decimals`);
+      assert.ok(due - base <= 2n * 10n ** 15n, 'the rounding and one step, no more');
     } finally {
       for (const row of await walletPool.list({ organizationId: orgId, chain: 'bsc' })) {
         await walletPool.retire({ organizationId: orgId, walletId: row.id });
@@ -1975,8 +1980,12 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     const invoice = response.json() as { id: string; depositAddress: string; amountDue: string };
 
     assert.match(invoice.depositAddress, /^AVEXTEST-TRON-/);
-    // And no disambiguator: there is nothing to be unique against.
-    assert.equal(BigInt(invoice.amountDue), await quotedAmount(invoice.id));
+    // And no disambiguator: there is nothing to be unique against. Only the rounding to three
+    // decimals every invoice gets — 20.100503 asked as 20.101.
+    const quoted = await quotedAmount(invoice.id);
+    const due = BigInt(invoice.amountDue);
+    assert.ok(due >= quoted && due - quoted < 1_000n, `${due} is not ${quoted} rounded up`);
+    assert.equal(due % 1_000n, 0n);
   });
 
   test('the commission on a pooled invoice is billed, not taken on chain', async () => {

@@ -55,6 +55,17 @@ export interface TronAdapterConfig {
   readonly acceptedAssets: readonly Asset[];
   /** Blocks scanned per poll. TRON produces a block every three seconds. */
   readonly pollRange: number;
+  /**
+   * Blocks held back from the chain's head before a range is scanned.
+   *
+   * A transfer is handed to the sink once, with however many confirmations it has when its
+   * block is scanned. Scanning right up to the head means seeing nearly every transfer with
+   * one confirmation, and a sink that wants fifteen has to defer it and be shown it again.
+   * Staying this many blocks behind the head means a transfer is first seen with at least
+   * this many confirmations, so the ordinary payment is final the first time the sink sees
+   * it. Zero scans to the head. Set from the chain's standard confirmation count.
+   */
+  readonly confirmationLag?: number | undefined;
 }
 
 /** Where a transfer's recipient is looked up, to decide whether it is ours. */
@@ -134,10 +145,18 @@ export class TronAdapter implements ChainAdapter {
 
   async poll(cursor: PollCursor): Promise<PollResult> {
     const head = Number(BigInt(await this.rpc<string>('eth_blockNumber', [])));
-    const from = cursor === null ? head : Number(cursor) + 1;
-    if (from > head) return { payments: [], cursor: String(head) };
+    /**
+     * The newest block worth scanning: the head, less the lag.
+     *
+     * Nothing below `from` is ever returned as the cursor — a cursor that moved backwards
+     * would rescan blocks already credited on every poll — so a fresh start with a lag simply
+     * waits for the chain to move on.
+     */
+    const safeHead = head - Math.max(0, this.config.confirmationLag ?? 0);
+    const from = cursor === null ? safeHead : Number(cursor) + 1;
+    if (from > safeHead) return { payments: [], cursor: cursor ?? String(safeHead) };
 
-    const to = Math.min(head, from + this.config.pollRange - 1);
+    const to = Math.min(safeHead, from + this.config.pollRange - 1);
 
     /**
      * The watched contracts, keyed by the hex form the node will report.
@@ -211,6 +230,10 @@ export class TronAdapter implements ChainAdapter {
        */
       const recipient = normalizeTronAddress(`0x${recipientTopic.slice(26)}`);
       if ((await this.addressBook.lookup(recipient)) === null) continue;
+      // The sender, in the same Base58Check form the merchant and the admin panel read.
+      const senderTopic = log.topics[1];
+      const sender =
+        senderTopic === undefined ? undefined : normalizeTronAddress(`0x${senderTopic.slice(26)}`);
 
       const blockNumber = Number(BigInt(log.blockNumber));
       payments.push({
@@ -218,6 +241,7 @@ export class TronAdapter implements ChainAdapter {
         txHash: log.transactionHash,
         transferIndex: Number(BigInt(log.logIndex)),
         to: recipient,
+        ...(sender === undefined ? {} : { from: sender }),
         asset,
         amount: BigInt(log.data),
         blockNumber,

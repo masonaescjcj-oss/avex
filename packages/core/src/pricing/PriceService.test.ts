@@ -249,3 +249,42 @@ test('coverage reports which sources can price what', async () => {
 test('a service with no sources is refused at construction', () => {
   assert.throws(() => new PriceService([]), /at least one source/);
 });
+
+test('with a stale fallback, a source having a bad second does not lose the currency', async () => {
+  /**
+   * The flicker this exists for: one of two sources answers 429 for a moment, "two fresh
+   * sources needed" is not met, and without this the checkout marks the currency unavailable
+   * for that one page load. A rate aggregated seconds ago is a better answer, and no older
+   * than an observation the aggregator would still accept from a source.
+   */
+  const flaky = new FakeSource('a', { price: '2000' });
+  const steady = new FakeSource('b', { price: '2000' });
+  const service = new PriceService([flaky, steady], {
+    ...DEFAULT_PRICE_SERVICE,
+    cacheTtlMs: 0,
+    staleFallbackMs: 90_000,
+  });
+
+  const good = await service.getRate('ETH', NOW);
+  assert.ok(good.ok);
+
+  flaky.set({ fail: 'HTTP 429' });
+  const during = await service.getRate('ETH', NOW + 30_000);
+  assert.ok(during.ok, 'served from the recent aggregate');
+  assert.equal(during.cached, true);
+
+  // Past the window the failure is a failure, as it always was.
+  const later = await service.getRate('ETH', NOW + 91_000);
+  assert.equal(later.ok, false);
+});
+
+test('without a stale fallback a failed fetch is still no price', async () => {
+  const flaky = new FakeSource('a', { price: '2000' });
+  const service = new PriceService([flaky, new FakeSource('b', { price: '2000' })], {
+    ...DEFAULT_PRICE_SERVICE,
+    cacheTtlMs: 0,
+  });
+  await service.getRate('ETH', NOW);
+  flaky.set({ fail: 'HTTP 429' });
+  assert.equal((await service.getRate('ETH', NOW + 1000)).ok, false);
+});

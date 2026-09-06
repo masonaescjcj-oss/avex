@@ -37,6 +37,7 @@ import { RateLimiter } from './rate-limit.js';
 import { AdminError } from '../domain/admin-service.js';
 import type { AdminService } from '../domain/admin-service.js';
 import { ReconciliationError } from '../domain/reconciliation-service.js';
+import type { DatabasePaymentSink } from '../domain/payment-sink.js';
 import type { ReconciliationService } from '../domain/reconciliation-service.js';
 import type { SettlementStore } from '../domain/settlement-store.js';
 import { MerchantError } from '../domain/merchant-service.js';
@@ -115,6 +116,11 @@ export interface AppContext {
   readonly admin: AdminService;
   readonly settlements: SettlementStore;
   readonly reconciliation: ReconciliationService;
+  /**
+   * Credits payments; here for the sweep over parked transfers the jobs run. Optional so a
+   * test that builds a context by hand need not construct one; without it the sweep is skipped.
+   */
+  readonly paymentSink?: DatabasePaymentSink | undefined;
   readonly merchant: MerchantService;
   readonly webhooks: WebhookService;
   readonly feePlans: FeePlanService;
@@ -642,6 +648,7 @@ export function buildServer(context: AppContext): FastifyInstance {
       feePlans: context.feePlans,
       payouts: context.payouts,
       walletChanges: context.walletChanges,
+      paymentSink: context.paymentSink,
     };
     const outcomes = requested === undefined
       ? await runAllJobs(deps)

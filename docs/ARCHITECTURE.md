@@ -77,6 +77,38 @@ On TON the tradeoff is that correctness depends on the payer including the memo.
 An unmatched transfer is not lost, but it must go to operator reconciliation and
 never be credited by guesswork.
 
+### 3a. `pooled`: the merchant's own wallets, identified by amount
+
+The third model, and the one this deployment mostly runs. A merchant registers up to a
+hundred of their own addresses per chain; an invoice is given one of them plus an amount
+that is unique among the invoices recently issued on that address. The payer's transfer
+lands in the merchant's wallet and nothing of ours is in the path — no forwarder, no gas,
+no settlement, on any chain.
+
+The rules that make amount-matching survive what section 3 warns about are written out
+in `apps/api/src/domain/pooled-matching.ts`, and every scenario is a test. In short:
+
+- **Every asked amount has at most three decimals**, on every currency and network
+  (`@avex/core` `amount-grid`). The disambiguator lives in the third decimal: 20.001,
+  20.002, … A payer is asked for a tenth of a cent more than the price on a stablecoin.
+  Tokens so dear that a thousandth is real money (over $5) are refused on shared wallets.
+- **Idle wallets first, quietest first.** With a hundred wallets and three-hour invoices,
+  nearly every invoice has a wallet to itself — and on a wallet with one open invoice a
+  wrong amount, or the wrong stablecoin, is still credited: there is nothing else it could
+  be for. Underpayments are credited as underpaid, with what arrived.
+- **The exact number wins**, compared as the number a person read, whatever the token or its
+  decimals; honoured for a day after the invoice closed, because the wallet keeps the number
+  reserved that long. **The same sender** as an earlier payment to an invoice here goes with
+  that invoice. **Nothing is guessed** between two open invoices: the transfer is parked in
+  the reconciliation queue, and a sweep credits it once the other invoice is paid or has
+  expired — only to an invoice that existed when the transfer arrived.
+- **Invoices expire on a clock** (three hours by default on a shared wallet), which frees
+  the wallet; a `confirming` invoice is left a further day for the chain.
+- **The watcher stays behind the head** by the chain's standard confirmation count, so a
+  transfer is final the first time it is seen, and holds its cursor for anything the sink
+  defers — a transfer is never seen once and lost.
+- **Every order is at least $0.50**, on every currency and network.
+
 ## 4. Fees: derive limits from live gas
 
 Ethereum's base fee has structurally collapsed — activity migrated to L2s, and

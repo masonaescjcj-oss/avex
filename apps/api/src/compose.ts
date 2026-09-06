@@ -122,6 +122,7 @@ export function compose(options: ComposeOptions): Composed {
       },
       breaker: DEFAULT_BREAKER,
       cacheTtlMs: env.PRICE_CACHE_TTL_MS,
+      staleFallbackMs: env.PRICE_STALE_FALLBACK_MS,
     },
     options.recordTick,
   );
@@ -261,6 +262,11 @@ export function compose(options: ComposeOptions): Composed {
 
   const settlements = new SettlementStore(db);
   const reconciliation = new ReconciliationService(db, audit, paymentSink);
+  /**
+   * Where the sink puts a transfer it cannot credit. Set after the fact because the queue's
+   * service needs the sink for `recompute` — one of the two had to come first.
+   */
+  paymentSink.parkUnmatchedIn(reconciliation);
 
   const context: AppContext = {
     env,
@@ -276,6 +282,7 @@ export function compose(options: ComposeOptions): Composed {
     admin: new AdminService(db, audit, settlements, reconciliation),
     settlements,
     reconciliation,
+    paymentSink,
     merchant: new MerchantService(db),
     invoiceCreation,
     checkouts: new CheckoutService(

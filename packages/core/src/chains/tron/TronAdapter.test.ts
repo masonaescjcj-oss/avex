@@ -95,6 +95,7 @@ function adapterWith(options: {
   readonly logs: readonly unknown[];
   readonly known?: readonly string[];
   readonly assets?: readonly Asset[];
+  readonly confirmationLag?: number;
 }) {
   const { calls, fetchMock } = responder({ head: options.head, logs: options.logs });
   const known = new Set((options.known ?? [WALLET]).map((address) => normalizeTronAddress(address)));
@@ -105,6 +106,7 @@ function adapterWith(options: {
       rpcUrl: 'https://api.trongrid.io/jsonrpc',
       acceptedAssets: options.assets ?? [USDT],
       pollRange: 200,
+      ...(options.confirmationLag === undefined ? {} : { confirmationLag: options.confirmationLag }),
     },
     { nativePriceUsd: async () => 0.3 },
     {
@@ -316,6 +318,45 @@ describe('watching TRON', () => {
     };
     assert.equal(filter.fromBlock, filter.toBlock);
     assert.equal(Number(BigInt(filter.fromBlock)), 70_000_000);
+  });
+
+  test('the sender travels with the payment, in Base58Check', async (t) => {
+    /**
+     * The second topic of `Transfer`. Not an identity — exchanges pay from shared hot wallets —
+     * but on a merchant's shared wallet it is what ties a payer's second transfer to their
+     * first, and it is the only address a return could go to.
+     */
+    const { adapter, fetchMock } = adapterWith({
+      head: 1000,
+      logs: [transferLog({ to: WALLET, amount: 1n, block: 995 })],
+    });
+    t.mock.method(globalThis, 'fetch', fetchMock);
+
+    const result = await adapter.poll('990');
+    assert.equal(result.payments[0]!.from, STRANGER);
+  });
+
+  test('with a confirmation lag the scan stays behind the head, so what it finds is final', async (t) => {
+    /**
+     * A block is scanned once, and a transfer is handed over with however many confirmations
+     * it has at that moment. Scanning to the head met nearly every transfer with one. Staying
+     * eighteen blocks back means the first sight of a transfer is its nineteenth confirmation,
+     * which is what TRON needs — so the ordinary payment is credited the first time it is seen.
+     */
+    const { adapter, calls, fetchMock } = adapterWith({ head: 1000, logs: [], confirmationLag: 18 });
+    t.mock.method(globalThis, 'fetch', fetchMock);
+
+    const result = await adapter.poll('900');
+    const filter = calls.find((call) => call.method === 'eth_getLogs')!.params[0] as {
+      toBlock: string;
+    };
+    assert.equal(Number(BigInt(filter.toBlock)), 982, 'head minus the lag');
+    assert.equal(result.cursor, '982');
+
+    // Caught up: nothing to scan yet, and the cursor does not move backwards to say so.
+    const idle = await adapter.poll('982');
+    assert.equal(idle.cursor, '982');
+    assert.deepEqual(idle.payments, []);
   });
 
   test('nothing here settles, and it says so rather than pretending', async () => {

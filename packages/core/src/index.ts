@@ -42,6 +42,7 @@ export * from './pricing/rate.js';
 export * from './pricing/aggregate.js';
 export * from './pricing/breaker.js';
 export * from './pricing/quote.js';
+export * from './pricing/amount-grid.js';
 export * from './pricing/PriceService.js';
 export * from './pricing/sources/index.js';
 

@@ -251,7 +251,9 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
      */
     const surcharge = BigInt(invoice.amountDue) - 20n * 10n ** 18n;
     assert.ok(surcharge > 5_000_000_000_000_000n, `expected over half a cent, got ${surcharge}`);
-    assert.ok(surcharge < 7_000_000_000_000_000n, `expected under 0.7 cents, got ${surcharge}`);
+    // Plus at most one step of the three-decimal grid the asked amount is rounded up to.
+    assert.ok(surcharge < 8_000_000_000_000_000n, `expected under 0.8 cents, got ${surcharge}`);
+    assert.equal(BigInt(invoice.amountDue) % 10n ** 15n, 0n, 'asked with at most three decimals');
   });
 
   test('the deposit address commits to the fee that includes it', async () => {
@@ -303,10 +305,12 @@ describe('charging the payer for the transfer', { skip: databaseUrl ? false : 'D
     // And the two disclosed lines add up to what was added to the price.
     assert.equal(offered.networkFeeBps, 3);
     assert.equal(offered.feeBps, 0, 'the merchant absorbs their commission here');
-    assert.equal(
-      BigInt(invoice.networkFeeIncluded) + BigInt(invoice.feeIncluded),
-      BigInt(invoice.amountDue) - 20n * 10n ** 18n,
-      'the breakdown must sum to the surcharge',
+    const surcharge = BigInt(invoice.amountDue) - 20n * 10n ** 18n;
+    const disclosed = BigInt(invoice.networkFeeIncluded) + BigInt(invoice.feeIncluded);
+    assert.ok(disclosed <= surcharge, 'the breakdown must not exceed the surcharge');
+    assert.ok(
+      surcharge - disclosed < 10n ** 15n,
+      'the breakdown must sum to the surcharge, less the rounding up to three decimals',
     );
   });
 

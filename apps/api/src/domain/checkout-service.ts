@@ -1,8 +1,10 @@
 import type { ChainMinimums } from './chain-minimums.js';
+import { formatUsdMicros } from './chain-minimums.js';
 import { disclosedFees, surchargeBps } from './commission-ledger.js';
 import type { CommissionLedger } from './commission-ledger.js';
 import {
   applyFeePayer,
+  ceilToGrid,
   feeOnAmount,
   fiatToTokenAmount,
   type FeePayer,
@@ -102,7 +104,15 @@ export interface CheckoutOption {
   readonly unavailableReason: string | null;
 }
 
-const DEFAULT_SESSION_TTL_MS = 60 * 60 * 1000;
+/**
+ * Three hours, matching a pooled invoice's own life.
+ *
+ * The invoice a payer selects inside this session cannot outlive the session, so a one-hour
+ * session would silently cut a three-hour invoice to whatever was left of the hour. The rate
+ * is re-quoted when the payer picks a currency, not when the link is opened, so a long session
+ * costs the merchant nothing until then.
+ */
+const DEFAULT_SESSION_TTL_MS = 3 * 60 * 60 * 1000;
 
 export class CheckoutService {
   constructor(
@@ -449,10 +459,14 @@ export class CheckoutService {
        * know which one to pick, not what our gas costs.
        */
       if (rate !== null && this.minimums) {
-        const verdict = await this.minimums.verdict(entry.chain, amountFiat);
+        const pooled = this.pooledOn(entry.chain, where);
+        const verdict = await this.minimums.verdict(entry.chain, amountFiat, { pooled });
         if (!verdict.ok) {
           rate = null;
-          reason = 'This network costs too much to settle an order this small. Choose another.';
+          reason =
+            verdict.minUsdMicros <= this.minimums.absoluteMinUsdMicros()
+              ? `The smallest payment we take is ${formatUsdMicros(verdict.minUsdMicros)}.`
+              : 'This network costs too much to settle an order this small. Choose another.';
         }
       }
       const surcharge = surchargeBps(fee);
@@ -477,7 +491,14 @@ export class CheckoutService {
         name: entry.symbol,
         chain: entry.chain,
         decimals: entry.decimals,
-        amount: charged.amountDue.toString(),
+        /**
+         * Rounded up to three decimals, as the invoice will be.
+         *
+         * The figure the payer compares against the invoice a moment later. Invoice creation
+         * applies the same rounding to the same input, so the two agree to the digit — except
+         * for the disambiguator a shared wallet adds, which the page explains as such.
+         */
+        amount: ceilToGrid(charged.amountDue, entry.decimals).toString(),
         // The surcharge, not the whole commission: when the merchant absorbs it there is
         // nothing here for the payer to be told about.
         feeIncluded: disclosed.commission.toString(),

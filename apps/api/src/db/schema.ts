@@ -1050,6 +1050,20 @@ export const payments = pgTable(
     transferIndex: integer('transfer_index').notNull(),
 
     amount: numeric('amount', { precision: 78, scale: 0 }).notNull(),
+    /**
+     * What this transfer counts for against the invoice, in the invoice's own token.
+     *
+     * Null means "the same as `amount`", which it is whenever the payer sent the token that was
+     * invoiced — every payment before this column existed, and nearly every one after. It
+     * differs when a payer sent the right value in the wrong token to a shared wallet: 20 USDC
+     * against a 20 USDT invoice is recorded as 20 USDC here in `amount`, and as the USDT it was
+     * worth in this column, so that `invoices.amount_paid` stays a sum in one unit.
+     */
+    creditedAmount: numeric('credited_amount', { precision: 78, scale: 0 }),
+    /** The token actually sent. Null on rows from before it was recorded. */
+    assetSymbol: text('asset_symbol'),
+    assetContract: text('asset_contract'),
+    assetDecimals: integer('asset_decimals'),
     blockNumber: integer('block_number').notNull(),
     blockHash: text('block_hash'),
     /** The payer's address, needed to offer a refund anywhere sensible. */
@@ -1112,6 +1126,11 @@ export const unmatchedReasonEnum = pgEnum('unmatched_reason', [
   'invoice_expired',
   /** Below the amount at which settling is economic. */
   'below_minimum',
+  /**
+   * A shared wallet with more than one invoice it could be for, and nothing to say which.
+   * Re-examined by the sweep as those invoices settle or expire; handed to a person otherwise.
+   */
+  'ambiguous',
 ]);
 
 export const unmatchedResolutionEnum = pgEnum('unmatched_resolution', [

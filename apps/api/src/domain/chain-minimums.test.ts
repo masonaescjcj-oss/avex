@@ -63,7 +63,7 @@ describe('the smallest order a chain can carry', () => {
     );
   });
 
-  test('a chain that settles directly has no floor at all', async () => {
+  test('a chain that settles directly has no gas floor, only the absolute one', async () => {
     /**
      * TRON's pooled wallets and TON's shared one receive the payer's transfer and nothing of
      * ours moves afterwards. There is no settlement whose cost could exceed anything — so the
@@ -73,6 +73,28 @@ describe('the smallest order a chain can carry', () => {
     assert.equal(await minimums.minInvoiceUsdMicros('tron'), null);
     assert.equal(await minimums.minInvoiceUsdMicros('ton'), null);
     assert.deepEqual(await minimums.verdict('tron', usd(0.5)), { ok: true });
+  });
+
+  test('fifty cents is the floor on every currency and every network', async () => {
+    /**
+     * The merchant's rule, and the one that holds where nothing else does: on a pooled wallet,
+     * on a chain whose gas probe failed, on a chain we never pay to settle. Below it the
+     * amount is dust — an exchange fee exceeds it, and a stray of that size is not worth an
+     * operator's hour to reconcile.
+     */
+    const minimums = new ChainMinimums(oracleOf(null));
+    assert.equal(minimums.absoluteMinUsdMicros(), usd(0.5));
+    for (const chain of ['tron', 'ton', 'bsc', 'polygon']) {
+      const refused = await minimums.verdict(chain, usd(0.49), { pooled: true });
+      assert.equal(refused.ok, false, `${chain} pooled`);
+      assert.equal(refused.ok === false && refused.minUsdMicros, usd(0.5));
+      assert.deepEqual(await minimums.verdict(chain, usd(0.5), { pooled: true }), { ok: true });
+      assert.equal((await minimums.verdict(chain, usd(0.49))).ok, false, `${chain} settling`);
+    }
+    // Pooled: the gas floor is not applied, however dear the chain is.
+    const dear = new ChainMinimums(oracleOf({ ...BSC, feePerGasWei: 100_000_000_000n }));
+    assert.equal((await dear.verdict('bsc', usd(1))).ok, false, 'a forwarder invoice');
+    assert.deepEqual(await dear.verdict('bsc', usd(1), { pooled: true }), { ok: true });
   });
 
   test('Telegram Stars are not a chain and are not judged as one', async () => {

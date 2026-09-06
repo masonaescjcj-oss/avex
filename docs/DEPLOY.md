@@ -184,8 +184,9 @@ all tested here.
 
 ## The jobs, without a process to hold them
 
-Three jobs run on a clock: webhook delivery, commission period close, payout change
-application. Defined once in `apps/api/src/jobs.ts`, driven two ways.
+Five jobs run on a clock: webhook delivery, commission period close, payout change
+application, invoice expiry, and the sweep over transfers parked at shared wallets. Defined
+once in `apps/api/src/jobs.ts`, driven two ways.
 
 A server runs them on timers (`RUN_JOBS_IN_PROCESS=true`, the default). A deployment with no
 process has a scheduler call `POST /internal/jobs?job=<name>`, authenticated by

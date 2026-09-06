@@ -1,4 +1,5 @@
 import type { FeePlanService } from './domain/fee-plan-service.js';
+import { expireInvoices } from './domain/invoice-expiry.js';
 import type { WalletPoolChanges } from './domain/wallet-pool-service.js';
 import type { PayoutAddressService } from './domain/payout-service.js';
 import type { WebhookService } from './domain/webhook-service.js';
@@ -7,7 +8,7 @@ import { JOB_LOCKS, withJobLock } from './db/lock.js';
 import type { JobLock } from './db/lock.js';
 
 /**
- * The three things that happen on a clock rather than on a request.
+ * The things that happen on a clock rather than on a request.
  *
  * Defined here rather than inside `main.ts` because there are two ways to drive them and
  * only one definition should exist. A long-lived process runs them on `setInterval`. A
@@ -21,7 +22,7 @@ import type { JobLock } from './db/lock.js';
  * twice.
  */
 
-export const JOB_NAMES = ['webhooks', 'commission', 'payouts'] as const;
+export const JOB_NAMES = ['webhooks', 'commission', 'payouts', 'expiry', 'reconcile'] as const;
 export type JobName = (typeof JOB_NAMES)[number];
 
 export function isJobName(value: string): value is JobName {
@@ -46,6 +47,15 @@ export interface JobDependencies {
    */
   readonly walletChanges?: WalletPoolChanges;
   readonly payouts: PayoutAddressService;
+  /**
+   * The payment sink, for re-examining transfers parked at shared wallets.
+   *
+   * Optional for the same reason as `walletChanges`: an older caller still type-checks, and
+   * without it parked transfers simply wait for an operator, which is visible in the queue.
+   */
+  readonly paymentSink?:
+    | { sweepParked(): Promise<{ readonly examined: number; readonly credited: number }> }
+    | undefined;
 }
 
 interface JobDefinition {
@@ -110,6 +120,40 @@ const DEFINITIONS: Readonly<Record<JobName, JobDefinition>> = {
       return addresses + wallets > 0 ? { addresses, wallets } : null;
     },
   },
+
+  /**
+   * Invoices past their deadline are closed once a minute.
+   *
+   * A minute rather than the ten seconds webhooks get, because nothing downstream is waiting on
+   * it to the second: the checkout page counts down on its own clock, and the allocator treats
+   * an invoice past its deadline as closed whether or not this has run yet. What this pass
+   * does is make the status honest and free the wallet.
+   */
+  expiry: {
+    lock: JOB_LOCKS.invoiceExpiry,
+    everyMs: 60_000,
+    run: async ({ db, webhooks }) => {
+      const expired = await expireInvoices(db, webhooks);
+      return expired > 0 ? { expired } : null;
+    },
+  },
+
+  /**
+   * Transfers parked at shared wallets are re-examined once a minute.
+   *
+   * After the expiry pass, in the order `runAllJobs` walks these, because it is expiry that most
+   * often turns two candidates into one. Only what the same rules would now credit is credited;
+   * everything else stays in the queue for a person.
+   */
+  reconcile: {
+    lock: JOB_LOCKS.reconcileParked,
+    everyMs: 60_000,
+    run: async ({ paymentSink }) => {
+      if (paymentSink === undefined) return null;
+      const swept = await paymentSink.sweepParked();
+      return swept.credited > 0 ? swept : null;
+    },
+  },
 };
 
 export function jobInterval(job: JobName): number {
@@ -124,7 +168,7 @@ export async function runJob(job: JobName, deps: JobDependencies): Promise<JobOu
 }
 
 /**
- * Run all three, in order, one at a time.
+ * Run every job, in order, one at a time.
  *
  * Sequential deliberately. A scheduler that can only be given one hook — which is the
  * common case — would otherwise open three pooled connections at once for work that is not

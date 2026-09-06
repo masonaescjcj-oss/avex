@@ -1,5 +1,5 @@
 import type { ChainAdapter, PollCursor } from '../chains/ChainAdapter.js';
-import type { ChainId, IncomingPayment } from '../types.js';
+import type { ChainId, CreditOutcome, IncomingPayment } from '../types.js';
 import { paymentKey } from '../types.js';
 
 /**
@@ -54,8 +54,14 @@ export interface WatchStateStore {
 
 /** What the watcher does with a transfer once it has been matched. */
 export interface PaymentSink {
-  /** Credit a transfer. Must be idempotent on `chain:txHash:transferIndex`. */
-  credit(payment: IncomingPayment): Promise<void>;
+  /**
+   * Credit a transfer. Must be idempotent on `chain:txHash:transferIndex`.
+   *
+   * May say what it did; `deferred` means "not yet final, show me this again", and the
+   * watcher holds its cursor back so that happens. A sink that says nothing is taken to
+   * have credited.
+   */
+  credit(payment: IncomingPayment): Promise<CreditOutcome | void>;
   /** Withdraw a credit whose transaction is no longer in the chain. */
   reverse(paymentKey: string, reason: string): Promise<void>;
 }
@@ -130,6 +136,19 @@ export class Watcher {
 
     let credited = 0;
     let ignored = 0;
+    /**
+     * The lowest block holding a transfer the sink would not yet credit.
+     *
+     * A transfer is presented to the sink once per scan of its block. The adapter reports it
+     * with however many confirmations it has at that moment, and a sink that wants more —
+     * a large payment on a chain whose finality is measured in dozens of blocks — cannot
+     * take it yet. If the cursor then moved past the block, the transfer would never be seen
+     * again: the invoice would sit at `confirming` forever with the money in the wallet. So
+     * the cursor is held just below the shallowest such block, and the next poll scans it
+     * again. The sink's identity key makes the repeat harmless, and the hold costs a few
+     * blocks of re-reading for a few minutes.
+     */
+    let holdBelow: number | null = null;
 
     for (const payment of result.payments) {
       // Credit only what is final. Anything shallower can still be reorganised
@@ -140,8 +159,14 @@ export class Watcher {
       }
 
       try {
-        await this.sink.credit(payment);
-        credited += 1;
+        const outcome = (await this.sink.credit(payment)) ?? 'credited';
+        if (outcome === 'deferred') {
+          holdBelow =
+            holdBelow === null ? payment.blockNumber : Math.min(holdBelow, payment.blockNumber);
+          continue;
+        }
+        if (outcome === 'credited') credited += 1;
+        else ignored += 1;
       } catch (error) {
         // One bad transfer must not stall the whole chain behind it.
         ignored += 1;
@@ -154,7 +179,19 @@ export class Watcher {
 
     const scannedTo = this.highestBlock(result.payments, head.number);
     await this.rememberRange(scannedTo);
-    await this.state.saveCursor(this.chain, result.cursor, scannedTo);
+    /**
+     * Held, not advanced, while something is waiting for confirmations.
+     *
+     * The cursor is a block number on every chain this watches. It is written as one less
+     * than the deferred block so the next `poll` starts on that block — and never moved
+     * backwards past where it was, which a deferred transfer in an already-scanned range
+     * would otherwise do on every pass.
+     */
+    const cursorAfter =
+      holdBelow === null
+        ? result.cursor
+        : this.holdCursor(cursor, result.cursor, holdBelow - 1);
+    await this.state.saveCursor(this.chain, cursorAfter, scannedTo);
 
     return {
       chain: this.chain,
@@ -167,6 +204,19 @@ export class Watcher {
         ? `reorg at ${reorg.detectedAt}, rewound to ${reorg.rewoundTo}, reversed ${reversed}`
         : `credited ${credited}, ignored ${ignored}, scanned to ${scannedTo}`,
     };
+  }
+
+  /**
+   * The cursor to write when a transfer is being waited on: the deferred block's predecessor,
+   * unless that is behind where the scan started, in which case the scan's start is kept —
+   * the block is inside the range that will be re-read anyway.
+   */
+  private holdCursor(before: PollCursor, after: PollCursor, holdAt: number): PollCursor {
+    const started = before === null ? null : Number(before);
+    const reached = after === null ? null : Number(after);
+    if (reached === null || !Number.isFinite(reached)) return after;
+    const held = Math.min(reached, Math.max(holdAt, started ?? holdAt));
+    return String(held);
   }
 
   /**

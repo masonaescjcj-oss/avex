@@ -1,6 +1,6 @@
 import { SUPPORTED_CHAINS, addressKey, isTronAddress } from '@avex/core';
 import type { ChainId } from '@avex/core';
-import { and, eq, isNull, lte, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 
 import type { Database, Transaction } from '../db/client.js';
 import { depositWallets, invoices, memberships, pendingChanges, users } from '../db/schema.js';
@@ -46,8 +46,23 @@ export interface PoolAllocation {
   readonly amountDue: bigint;
 }
 
-/** Statuses that make an invoice's amount unavailable for reuse on its wallet. */
+/** Statuses of an invoice still waiting for money. */
 const OPEN_STATUSES = ['pending', 'confirming'] as const;
+
+/**
+ * How long an invoice's amount stays spoken for on its wallet after the invoice closes.
+ *
+ * A payer who lets an invoice expire and pays an hour later sends the exact amount they were
+ * shown. If that amount had been handed to a new invoice on the same wallet in between, the
+ * late payment would match the new invoice — correctly by the amount rule and wrongly in
+ * fact. So a closed invoice keeps its amount for a day, which is longer than any payer's
+ * "I got distracted" and short enough that a wallet never runs out of numbers: the window is
+ * 999 amounts per price per wallet, and reservations only matter within one price.
+ *
+ * The payment sink honours the same window from the other side: an exact-amount payment for
+ * an invoice that expired inside it is credited to that invoice.
+ */
+export const RESERVATION_MS = 24 * 60 * 60 * 1000;
 
 export class WalletPoolService {
   constructor(private readonly db: Database) {}
@@ -175,9 +190,8 @@ export class WalletPoolService {
       readonly chain: ChainId;
       readonly base: bigint;
       readonly decimals: number;
-      /** Dollar price of one whole token, so the nudge lands in the digits a payer reads. */
+      /** Dollar price of one whole token, so a token too dear for the scheme is refused. */
       readonly unitPriceUsd?: number | null | undefined;
-      readonly random?: (() => number) | undefined;
     },
   ): Promise<PoolAllocation> {
     /**
@@ -211,35 +225,63 @@ export class WalletPoolService {
     }
 
     /**
-     * Open invoices on these addresses, across the whole table rather than this organisation.
+     * Invoices on these addresses that still matter, across the whole table rather than this
+     * organisation.
      *
      * Deliberate: these are the merchant's own wallets and nothing stops the same address
      * being registered by two accounts of one reseller. What must be unique is the amount
-     * open *at an address*, because that is all a payment carries — the organisation it
+     * spoken for *at an address*, because that is all a payment carries — the organisation it
      * belongs to is not written on the transfer.
+     *
+     * Two kinds of row come back. Open invoices decide how busy a wallet is and reserve their
+     * amount. Closed invoices whose expiry is inside `RESERVATION_MS` only reserve their
+     * amount — a late payment for one must still find it and nothing else.
      */
     const addresses = pool.map((row) => row.address);
-    const open = await tx
-      .select({ address: invoices.depositAddress, amountDue: invoices.amountDue })
+    const now = new Date();
+    const reservedSince = new Date(now.getTime() - RESERVATION_MS);
+    const relevant = await tx
+      .select({
+        address: invoices.depositAddress,
+        amountDue: invoices.amountDue,
+        status: invoices.status,
+        expiresAt: invoices.expiresAt,
+        createdAt: invoices.createdAt,
+      })
       .from(invoices)
       .where(
         and(
           eq(invoices.chain, input.chain),
           sql`${invoices.depositAddress} in ${addresses}`,
-          sql`${invoices.status} in ${OPEN_STATUSES}`,
+          or(inArray(invoices.status, [...OPEN_STATUSES]), gt(invoices.expiresAt, reservedSince)),
         ),
       );
 
-    const byAddress = new Map<string, bigint[]>(pool.map((row) => [row.address, []]));
-    for (const row of open) {
-      byAddress.get(row.address)?.push(BigInt(row.amountDue));
+    const byAddress = new Map<string, { reserved: bigint[]; open: number; last: number | null }>(
+      pool.map((row) => [row.address, { reserved: [], open: 0, last: null }]),
+    );
+    for (const row of relevant) {
+      const entry = byAddress.get(row.address);
+      if (!entry) continue;
+      entry.reserved.push(BigInt(row.amountDue));
+      const isOpen =
+        (OPEN_STATUSES as readonly string[]).includes(row.status) &&
+        row.expiresAt.getTime() > now.getTime();
+      if (isOpen) entry.open += 1;
+      const created = row.createdAt.getTime();
+      if (entry.last === null || created > entry.last) entry.last = created;
     }
 
-    const loads: WalletLoad[] = pool.map((row) => ({
-      id: row.id,
-      address: row.address,
-      openAmounts: byAddress.get(row.address) ?? [],
-    }));
+    const loads: WalletLoad[] = pool.map((row) => {
+      const entry = byAddress.get(row.address)!;
+      return {
+        id: row.id,
+        address: row.address,
+        openAmounts: entry.reserved,
+        openCount: entry.open,
+        lastInvoiceAt: entry.last,
+      };
+    });
 
     const chosen = chooseWallet(loads);
     const amountDue = chooseAmount({
@@ -247,7 +289,6 @@ export class WalletPoolService {
       decimals: input.decimals,
       unitPriceUsd: input.unitPriceUsd,
       taken: chosen.openAmounts,
-      ...(input.random === undefined ? {} : { random: input.random }),
     });
 
     return { walletId: chosen.id, address: chosen.address, amountDue };
@@ -364,8 +405,17 @@ export class WalletPoolChangeError extends Error {
  * stop money arriving somewhere; a delay on it would mean a merchant who spotted a wrong address
  * had to wait a day to stop using it.
  */
-/** The most wallets a merchant may hold on one chain, active and scheduled together. */
-export const MAX_WALLETS_PER_CHAIN = 10;
+/**
+ * The most wallets a merchant may hold on one chain, active and scheduled together.
+ *
+ * A hundred, because that is the capacity the amount-matching model needs. Every invoice
+ * lives on a wallet for up to three hours; with a hundred wallets and idle ones chosen first, a
+ * merchant taking a hundred payments in three hours still gives nearly every invoice a wallet
+ * of its own — and a wallet with one invoice is one where a wrong amount can be credited
+ * without a human. The watcher asks the node for a hundred recipients per request, so a full
+ * pool costs one request per token per poll.
+ */
+export const MAX_WALLETS_PER_CHAIN = 100;
 
 export class WalletPoolChanges {
   constructor(

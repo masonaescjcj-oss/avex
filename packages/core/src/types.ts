@@ -153,12 +153,31 @@ export interface IncomingPayment {
    */
   readonly transferIndex: number;
   readonly to: string;
+  /**
+   * Who sent it, where the chain says. The `from` of a `Transfer` log on EVM and TRON.
+   *
+   * Not an identity — exchanges pay from shared hot wallets — but on a pooled address it is
+   * the one clue that ties a payer's second transfer to their first, and it is the only
+   * address a return could sensibly go to. Absent where the chain does not expose it.
+   */
+  readonly from?: string;
   readonly memo?: string;
   readonly asset: Asset;
   readonly amount: bigint;
   readonly blockNumber: number;
   readonly confirmations: number;
 }
+
+/**
+ * What became of one transfer handed to the sink.
+ *
+ * `deferred` is the one the watcher acts on: the transfer is real but has not yet the
+ * confirmations its value requires, so nothing was written and the sink must see it again
+ * once it has. The watcher keeps its cursor below such a block so the next poll re-presents
+ * it with more confirmations. Everything else lets the cursor move on. A sink that returns
+ * nothing is read as `credited`, which is what every sink did before this existed.
+ */
+export type CreditOutcome = 'credited' | 'deferred' | 'duplicate' | 'unmatched';
 
 /** Idempotency key for an observed transfer. Never credit the same one twice. */
 export function paymentKey(p: IncomingPayment): string {

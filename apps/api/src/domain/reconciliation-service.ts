@@ -52,7 +52,8 @@ export type UnmatchedReason =
   | 'memo_missing'
   | 'wrong_asset'
   | 'invoice_expired'
-  | 'below_minimum';
+  | 'below_minimum'
+  | 'ambiguous';
 
 export interface RecordUnmatchedInput {
   readonly chain: ChainId;

@@ -77,6 +77,17 @@ export interface EvmAdapterConfig {
   readonly acceptedAssets: readonly Asset[];
   /** Blocks scanned per poll. Keep under the RPC provider's getLogs range cap. */
   readonly pollRange: number;
+  /**
+   * Blocks held back from the chain's head before a range is scanned.
+   *
+   * A transfer is handed to the sink once, with however many confirmations it has when its
+   * block is scanned. Scanning right up to the head means seeing nearly every transfer with
+   * one confirmation, and a sink that wants fifteen has to defer it and be shown it again.
+   * Staying this many blocks behind the head means a transfer is first seen with at least
+   * this many confirmations, so the ordinary payment is final the first time the sink sees
+   * it. Zero scans to the head. Set from the chain's standard confirmation count.
+   */
+  readonly confirmationLag?: number | undefined;
 }
 
 const TRANSFER_TOPIC = toHex(
@@ -152,10 +163,18 @@ export class EvmAdapter implements ChainAdapter {
 
   async poll(cursor: PollCursor): Promise<PollResult> {
     const head = Number(BigInt(await this.rpc<string>('eth_blockNumber', [])));
-    const from = cursor === null ? head : Number(cursor) + 1;
-    if (from > head) return { payments: [], cursor: String(head) };
+    /**
+     * The newest block worth scanning: the head, less the lag.
+     *
+     * Nothing below `from` is ever returned as the cursor — a cursor that moved backwards
+     * would rescan blocks already credited on every poll — so a fresh start with a lag simply
+     * waits for the chain to move on.
+     */
+    const safeHead = head - Math.max(0, this.config.confirmationLag ?? 0);
+    const from = cursor === null ? safeHead : Number(cursor) + 1;
+    if (from > safeHead) return { payments: [], cursor: cursor ?? String(safeHead) };
 
-    const to = Math.min(head, from + this.config.pollRange - 1);
+    const to = Math.min(safeHead, from + this.config.pollRange - 1);
     const payments: IncomingPayment[] = [];
 
     /**
@@ -223,6 +242,10 @@ export class EvmAdapter implements ChainAdapter {
       // Topics pad addresses to 32 bytes; the address is the last 20.
       const recipient = toChecksumAddress(`0x${recipientTopic.slice(26)}`);
       if ((await this.addressBook.lookup(recipient)) === null) continue;
+      // The sender is the second topic, padded the same way.
+      const senderTopic = log.topics[1];
+      const sender =
+        senderTopic === undefined ? undefined : toChecksumAddress(`0x${senderTopic.slice(26)}`);
 
       const blockNumber = Number(BigInt(log.blockNumber));
       payments.push({
@@ -230,6 +253,7 @@ export class EvmAdapter implements ChainAdapter {
         txHash: log.transactionHash,
         transferIndex: Number(BigInt(log.logIndex)),
         to: recipient,
+        ...(sender === undefined ? {} : { from: sender }),
         asset,
         amount: BigInt(log.data),
         blockNumber,

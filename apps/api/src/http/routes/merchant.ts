@@ -569,6 +569,12 @@ export function invoiceCreationErrorResponse(error: InvoiceCreationError): {
        */
     case 'no_payout_address':
     case 'chain_unsupported':
+    /**
+     * A token that cannot be paid into a shared wallet: too few decimals for the amount to
+     * carry a nudge, or so dear that a thousandth of it is a real surcharge. The merchant's
+     * setup is what has to change — a forwarder chain for it, or not offering it — so 409.
+     */
+    case 'asset_unsuitable':
       return { status: 409, body: { error: error.code, message: error.message } };
     case 'amount_invalid':
       return { status: 422, body: { error: error.code, message: error.message } };

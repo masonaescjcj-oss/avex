@@ -750,8 +750,8 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     const usdt = options.find((option) => option.symbol === 'USDT');
     assert.ok(usdt);
     assert.equal(usdt!.available, true);
-    // $20 at $1 with the 50bps spread, rounded up: 20 / 0.995.
-    assert.equal(usdt!.amount, '20100502512562814071');
+    // $20 at $1 with the 50bps spread is 20.1005…; asked as 20.101, the next three-decimal figure.
+    assert.equal(usdt!.amount, '20101000000000000000');
   });
 
   test('an unpriceable currency is shown as unavailable rather than hidden', async () => {
@@ -819,7 +819,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     assert.equal(payment.chain, 'bsc');
     assert.equal(payment.symbol, 'USDT');
     assert.match(payment.depositAddress, /^0x[0-9a-fA-F]{40}$/);
-    assert.equal(payment.amountDue, '20100502512562814071');
+    assert.equal(payment.amountDue, '20101000000000000000');
 
     // And the session now reports it, so a page reload does not lose the address.
     const view = (await state(session.id)).json();

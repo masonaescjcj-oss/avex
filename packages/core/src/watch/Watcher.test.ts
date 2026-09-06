@@ -442,3 +442,46 @@ test('reversal happens before the cursor moves back', async () => {
   assert.equal(order[0], 'reverse:bsc:0xaa:0', 'reversal must come first');
   assert.ok(order[1]?.startsWith('cursor:'));
 });
+
+test('a transfer the sink defers holds the cursor until it is final', async () => {
+  /**
+   * The bug this exists for. A transfer is presented once, with however many confirmations it
+   * has when its block is scanned; a sink wanting more deferred it, the cursor moved past the
+   * block, and the transfer was never seen again — the invoice sat at `confirming` with the
+   * money in the wallet. Now a deferred transfer pins the cursor below its block, so the next
+   * poll rescans the block and presents it with more confirmations.
+   */
+  const chain = new FakeChain(10);
+  const state = new MemoryState();
+  const seen: number[] = [];
+  const sink: PaymentSink = {
+    async credit(payment) {
+      seen.push(payment.confirmations);
+      if (payment.confirmations < 3) return 'deferred';
+      state.credited.set(paymentKey(payment), payment.blockNumber);
+      return 'credited';
+    },
+    async reverse(key) {
+      state.credited.delete(key);
+    },
+  };
+  let head = 10;
+  const adapter = new ScriptedAdapter(() => [transfer('0xaa', 9, head - 9 + 1)]);
+  const watcher = new Watcher('bsc', adapter, chain, state, sink, {
+    reorgDepth: 3,
+    blockMemory: 8,
+    maxBlocksPerPoll: 100,
+  });
+
+  const first = await watcher.poll();
+  assert.equal(first.credited, 0, 'not yet final');
+  assert.equal(state.cursor, '8', 'held just below the deferred block');
+
+  head = 12;
+  // Two more blocks on top; nothing below them changes, so this is growth, not a reorg.
+  chain.reorg(11, 12, 'a');
+  const second = await watcher.poll();
+  assert.equal(second.credited, 1);
+  assert.deepEqual(seen, [2, 4]);
+  assert.equal(state.credited.has('bsc:0xaa:0'), true);
+});

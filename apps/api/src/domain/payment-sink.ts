@@ -1,16 +1,44 @@
-import type { IncomingPayment, PaymentSink } from '@avex/core';
-import { addressKey, chainConfig, foldsAddressCase, requiredConfirmations } from '@avex/core';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import type { CreditOutcome, IncomingPayment, PaymentSink } from '@avex/core';
+import { addressKey, foldsAddressCase, requiredConfirmations } from '@avex/core';
+import { and, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
-import { invoices, payments } from '../db/schema.js';
+import { assets, invoices, payments, unmatchedPayments } from '../db/schema.js';
+import { LATE_PAYMENT_GRACE_MS, assetKeyOf, decidePooled } from './pooled-matching.js';
+import type { CandidateInvoice, MatchRule, PriorPayment } from './pooled-matching.js';
 
 /** Mirrors `paymentValueSourceEnum`; guarded by the schema drift test. */
 export type PaymentValueSource = 'quote' | 'oracle' | 'merchant_rate' | 'unknown';
 import type { AuditService } from './audit.js';
 import type { CommissionLedger } from './commission-ledger.js';
+import type { RecordUnmatchedInput, UnmatchedReason } from './reconciliation-service.js';
 import type { WebhookService } from './webhook-service.js';
+
+/**
+ * Where a transfer that belongs to no invoice is put.
+ *
+ * The reconciliation service satisfies this; the sink only needs the one method, and taking the
+ * service itself would hand the watcher process the powers to attach and resolve, which it has
+ * no business holding.
+ */
+export interface UnmatchedQueue {
+  record(input: RecordUnmatchedInput): Promise<void>;
+}
+
+type InvoiceRow = typeof invoices.$inferSelect;
+
+/** How a transfer came to be credited, for the audit row and the merchant's callback. */
+type CreditRule = MatchRule | 'address' | 'memo' | 'replay';
+
+type Target =
+  | {
+      readonly kind: 'credit';
+      readonly invoice: InvoiceRow;
+      readonly rule: CreditRule;
+      readonly sameAsset: boolean;
+    }
+  | { readonly kind: 'park'; readonly reason: UnmatchedReason };
 
 /**
  * Credits observed transfers against invoices.
@@ -24,8 +52,16 @@ import type { WebhookService } from './webhook-service.js';
  * And `amountPaid` is always recomputed from the surviving payment rows, never
  * incremented. A running total that only goes up cannot be corrected when a reorg
  * removes one of its contributions.
+ *
+ * A third, since shared wallets: nothing here ever stalls the watcher or loses a transfer. A
+ * transfer that cannot be attributed is parked in the reconciliation queue and reported as
+ * `unmatched`; one that is not yet final is reported as `deferred` so the watcher shows it
+ * again; and the rules that decide between invoices live in `pooled-matching` where every
+ * scenario is a test.
  */
 export class DatabasePaymentSink implements PaymentSink {
+  private unmatched: UnmatchedQueue | undefined;
+
   constructor(
     private readonly db: Database,
     private readonly audit: AuditService,
@@ -33,9 +69,10 @@ export class DatabasePaymentSink implements PaymentSink {
     /**
      * USD value of a token amount.
      *
-     * Used for two things now: choosing how many confirmations to require, and
-     * recording what the payment was worth so platform billing can assess volume. The
-     * second use is why the result is persisted rather than only consulted — see
+     * Used for three things now: choosing how many confirmations to require, recording what
+     * the payment was worth so platform billing can assess volume, and — when a payer sent the
+     * wrong token to a shared wallet — working out how much of the invoiced token it was worth.
+     * The second use is why the result is persisted rather than only consulted — see
      * `payments.valueUsdMicros`.
      */
     private readonly valueUsd: (payment: IncomingPayment) => number | Promise<number>,
@@ -60,17 +97,101 @@ export class DatabasePaymentSink implements PaymentSink {
     private readonly ledger?: CommissionLedger | undefined,
   ) {}
 
-  async credit(payment: IncomingPayment): Promise<void> {
-    const invoice = await this.match(payment);
-    if (!invoice) {
-      // Never guessed at. An unmatched transfer goes to reconciliation, because
-      // crediting the wrong invoice is worse than crediting none.
-      throw new UnmatchedPaymentError(payment);
-    }
+  /**
+   * Where to put transfers nobody can be credited with.
+   *
+   * A setter rather than a constructor argument because the queue's own service needs this
+   * sink for `recompute`, and one of the two has to be built first. Until it is set, an
+   * unattributable transfer throws instead — never silently dropped, because every one is a
+   * person who sent money.
+   */
+  parkUnmatchedIn(queue: UnmatchedQueue): void {
+    this.unmatched = queue;
+  }
 
-    if (invoice.chain !== payment.chain) {
-      throw new UnmatchedPaymentError(payment);
+  async credit(payment: IncomingPayment): Promise<CreditOutcome> {
+    return this.process(payment, { seenAt: Date.now(), parkedId: null });
+  }
+
+  /**
+   * Re-examine transfers parked at shared wallets.
+   *
+   * Invoices settle and expire after a transfer was parked, and what was ambiguous an hour ago
+   * may now have one candidate. Each pending stray at a pooled address is decided again by the
+   * same rules with the same clock, except that only invoices existing when it was first seen
+   * are considered. Whatever is credited is marked attached, with the rule in the note, so an
+   * operator reading the queue sees what happened and why.
+   */
+  async sweepParked(limit = 200): Promise<{ readonly examined: number; readonly credited: number }> {
+    const rows = await this.db
+      .select()
+      .from(unmatchedPayments)
+      .where(
+        and(
+          eq(unmatchedPayments.resolution, 'pending'),
+          inArray(unmatchedPayments.reason, ['ambiguous', 'wrong_asset', 'invoice_expired']),
+        ),
+      )
+      .orderBy(unmatchedPayments.seenAt)
+      .limit(limit);
+
+    let credited = 0;
+    for (const row of rows) {
+      if (row.assetId === null) continue;
+      const [asset] = await this.db
+        .select({
+          symbol: assets.symbol,
+          contract: assets.contract,
+          decimals: assets.decimals,
+          kind: assets.kind,
+        })
+        .from(assets)
+        .where(eq(assets.id, row.assetId))
+        .limit(1);
+      if (!asset) continue;
+
+      const payment: IncomingPayment = {
+        chain: row.chain as IncomingPayment['chain'],
+        txHash: row.txHash,
+        transferIndex: row.transferIndex,
+        to: row.toAddress,
+        ...(row.fromAddress === null ? {} : { from: row.fromAddress }),
+        asset: {
+          symbol: asset.symbol,
+          chain: row.chain as IncomingPayment['chain'],
+          decimals: asset.decimals,
+          kind: asset.kind as IncomingPayment['asset']['kind'],
+          ...(asset.contract === null ? {} : { contract: asset.contract }),
+        },
+        amount: BigInt(row.amount),
+        blockNumber: row.blockNumber,
+        // It was final when it was parked; confirmations are not re-litigated here.
+        confirmations: Number.MAX_SAFE_INTEGER,
+      };
+
+      try {
+        const outcome = await this.process(payment, {
+          seenAt: row.seenAt.getTime(),
+          parkedId: row.id,
+        });
+        if (outcome === 'credited' || outcome === 'duplicate') credited += 1;
+      } catch {
+        // One stray must not stop the rest being looked at; it stays in the queue.
+      }
     }
+    return { examined: rows.length, credited };
+  }
+
+  private async process(
+    payment: IncomingPayment,
+    context: { readonly seenAt: number; readonly parkedId: string | null },
+  ): Promise<CreditOutcome> {
+    const target = await this.match(payment, context);
+    if (target.kind === 'park') {
+      if (context.parkedId === null) await this.park(payment, target.reason);
+      return 'unmatched';
+    }
+    const { invoice } = target;
 
     /**
      * Valued once, before anything reads it.
@@ -94,7 +215,25 @@ export class DatabasePaymentSink implements PaymentSink {
           .set({ status: 'confirming' })
           .where(eq(invoices.id, invoice.id));
       }
-      return;
+      return 'deferred';
+    }
+
+    /**
+     * What the transfer counts for, in the invoice's own token.
+     *
+     * The same as the amount when the payer sent the token invoiced. When they sent another —
+     * USDC to a USDT invoice on a wallet that takes both — it is what the transfer was worth in
+     * the invoiced token at the moment of crediting, so the invoice's total stays a sum in one
+     * unit. No price for either side means no conversion, and the transfer is parked as
+     * `wrong_asset` for the sweep to try again when the feed is back.
+     */
+    let creditedAmount: bigint | null = null;
+    if (!target.sameAsset) {
+      creditedAmount = await this.convert(payment, invoice, valuation.valueUsdMicros);
+      if (creditedAmount === null) {
+        if (context.parkedId === null) await this.park(payment, 'wrong_asset');
+        return 'unmatched';
+      }
     }
 
     const previousStatus = invoice.status;
@@ -107,8 +246,12 @@ export class DatabasePaymentSink implements PaymentSink {
         txHash: payment.txHash,
         transferIndex: payment.transferIndex,
         amount: payment.amount.toString(),
+        creditedAmount: creditedAmount === null ? null : creditedAmount.toString(),
+        assetSymbol: payment.asset.symbol,
+        assetContract: payment.asset.contract ?? null,
+        assetDecimals: payment.asset.decimals,
         blockNumber: payment.blockNumber,
-        fromAddress: null,
+        fromAddress: payment.from ?? null,
         ...valuation,
       })
       // The exactly-once guarantee, enforced by the database rather than by
@@ -118,7 +261,11 @@ export class DatabasePaymentSink implements PaymentSink {
       })
       .returning({ id: payments.id });
 
-    if (inserted.length === 0) return;
+    if (inserted.length === 0) {
+      // Already credited on an earlier pass. A parked copy of it can be closed all the same.
+      if (context.parkedId !== null) await this.resolveParked(context.parkedId, invoice.id, target.rule);
+      return 'duplicate';
+    }
 
     /**
      * The commission, for the payments where the chain did not take it.
@@ -163,9 +310,13 @@ export class DatabasePaymentSink implements PaymentSink {
 
     const status = await this.recompute(invoice.id);
 
+    if (context.parkedId !== null) {
+      await this.resolveParked(context.parkedId, invoice.id, target.rule);
+    }
+
     await this.audit.record({
       organizationId: invoice.organizationId,
-      action: 'payment.credited',
+      action: context.parkedId === null ? 'payment.credited' : 'payment.auto_attached',
       targetType: 'invoice',
       targetId: invoice.id,
       metadata: {
@@ -173,6 +324,9 @@ export class DatabasePaymentSink implements PaymentSink {
         txHash: payment.txHash,
         transferIndex: payment.transferIndex,
         amount: payment.amount.toString(),
+        asset: payment.asset.symbol,
+        ...(creditedAmount === null ? {} : { creditedAmount: creditedAmount.toString() }),
+        rule: target.rule,
         blockNumber: payment.blockNumber,
         status,
       },
@@ -198,9 +352,17 @@ export class DatabasePaymentSink implements PaymentSink {
         status,
         amountDue: invoice.amountDue,
         amountPaid: await this.amountPaid(invoice.id),
+        /**
+         * What was actually sent, when it was not the token invoiced. A merchant crediting a
+         * customer's balance from `amountPaid` has the figure in the invoiced token; this says
+         * the wallet received something else, in case their books care.
+         */
+        ...(target.sameAsset ? {} : { paidAsset: payment.asset.symbol, paidAmount: payment.amount.toString() }),
         txHash: payment.txHash,
       });
     }
+
+    return 'credited';
   }
 
   /**
@@ -226,6 +388,54 @@ export class DatabasePaymentSink implements PaymentSink {
 
     if (!Number.isFinite(usd) || usd < 0) return { valueUsdMicros: null, valueSource: 'unknown' };
     return { valueUsdMicros: BigInt(Math.floor(usd * 1_000_000)).toString(), valueSource: source };
+  }
+
+  /**
+   * How much of the invoiced token a transfer in another token was worth.
+   *
+   * Both sides at the oracle's price now: the transfer's dollar value is already in hand, and
+   * the invoiced token's unit price is asked for through the same function with a synthetic
+   * one-token payment, so the two figures come from one source at one moment. Null when either
+   * is unavailable or nonsensical — never a guess, because this number becomes `amount_paid`.
+   */
+  private async convert(
+    payment: IncomingPayment,
+    invoice: InvoiceRow,
+    valueUsdMicros: string | null,
+  ): Promise<bigint | null> {
+    if (valueUsdMicros === null) return null;
+    const [asset] = await this.db
+      .select({
+        symbol: assets.symbol,
+        contract: assets.contract,
+        decimals: assets.decimals,
+        kind: assets.kind,
+      })
+      .from(assets)
+      .where(eq(assets.id, invoice.assetId))
+      .limit(1);
+    if (!asset) return null;
+
+    let unitUsd: number;
+    try {
+      unitUsd = await this.valueUsd({
+        ...payment,
+        asset: {
+          symbol: asset.symbol,
+          chain: payment.chain,
+          decimals: asset.decimals,
+          kind: asset.kind as IncomingPayment['asset']['kind'],
+          ...(asset.contract === null ? {} : { contract: asset.contract }),
+        },
+        amount: 10n ** BigInt(asset.decimals),
+      });
+    } catch {
+      return null;
+    }
+    if (!Number.isFinite(unitUsd) || unitUsd <= 0) return null;
+    const unitMicros = BigInt(Math.round(unitUsd * 1_000_000));
+    if (unitMicros <= 0n) return null;
+    return (BigInt(valueUsdMicros) * 10n ** BigInt(asset.decimals)) / unitMicros;
   }
 
   async reverse(paymentKey: string, reason: string): Promise<void> {
@@ -309,7 +519,10 @@ export class DatabasePaymentSink implements PaymentSink {
     }
   }
 
-  private async match(payment: IncomingPayment) {
+  private async match(
+    payment: IncomingPayment,
+    context: { readonly seenAt: number; readonly parkedId: string | null },
+  ): Promise<Target> {
     // Shared-address chains identify an invoice by memo; everywhere else the
     // deposit address is unique to one invoice.
     if (payment.memo) {
@@ -318,7 +531,7 @@ export class DatabasePaymentSink implements PaymentSink {
         .from(invoices)
         .where(and(eq(invoices.chain, payment.chain), eq(invoices.memo, payment.memo)))
         .limit(1);
-      if (byMemo) return byMemo;
+      if (byMemo) return { kind: 'credit', invoice: byMemo, rule: 'memo', sameAsset: true };
     }
 
     /**
@@ -365,49 +578,44 @@ export class DatabasePaymentSink implements PaymentSink {
       .from(invoices)
       .where(atAddress)
       .limit(1);
-    if (any?.addressModel === 'pooled') {
-      return this.matchPooled(payment, atAddress);
+    if (any === undefined) return { kind: 'park', reason: 'no_matching_address' };
+    if (any.addressModel === 'pooled') {
+      return this.matchPooled(payment, atAddress, context);
     }
 
     const [byAddress] = await this.db.select().from(invoices).where(atAddress).limit(1);
-    return byAddress ?? null;
+    if (!byAddress) return { kind: 'park', reason: 'no_matching_address' };
+    if (byAddress.chain !== payment.chain) return { kind: 'park', reason: 'no_matching_address' };
+    return { kind: 'credit', invoice: byAddress, rule: 'address', sameAsset: true };
   }
 
   /**
    * Which invoice a payment to a pooled wallet belongs to.
    *
-   * Three outcomes, in the order they are tried, and the third is the interesting one.
+   * The rules are in `pooled-matching`; this gathers what they need and acts on the answer.
+   * What is gathered, and why each is needed:
    *
-   * 1. **An open invoice asks for exactly this amount.** The ordinary case, and unambiguous:
-   *    every open invoice on a wallet is given a distinct amount for precisely this lookup.
-   *
-   * 2. **No exact match, and exactly one invoice is open here.** The payer sent the wrong
-   *    amount — their exchange rounded the withdrawal, or they typed the round number — and
-   *    there is only one invoice it could be for. Credited, and the existing over/under
-   *    classification records the difference: an underpayment keeps the shortfall rather than
-   *    failing, because real money arrived and saying otherwise would be a lie. This is what
-   *    the allocator's preference for idle wallets buys.
-   *
-   * 3. **No exact match and more than one invoice open here.** Nothing on the chain says which
-   *    of them this was for, so nothing here guesses. Returning null sends it to the unmatched
-   *    queue for an operator, which is where the payer's support ticket will meet it.
-   *
-   * Note what case 3 does *not* do: wait. An earlier sketch had it hold the payment in the hope
-   * that the other invoices would be settled by exact matches and leave only one candidate.
-   * That is a real and useful inference, but it is a later pass over the queue rather than a
-   * decision at receive time — a `credit` call that returns "come back later" would either
-   * block the watcher's poll or silently drop the transfer.
+   *   - every invoice at the address that is open, or closed within the late-payment grace —
+   *     the candidates, with their token so a payment in a different one can be recognised;
+   *   - every payment credited at the address within the same grace, with its sender — so a
+   *     second transfer from the same wallet goes with the first;
+   *   - how many other transfers are parked at the address — because two strays and one open
+   *     invoice is not "the only candidate", it is two claims on one invoice.
    */
-  private async matchPooled(payment: IncomingPayment, atAddress: SQL | undefined) {
+  private async matchPooled(
+    payment: IncomingPayment,
+    atAddress: SQL | undefined,
+    context: { readonly seenAt: number; readonly parkedId: string | null },
+  ): Promise<Target> {
     /**
      * A transfer we have already credited belongs where we already credited it.
      *
      * Checked first, and only on this path, because the pooled rules below deliberately look at
-     * *open* invoices — so a re-scanned block range containing a payment that has since settled
-     * its invoice would find nothing open, raise `UnmatchedPaymentError`, and put a transfer we
-     * handled correctly weeks ago in front of an operator as though it were a stranger's. On
-     * every other chain the address lookup finds the settled invoice and the payment row's own
-     * unique key makes the second credit a no-op; this restores that property here.
+     * *recent* invoices — so a re-scanned block range containing a payment that settled its
+     * invoice long ago would find nothing, park a transfer we handled correctly weeks ago, and
+     * put it in front of an operator as though it were a stranger's. On every other chain the
+     * address lookup finds the settled invoice and the payment row's own unique key makes the
+     * second credit a no-op; this restores that property here.
      */
     const [already] = await this.db
       .select({ invoiceId: payments.invoiceId })
@@ -426,46 +634,161 @@ export class DatabasePaymentSink implements PaymentSink {
         .from(invoices)
         .where(eq(invoices.id, already.invoiceId))
         .limit(1);
-      if (invoice) return invoice;
+      if (invoice) return { kind: 'credit', invoice, rule: 'replay', sameAsset: true };
     }
 
-    const open = await this.db
+    const now = Date.now();
+    const graceStart = new Date(now - LATE_PAYMENT_GRACE_MS);
+
+    const rows = await this.db
+      .select({
+        id: invoices.id,
+        amountDue: invoices.amountDue,
+        status: invoices.status,
+        expiresAt: invoices.expiresAt,
+        createdAt: invoices.createdAt,
+        symbol: assets.symbol,
+        contract: assets.contract,
+        decimals: assets.decimals,
+      })
+      .from(invoices)
+      .innerJoin(assets, eq(assets.id, invoices.assetId))
+      .where(
+        and(
+          atAddress,
+          or(inArray(invoices.status, ['pending', 'confirming']), gt(invoices.expiresAt, graceStart)),
+        ),
+      );
+
+    const candidates: CandidateInvoice[] = rows.map((row) => ({
+      id: row.id,
+      amountDue: BigInt(row.amountDue),
+      decimals: row.decimals,
+      assetKey: assetKeyOf({ chain: payment.chain, symbol: row.symbol, contract: row.contract }),
+      status: row.status,
+      expiresAt: row.expiresAt.getTime(),
+      createdAt: row.createdAt.getTime(),
+    }));
+
+    const priorRows = candidates.length === 0
+      ? []
+      : await this.db
+          .select({
+            invoiceId: payments.invoiceId,
+            from: payments.fromAddress,
+            creditedAt: payments.creditedAt,
+          })
+          .from(payments)
+          .where(
+            and(
+              inArray(payments.invoiceId, candidates.map((c) => c.id)),
+              isNull(payments.reversedAt),
+              gt(payments.creditedAt, graceStart),
+            ),
+          );
+    const priorPayments: PriorPayment[] = priorRows.map((row) => ({
+      invoiceId: row.invoiceId,
+      from: row.from,
+      creditedAt: row.creditedAt.getTime(),
+    }));
+
+    const [strays] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(unmatchedPayments)
+      .where(
+        and(
+          eq(unmatchedPayments.chain, payment.chain),
+          eq(unmatchedPayments.toAddress, payment.to),
+          eq(unmatchedPayments.resolution, 'pending'),
+          ...(context.parkedId === null ? [] : [ne(unmatchedPayments.id, context.parkedId)]),
+        ),
+      );
+
+    const decision = decidePooled(
+      {
+        amount: payment.amount,
+        decimals: payment.asset.decimals,
+        assetKey: assetKeyOf(payment.asset),
+        from: payment.from ?? null,
+        seenAt: context.seenAt,
+      },
+      {
+        now,
+        candidates,
+        priorPayments,
+        otherPendingStrays: strays?.count ?? 0,
+      },
+    );
+
+    if (decision.kind === 'park') return decision;
+
+    const [invoice] = await this.db
       .select()
       .from(invoices)
-      .where(and(atAddress, sql`${invoices.status} in ('pending', 'confirming')`));
-
-    const exact = open.filter((invoice) => BigInt(invoice.amountDue) === payment.amount);
-    /**
-     * More than one exact match should be impossible, and is treated as ambiguous rather than
-     * resolved arbitrarily.
-     *
-     * The allocator's lock is what makes it impossible; a bug there, or rows written by
-     * something else, would produce two invoices at one amount. Taking the first would credit a
-     * coin flip. This is the assertion that turns that bug into an operator's queue item.
-     */
-    if (exact.length === 1) return exact[0]!;
-    if (exact.length > 1) return null;
-
-    if (open.length === 1) return open[0]!;
-
-    /**
-     * Zero open invoices is not the same as several, but the answer is the same.
-     *
-     * A payment to a pooled wallet with nothing open is most likely a late payer whose invoice
-     * expired — still their money, still needing a human. `invoices.status` excludes expired
-     * rows here deliberately: crediting an expired invoice automatically would let a payment
-     * arriving days later reopen a settled order.
-     */
-    return null;
+      .where(eq(invoices.id, decision.invoiceId))
+      .limit(1);
+    if (!invoice) return { kind: 'park', reason: 'ambiguous' };
+    return { kind: 'credit', invoice, rule: decision.rule, sameAsset: decision.sameAsset };
   }
 
+  /** Put a transfer in the reconciliation queue, or refuse to lose it. */
+  private async park(payment: IncomingPayment, reason: UnmatchedReason): Promise<void> {
+    if (this.unmatched === undefined) throw new UnmatchedPaymentError(payment);
+
+    const [asset] = await this.db
+      .select({ id: assets.id })
+      .from(assets)
+      .where(
+        and(
+          eq(assets.chain, payment.chain),
+          payment.asset.contract === undefined
+            ? and(isNull(assets.contract), eq(assets.symbol, payment.asset.symbol))
+            : sql`lower(${assets.contract}) = ${payment.asset.contract.toLowerCase()}`,
+        ),
+      )
+      .limit(1);
+
+    await this.unmatched.record({
+      chain: payment.chain,
+      txHash: payment.txHash,
+      transferIndex: payment.transferIndex,
+      amount: payment.amount,
+      toAddress: payment.to,
+      fromAddress: payment.from ?? null,
+      contract: payment.asset.contract ?? null,
+      assetId: asset?.id ?? null,
+      memo: payment.memo ?? null,
+      blockNumber: payment.blockNumber,
+      reason,
+    });
+  }
+
+  private async resolveParked(unmatchedId: string, invoiceId: string, rule: CreditRule): Promise<void> {
+    await this.db
+      .update(unmatchedPayments)
+      .set({
+        resolution: 'attached',
+        attachedInvoiceId: invoiceId,
+        resolvedAt: new Date(),
+        note: `credited automatically: ${rule.replace(/_/g, ' ')}`,
+      })
+      .where(and(eq(unmatchedPayments.id, unmatchedId), eq(unmatchedPayments.resolution, 'pending')));
+  }
+
+  /**
+   * What has been paid, in the invoice's own token.
+   *
+   * `credited_amount` where a payment was in another token, `amount` otherwise.
+   */
   private async amountPaid(invoiceId: string): Promise<string> {
     const rows = await this.db
-      .select({ amount: payments.amount })
+      .select({ amount: payments.amount, creditedAmount: payments.creditedAmount })
       .from(payments)
       .where(and(eq(payments.invoiceId, invoiceId), isNull(payments.reversedAt)));
 
-    return rows.reduce((total, row) => total + BigInt(row.amount), 0n).toString();
+    return rows
+      .reduce((total, row) => total + BigInt(row.creditedAmount ?? row.amount), 0n)
+      .toString();
   }
 
   /**
@@ -492,10 +815,13 @@ export class DatabasePaymentSink implements PaymentSink {
     const due = BigInt(invoice.amountDue);
     const tolerance = (due * BigInt(invoice.toleranceBps)) / 10_000n;
 
-    let status: 'pending' | 'confirming' | 'paid' | 'underpaid' | 'overpaid';
+    let status: 'pending' | 'confirming' | 'paid' | 'underpaid' | 'overpaid' | 'expired';
     if (total === 0n) {
-      // Back to the start: whatever was seen has been taken back.
-      status = 'pending';
+      /**
+       * Back to the start: whatever was seen has been taken back. An invoice that had
+       * already expired stays expired — a reversal does not reopen it.
+       */
+      status = invoice.status === 'expired' ? 'expired' : 'pending';
     } else if (total < due - tolerance) {
       status = 'underpaid';
     } else if (total > due + tolerance) {
@@ -518,6 +844,10 @@ export class DatabasePaymentSink implements PaymentSink {
   }
 }
 
+/**
+ * Thrown only when no queue has been wired: a transfer nobody can be credited with must never
+ * be dropped, and with nowhere to park it the only honest move is to fail loudly.
+ */
 export class UnmatchedPaymentError extends Error {
   constructor(readonly payment: IncomingPayment) {
     super(

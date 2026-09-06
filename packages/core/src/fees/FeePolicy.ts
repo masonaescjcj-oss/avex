@@ -220,6 +220,14 @@ export class FeePolicy {
    * intervention and no invoices accepted that cost more to settle than they
    * are worth.
    */
+  /**
+   * The floor that applies whatever the chain costs: on a chain we never pay to settle, on a
+   * chain whose gas probe failed, and beneath the gas-derived floor everywhere else.
+   */
+  get absoluteMinUsd(): number {
+    return this.config.absoluteMinUsd;
+  }
+
   minInvoiceUsd(snapshot: GasSnapshot): number {
     const { usd } = this.settlementCostUsd(snapshot);
     return Math.max(this.config.absoluteMinUsd, usd / this.config.targetFeeRatio);

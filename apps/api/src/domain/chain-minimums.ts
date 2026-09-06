@@ -37,12 +37,13 @@ export class ChainMinimums {
   ) {}
 
   /**
-   * The floor for this chain in micro-dollars, or `null` when there is no answer to give.
+   * The gas-derived floor for this chain in micro-dollars, or `null` when there is none.
    *
    * Null for the chains that settle directly — TON's shared wallet and TRON's pool of the
    * merchant's own addresses receive the payer's transfer and nothing of ours moves afterwards,
    * so there is no settlement whose cost could exceed anything. It is also null when the probe
-   * failed, and the caller cannot tell the two apart on purpose: both mean "do not refuse".
+   * failed, and the caller cannot tell the two apart on purpose: both mean "no gas to weigh".
+   * Neither means "no floor": `verdict` applies the absolute minimum underneath this.
    */
   async minInvoiceUsdMicros(chain: string): Promise<bigint | null> {
     if (!isSupported(chain)) return null;
@@ -62,8 +63,24 @@ export class ChainMinimums {
     return BigInt(cents) * 10_000n;
   }
 
+  /** The floor every order must clear, on every currency and every network, in micro-dollars. */
+  absoluteMinUsdMicros(): bigint {
+    return BigInt(Math.ceil(this.policy.absoluteMinUsd * 100)) * 10_000n;
+  }
+
   /**
-   * Whether an order of this size can carry its own settlement on this chain.
+   * Whether an order of this size may be taken on this chain.
+   *
+   * Two floors, and the higher one applies. The absolute minimum — fifty cents by default,
+   * `MIN_INVOICE_USD` in the environment — holds on every currency and every network,
+   * because below it the amount is dust: a payer's exchange fee exceeds it, a rounding to
+   * three decimals is a visible share of it, and a stray transfer of that size is not worth an
+   * operator's time to reconcile. Above that, a chain we settle on has a gas-derived floor as
+   * well, which `minInvoiceUsdMicros` computes and which is what protects us from settling an
+   * order at a loss.
+   *
+   * Pooled means paid into the merchant's own wallet, so there is no settlement whose cost
+   * could exceed anything, on any chain: only the absolute floor applies.
    *
    * `null` for value means a token-priced invoice, which has no dollar figure at creation. It
    * passes: a minimum is a dollar comparison, and a conversion invented here would refuse a
@@ -72,16 +89,15 @@ export class ChainMinimums {
   async verdict(
     chain: string,
     valueUsdMicros: bigint | null | undefined,
-    /**
-     * Pooled: paid into the merchant's own wallet, so there is no settlement whose cost could
-     * exceed anything, on any chain. The floor is about gas we pay, and here we pay none.
-     */
     options: { readonly pooled?: boolean } = {},
   ): Promise<{ readonly ok: true } | { readonly ok: false; readonly minUsdMicros: bigint }> {
-    if (options.pooled) return { ok: true };
     if (valueUsdMicros === null || valueUsdMicros === undefined || valueUsdMicros <= 0n) {
       return { ok: true };
     }
+
+    const absolute = this.absoluteMinUsdMicros();
+    if (valueUsdMicros < absolute) return { ok: false, minUsdMicros: absolute };
+    if (options.pooled) return { ok: true };
 
     const minimum = await this.minInvoiceUsdMicros(chain);
     if (minimum === null || valueUsdMicros >= minimum) return { ok: true };

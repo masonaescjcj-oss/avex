@@ -770,7 +770,7 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
       <div class="endpoint" data-route="POST /v1/organizations/:orgId/deposit-wallets">
         <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/deposit-wallets</span></div>
         <div class="params">
-          <div class="param"><code>chain</code><span><span class="req">required</span> — any supported network. Up to ten wallets per network, counting ones still waiting to join.</span></div>
+          <div class="param"><code>chain</code><span><span class="req">required</span> — any supported network. Up to a hundred wallets per network, counting ones still waiting to join.</span></div>
           <div class="param"><code>address</code><span><span class="req">required</span> — your own address. Checked, so a mistyped one is refused rather than accepted.</span></div>
           <div class="param"><code>label</code><span>Your name for it, so a support conversation can refer to one.</span></div>
         </div>

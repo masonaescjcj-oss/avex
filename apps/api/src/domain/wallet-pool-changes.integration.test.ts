@@ -314,12 +314,14 @@ describe('adding a wallet to the pool', { skip: !databaseUrl }, () => {
     );
   });
 
-  test('a merchant may hold ten wallets on a chain, and the eleventh is refused', async () => {
+  test('a merchant may hold a hundred wallets on a chain, and the hundred-and-first is refused', async () => {
     /**
      * A product limit rather than a technical one: every wallet is a key the merchant has to
      * keep, and a pool wider than anyone tracks is how a retired key ends up with an open
-     * invoice pointing at it. Scheduled additions count, or the cap could be sailed past by
-     * requesting eleven at once and waiting a day.
+     * invoice pointing at it. A hundred, because that is what the amount-matching model needs
+     * to give nearly every invoice a wallet of its own at the merchant's volume. Scheduled
+     * additions count, or the cap could be sailed past by requesting more at once and waiting
+     * a day.
      */
     const { orgId, ownerId } = await freshOrg();
     for (let i = 1; i <= MAX_WALLETS_PER_CHAIN; i++) {

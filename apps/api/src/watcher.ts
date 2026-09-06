@@ -22,6 +22,7 @@ import { AssetService } from './domain/asset-service.js';
 import { AuditService } from './domain/audit.js';
 import { CommissionLedger } from './domain/commission-ledger.js';
 import { DatabasePaymentSink } from './domain/payment-sink.js';
+import { ReconciliationService } from './domain/reconciliation-service.js';
 import { paymentValueSource, paymentValueUsd } from './domain/payment-valuation.js';
 import { DatabaseWatchStore } from './domain/watch-store.js';
 import { WebhookService } from './domain/webhook-service.js';
@@ -133,6 +134,7 @@ async function main(): Promise<void> {
       },
       breaker: DEFAULT_BREAKER,
       cacheTtlMs: env.PRICE_CACHE_TTL_MS,
+      staleFallbackMs: env.PRICE_STALE_FALLBACK_MS,
     },
   );
 
@@ -153,6 +155,15 @@ async function main(): Promise<void> {
     paymentValueSource(),
     ledger,
   );
+  /**
+   * Where a transfer nobody can be credited with goes.
+   *
+   * This process is the one that sees transfers, so it is the one that has to park them: until
+   * this line existed an unattributable payment to a shared wallet was a log line and nothing
+   * else, and "goes for review" was a sentence in the design rather than a row an operator
+   * could see. The queue's service is built with the sink because it recomputes through it.
+   */
+  sink.parkUnmatchedIn(new ReconciliationService(db, audit, sink));
   const state = new DatabaseWatchStore(db);
   /**
    * The asset service, for reading the catalogue and nothing else.
@@ -245,6 +256,17 @@ async function main(): Promise<void> {
      */
     const pooled = chainConfig(chain).addressModel === 'pooled';
     /**
+     * Stay this far behind the head, so a transfer is final the first time it is seen.
+     *
+     * A block is scanned once. Scanning right up to the head met nearly every transfer with one
+     * confirmation, the sink asked for fifteen and deferred it, and the cursor moved on — so
+     * the transfer was never presented again and the invoice sat at `confirming` with the money
+     * in the wallet. The watcher now holds its cursor for a deferred transfer as well, so this
+     * is the fast path rather than the only defence: the ordinary payment is credited on first
+     * sight, and only a large one waits for the deeper count.
+     */
+    const confirmationLag = Math.max(0, chainConfig(chain).confirmations.standard - 1);
+    /**
      * Whether this chain has forwarders to derive and settle with, or only watches.
      *
      * A chain with an endpoint and no contracts is watched all the same: merchants' own
@@ -260,6 +282,7 @@ async function main(): Promise<void> {
             rpcUrl: urls[0]!,
             acceptedAssets: accepted,
             pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
+            confirmationLag,
           },
           /**
            * A real price, and on this chain it is only ever read for a log line.
@@ -286,6 +309,7 @@ async function main(): Promise<void> {
               : {}),
             acceptedAssets: accepted,
             pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
+            confirmationLag,
           },
           /**
            * Native price, for the gas model. Not consulted during a poll.

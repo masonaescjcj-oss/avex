@@ -1590,7 +1590,8 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
      */
     const expected: readonly [string, readonly string[]][] = [
       ['api-keys', ['data']],
-      ['assets', ['data']],
+      // `chains` says which networks this server can take money on; the page reads both.
+      ['assets', ['chains', 'data']],
       ['members', ['data']],
       ['invites', ['data']],
       ['deposit-wallets', ['pending', 'wallets']],
