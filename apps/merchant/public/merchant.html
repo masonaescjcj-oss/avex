@@ -1617,15 +1617,21 @@
       </div>
 
       <!--
-        Confirming an enrolment clears the proven factor from every session, this one
+        Shown whenever an authenticator is enrolled. The API accepts a protected change —
+        a payout address, an API key, a role — only when a code was entered within the last
+        five minutes, so a session that signed in an hour ago is refused without one. An
+        earlier draft showed this panel only for a session that had never shown a code, and
+        a merchant refused for a lapsed window landed here to find nowhere to type.
+        Confirming an enrolment also clears the proven factor from every session, this one
         included — so the panel that appears right after setting it up is this one.
       -->
       <div class="panel" id="elevate-panel" hidden>
         <div class="panel-head"><h2>Unlock this session</h2></div>
         <div class="panel-body">
-          <p class="note">
-            This browser has not shown a code yet, so anything that moves money is refused.
-            One code unlocks it until you sign out.
+          <p class="note" id="elevate-note">
+            Anything that moves money or grants access — a payout address, an API key, a new
+            role — needs a code from the app entered within the last five minutes. Enter one
+            here, then make the change.
           </p>
           <form id="elevate-form">
             <div class="row">
@@ -3996,9 +4002,21 @@ function matchPreview(method, url, routes = previewRoutes()) {
     flash(problem.message + reference, 'error');
     const code = problem && problem.code;
     if (code === 'two_factor_required' || code === 'elevation_required' || code === 'mfa_required') {
+      // Remember the tab the refusal happened on: a code unlocks the session for five
+      // minutes, and the thing to do with those minutes is the change that was refused.
+      unlockReturnTo = current === 'security' ? null : current;
       show('security');
+      if (code !== 'two_factor_required') {
+        // The server has just said a code is needed, which settles whether to offer the
+        // field — before the tab's own fetch gets round to it.
+        el('elevate-panel').hidden = false;
+        el('elevate-code').focus();
+      }
     }
   }
+
+  /** The tab an elevation refusal came from, to go back to once a code is entered. */
+  let unlockReturnTo = null;
 
   // ── sign in, or start ─────────────────────────────────────────────────────
 
@@ -6174,7 +6192,12 @@ function matchPreview(method, url, routes = previewRoutes()) {
     el('totp-replace-warning').textContent = view.replaceWarning ?? '';
     el('totp-replace-warning').hidden = view.replaceWarning === null;
 
-    el('elevate-panel').hidden = !view.needsElevation;
+    // Enrolled means the panel is useful: the window is five minutes and nobody can tell
+    // from outside whether it has lapsed. Not enrolled means there is no code to enter.
+    el('elevate-panel').hidden = me.totpEnabled !== true;
+    el('elevate-note').textContent = view.needsElevation
+      ? 'This browser has not shown a code yet, so anything that moves money or grants access is refused. Enter one here first.'
+      : 'Anything that moves money or grants access — a payout address, an API key, a new role — needs a code from the app entered within the last five minutes. Enter one here, then make the change.';
 
     el('revoke-others').disabled = !view.canRevokeOthers;
     el('revoke-note').textContent = view.revokeNote;
@@ -6263,8 +6286,16 @@ function matchPreview(method, url, routes = previewRoutes()) {
         body: JSON.stringify({ code: el('elevate-code').value.trim() }),
       });
       el('elevate-code').value = '';
-      flash('Unlocked. This session can make changes until you sign out.', 'ok');
-      await refresh('security');
+      cache.me = { ...(cache.me || {}), mfaComplete: true };
+      const returnTo = unlockReturnTo;
+      unlockReturnTo = null;
+      if (returnTo) {
+        flash('Unlocked for five minutes. Try the change again.', 'ok');
+        show(returnTo);
+      } else {
+        flash('Unlocked for five minutes.', 'ok');
+        await refresh('security');
+      }
     } catch (problem) {
       reportProblem(problem);
       el('elevate-code').value = '';

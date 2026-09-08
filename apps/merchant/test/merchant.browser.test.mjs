@@ -1772,6 +1772,39 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
+  test('an enrolled account can always enter a code, and unlocking returns to the refused tab', async () => {
+    /**
+     * The API honours a protected change only within five minutes of a code. The security
+     * tab used to show the code field only to a session that had never shown one, so a
+     * merchant refused an hour after signing in — 2FA "On", nothing outstanding — was sent
+     * to a tab with nowhere to type. A real merchant hit exactly that creating a key.
+     */
+    const { page, context, posts } = await open({
+      me: { totpEnabled: true, mfaComplete: true },
+      keyCreated: {
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'elevation_required', message: 'Confirm with your authenticator app to make this change.' }),
+      },
+    });
+    await openTab(page, 'API keys');
+    await page.waitForTimeout(150);
+    await page.fill('#key-name', 'My shop');
+    await page.click('#key-submit');
+    await page.waitForFunction(() => !document.getElementById('view-security').hidden, { timeout: 5000 });
+
+    assert.equal(await page.$eval('#elevate-panel', (node) => node.hidden), false, 'the code field is offered');
+    assert.match(await text(page, '#elevate-note'), /five minutes/);
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'elevate-code');
+
+    await page.fill('#elevate-code', '123456');
+    await page.click('#elevate-form button[type="submit"]');
+    await page.waitForFunction(() => !document.getElementById('view-keys').hidden, { timeout: 5000 });
+    assert.ok(posts.some((p) => p.path.endsWith('/v1/auth/mfa') && p.body.code === '123456'));
+    assert.match(await text(page, '#flash'), /Try the change again/);
+    await context.close();
+  });
+
   test('a key is labelled by the mode its prefix implies', async () => {
     // The prefix is what the API enforces, so it is what the page reads.
     const { page, context } = await open();
@@ -2173,7 +2206,9 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.equal(await shown(page, '#totp-replace-warning'), true);
     assert.match(await text(page, '#totp-replace-warning'), /keeps working/);
     // Nothing outstanding, so nothing to unlock.
-    assert.equal(await shown(page, '#elevate-panel'), false);
+    // Enrolled, so the code field is offered: protected changes need a code from the last
+    // five minutes, whatever the login did.
+    assert.equal(await shown(page, '#elevate-panel'), true);
     await context.close();
   });
 
