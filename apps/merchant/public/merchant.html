@@ -478,42 +478,28 @@
 
     Four equal KPI cards gave the merchant's own volume the same weight as the count of
     invoices beside it. This says the money first and puts the rest underneath it, which is
-    the order somebody reads it in. Dark on a light page; in the dark theme the card is the
-    brand lime, because a dark card on a dark page is not a card.
+    the order somebody reads it in. The card is the brand lime in every theme: an earlier
+    draft made it near-black on the light page, and the merchant asked for the one colour
+    the dark theme already had — the figure that matters most, on the colour that is ours.
   */
   .hero {
-    background: #14171c; color: #f2f4f6;
+    background: var(--lime); color: var(--lime-ink);
     border-radius: var(--r-xl); padding: var(--sp-5);
-    margin-bottom: var(--gap); box-shadow: var(--shadow-2);
+    margin-bottom: var(--gap); box-shadow: none;
   }
   .hero-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
-  .hero-label { font-size: var(--s-2); font-weight: 550; color: #a3abb6; }
-  .hero-when { font-size: var(--s-2); color: #7d8591; text-align: right; }
+  .hero-label { font-size: var(--s-2); font-weight: 550; color: #43520a; }
+  .hero-when { font-size: var(--s-2); color: #43520a; text-align: right; }
   .hero-figure {
     font-size: var(--s5); font-weight: 650; letter-spacing: -0.03em; line-height: 1.05;
     font-variant-numeric: tabular-nums; margin: var(--sp-2) 0 var(--sp-4);
     overflow-wrap: anywhere;
   }
-  .hero-split { display: flex; border-top: 1px solid #262c35; padding-top: var(--sp-3); gap: var(--sp-4); }
+  .hero-split { display: flex; border-top: 1px solid rgba(26, 36, 0, 0.2); padding-top: var(--sp-3); gap: var(--sp-4); }
   .hero-split > div { flex: 1 1 0; min-width: 0; }
-  .hero-k { font-size: var(--s-2); color: #7d8591; }
+  .hero-k { font-size: var(--s-2); color: #43520a; }
   .hero-v { font-size: var(--s1); font-weight: 600; margin-top: 1px; font-variant-numeric: tabular-nums; }
-  .hero-v[data-tone="warn"] { color: #fbbf24; }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .hero { background: var(--lime); color: var(--lime-ink); box-shadow: none; }
-    :root:not([data-theme="light"]) .hero-label { color: #43520a; }
-    :root:not([data-theme="light"]) .hero-when,
-    :root:not([data-theme="light"]) .hero-k { color: #43520a; }
-    :root:not([data-theme="light"]) .hero-split { border-top-color: rgba(26, 36, 0, 0.2); }
-    :root:not([data-theme="light"]) .hero-v[data-tone="warn"] { color: #6b3d00; }
-  }
-  :root[data-theme="dark"] .hero { background: var(--lime); color: var(--lime-ink); box-shadow: none; }
-  :root[data-theme="dark"] .hero-label,
-  :root[data-theme="dark"] .hero-when,
-  :root[data-theme="dark"] .hero-k { color: #43520a; }
-  :root[data-theme="dark"] .hero-split { border-top-color: rgba(26, 36, 0, 0.2); }
-  :root[data-theme="dark"] .hero-v[data-tone="warn"] { color: #6b3d00; }
+  .hero-v[data-tone="warn"] { color: #6b3d00; }
 
   /* ── shortcuts ────────────────────────────────────────────────────────── */
 
@@ -745,6 +731,12 @@
 
   form { display: flex; flex-direction: column; gap: var(--sp-4); }
   .row { display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: flex-end; }
+  /* A grid of permissions with a plain checkbox each; the label is the permission's name in words. */
+  .scopes { border: 0; padding: 0; margin: var(--sp-3) 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: var(--sp-2) var(--sp-3); }
+  .scopes legend { font-size: var(--s-1); font-weight: 500; color: var(--ink-2); margin-bottom: var(--sp-2); }
+  .scopes label { flex-direction: row; align-items: center; gap: var(--sp-2); font-weight: 500; color: var(--ink); cursor: pointer; }
+  .scopes input { width: 1rem; min-height: 0; height: 1rem; padding: 0; box-shadow: none; accent-color: var(--accent); flex: none; }
+  .scopes small { color: var(--muted); font-weight: 400; }
   label {
     display: flex; flex-direction: column; gap: var(--sp-2);
     font-size: var(--s-1); font-weight: 500; color: var(--ink-2);
@@ -1481,6 +1473,23 @@
         <div class="panel-head"><h2>Your keys</h2></div>
         <div class="panel-body">
           <div class="scroll"><table id="key-table"></table></div>
+          <form id="key-form">
+            <div class="row">
+              <label>Name<input id="key-name" type="text" maxlength="80" autocomplete="off" placeholder="My shop" required></label>
+              <label style="flex: 0 1 9rem">Mode<select id="key-mode">
+                <option value="test">Test</option>
+                <option value="live">Live</option>
+              </select></label>
+            </div>
+            <fieldset class="scopes" id="key-scopes">
+              <legend>What the key may do</legend>
+            </fieldset>
+            <div class="row"><button class="primary" type="submit" id="key-submit">Create key</button></div>
+          </form>
+          <p class="note">
+            A test key can only make test invoices, which take no real money. Creating any key
+            asks for a code from your authenticator if this session has not shown one yet.
+          </p>
           <div class="banner" id="key-secret" data-kind="warn" hidden>
             <p><strong>Copy this key now — it is shown once and stored only as a hash.</strong></p>
             <div class="copyable">
@@ -5681,6 +5690,65 @@ function matchPreview(method, url, routes = previewRoutes()) {
   });
 
   // ── keys ──────────────────────────────────────────────────────────────────
+
+  /**
+   * What a key can be given, in the words a shop owner would use.
+   *
+   * The server's permission list is longer; the rest are things a person does in this
+   * dashboard, not things a shop's plugin does on their behalf. A key can never be given
+   * `apikey:write` or the payout permission — the API refuses (`scope_exceeds_role`), so it
+   * is not offered. The first two are ticked by default because they are what the
+   * WooCommerce plugin and every API integration need: make an invoice, read it back.
+   */
+  const KEY_SCOPES = [
+    ['invoice:create', 'Create invoices', 'what a shop needs to take a payment', true],
+    ['invoice:read', 'Read invoices', 'check whether one was paid', true],
+    ['invoice:refund', 'Refund invoices', '', false],
+    ['webhook:read', 'Read webhook endpoints', '', false],
+    ['webhook:write', 'Add and remove webhook endpoints', '', false],
+    ['asset:read', 'Read currencies', 'which coins and networks are enabled', false],
+    ['org:read', 'Read organisation details', '', false],
+  ];
+
+  function renderKeyScopes() {
+    fill(
+      el('key-scopes'),
+      KEY_SCOPES.map(([scope, label, detail, checked]) =>
+        h('label', {}, [
+          h('input', { type: 'checkbox', name: 'scope', value: scope, checked: checked ? '' : null }),
+          h('span', {}, [label, detail ? h('small', { text: ' — ' + detail }) : null]),
+        ]),
+      ),
+    );
+  }
+
+  renderKeyScopes();
+
+  el('key-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const scopes = Array.from(el('key-scopes').querySelectorAll('input:checked')).map((input) => input.value);
+    if (scopes.length === 0) {
+      flash('Tick at least one thing the key may do.', 'error');
+      return;
+    }
+    const button = el('key-submit');
+    button.disabled = true;
+    try {
+      const body = await api('/v1/organizations/' + orgId + '/api-keys', {
+        method: 'POST',
+        body: JSON.stringify({ name: el('key-name').value.trim(), mode: el('key-mode').value, scopes }),
+      });
+      el('key-name').value = '';
+      el('key-secret-value').textContent = body.key;
+      el('key-secret').hidden = false;
+      flash('Key created. Copy it now — it is shown once.', 'ok');
+      await refresh('keys');
+    } catch (problem) {
+      reportProblem(problem);
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   function renderKeys() {
     const keys = cache.keys || [];
