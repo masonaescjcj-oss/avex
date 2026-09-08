@@ -1342,6 +1342,20 @@
           <p class="page-desc">A test key cannot move real money, whatever it is asked to do. Start with one.</p>
         </div>
       </header>
+      <!--
+        The one identifier every integration asks for alongside the key, and the one this
+        page did not show anywhere: the WooCommerce plugin's settings have a field for it,
+        and a merchant filling them in had to guess where it might be.
+      -->
+      <div class="panel">
+        <div class="panel-head"><h2>Organisation ID</h2><span class="note">Goes next to the key in your shop's settings</span></div>
+        <div class="panel-body">
+          <div class="copyable">
+            <code id="org-id-value"></code>
+            <button class="ghost" type="button" data-copy="org-id-value">Copy</button>
+          </div>
+        </div>
+      </div>
       <div class="panel">
         <div class="panel-head"><h2>Your keys</h2></div>
         <div class="panel-body">
@@ -2680,7 +2694,7 @@
         ]),
       ],
       webhookEndpoints: endpoints.length,
-      liveKeys: keys.filter((key) => keyMode(key.displayPrefix) === 'live').length,
+      liveKeys: keys.filter((key) => !key.revoked && (key.mode || keyMode(key.prefix || '')) === 'live').length,
       twoFactorEnabled: (cache.me || {}).totpEnabled === true,
     });
 
@@ -3577,15 +3591,20 @@
     const rows = keys.length === 0
       ? [h('tr', {}, [h('td', { class: 'empty', text: 'No keys yet.' })])]
       : keys.map((key) => {
-          const mode = keyMode(key.displayPrefix);
+          // The API names the visible part `prefix`; the row's `mode` is what it enforces,
+          // and the prefix is read only when a row somehow lacks one. The page read a field
+          // the API never sent and threw on the first real key — after listing the empty
+          // table fine for weeks.
+          const prefix = key.prefix || key.displayPrefix || '';
+          const mode = key.mode === 'test' || key.mode === 'live' ? key.mode : keyMode(prefix);
           return h('tr', {}, [
             h('td', { text: key.name }),
-            h('td', { class: 'mono', text: key.displayPrefix + '…' }),
+            h('td', { class: 'mono', text: prefix + '…' }),
             h('td', {}, [h('span', { class: 'pill', 'data-mode': mode, text: mode })]),
             h('td', { text: (key.scopes || []).join(', ') }),
-            h('td', { text: key.revokedAt ? 'revoked ' + formatAgo(key.revokedAt) : formatAgo(key.createdAt) }),
+            h('td', { text: key.revoked ? 'revoked' : formatAgo(key.createdAt) + (key.lastUsedAt ? ' · used ' + formatAgo(key.lastUsedAt) : '') }),
             h('td', {}, [
-              key.revokedAt
+              key.revoked
                 ? null
                 : h('button', {
                     class: 'ghost danger',
@@ -4512,6 +4531,7 @@
     orgId = first.id || first.organizationId;
     orgName = first.name || '';
     myRole = first.role || null;
+    el('org-id-value').textContent = orgId;
     el('whoami-org').textContent = orgName;
     el('whoami').dataset.initial = (orgName.trim().charAt(0) || '?').toUpperCase();
     // Kept, not refetched: the overview and the security tab both ask what this session

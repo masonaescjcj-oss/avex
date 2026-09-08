@@ -163,7 +163,7 @@ const FIXTURE = {
   },
   endpoints: { endpoints: [] },
   // `data`, as the API returns it. `keys` was invented here too, and the tab showed nothing.
-  keys: { data: [{ id: 'k1', name: 'staging', displayPrefix: 'ak_test_ab', scopes: ['invoice:create'], createdAt: '2026-08-10T00:00:00.000Z', revokedAt: null }] },
+  keys: { data: [{ id: 'k1', name: 'staging', mode: 'test', prefix: 'ak_test_ab', scopes: ['invoice:create'], createdAt: '2026-08-10T00:00:00.000Z', lastUsedAt: null, revoked: false }] },
   invoices: {
     invoices: [
       { id: 'i1', reference: 'order-1', status: 'paid', amountDue: '20100502512562814071', amountPaid: '20100502512562814071', chain: 'bsc', assetSymbol: 'USDT', assetDecimals: 18, createdAt: '2026-08-17T10:00:00.000Z' },
@@ -1382,7 +1382,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     const { page, context } = await open({
       assets: { assets: [{ id: 'a1', symbol: 'USDT', chain: 'bsc', decimals: 18, verdict: 'approved', enabled: true, pricingMode: 'fiat' }] },
       endpoints: { endpoints: [{ id: 'e1', url: 'https://x.test/h', events: ['*'], enabled: true, pending: 0, failed: 0, createdAt: '2026-08-01T00:00:00.000Z' }] },
-      keys: { data: [{ id: 'k1', name: 'live', displayPrefix: 'ak_live_zz', scopes: ['invoice:create'], createdAt: '2026-08-01T00:00:00.000Z', revokedAt: null }] },
+      keys: { data: [{ id: 'k1', name: 'live', mode: 'live', prefix: 'ak_live_zz', scopes: ['invoice:create'], createdAt: '2026-08-01T00:00:00.000Z', lastUsedAt: null, revoked: false }] },
       // Including the authenticator, which is now one of the steps.
       me: { totpEnabled: true, mfaComplete: true },
     });
@@ -1736,6 +1736,9 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     const { page, context, posts } = await open();
     await openTab(page, 'API keys');
     await page.waitForTimeout(150);
+
+    // The plugin asks for the organisation id next to the key, so it is on the same tab.
+    assert.equal(await text(page, '#org-id-value'), ORG);
 
     // Test mode and the two scopes a shop needs are the defaults; nothing else to decide.
     assert.equal(await page.$eval('#key-mode', (node) => node.value), 'test');
