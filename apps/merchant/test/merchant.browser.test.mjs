@@ -757,6 +757,47 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await context.close();
   });
 
+  test('a session survives a reload, and sign-out ends it', async () => {
+    /**
+     * The merchant's complaint: every visit began with the sign-in form. The token lived only
+     * in memory. Now it is remembered between visits, for as long as the server honours it,
+     * and both sign-out and a server that no longer knows the token forget it.
+     */
+    const { page, context } = await open({ staySignedOut: true, query: 'signup=1' });
+    await page.fill('#auth-org', 'Example Store');
+    await page.fill('#auth-email', 'new@example.test');
+    await page.fill('#auth-password', 'a-sufficiently-long-password');
+    await page.click('#auth-submit');
+    await page.waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 5000 });
+
+    await page.goto(PAGE);
+    await page.waitForFunction(() => document.getElementById('app')?.hidden === false, { timeout: 5000 });
+    assert.equal(await shown(page, '#auth-panel'), false, 'no sign-in form on a return visit');
+    assert.equal(await text(page, '#whoami-org'), 'Example Store');
+
+    await page.click('#sign-out');
+    await page.waitForFunction(() => document.getElementById('app')?.hidden === true, { timeout: 5000 });
+    await page.goto(PAGE);
+    await page.waitForTimeout(300);
+    assert.equal(await shown(page, '#auth-panel'), true, 'signed out stays signed out');
+    assert.equal(await page.evaluate(() => localStorage.getItem('avex-session')), null);
+    await context.close();
+  });
+
+  test('a remembered session the server no longer honours is forgotten', async () => {
+    const { page, context } = await open({ staySignedOut: true });
+    await page.evaluate(() => localStorage.setItem('avex-session', 'sess_stale'));
+    await page.route('**/v1/auth/me', (route) =>
+      route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'unauthorized', message: 'Sign in again.' }) }),
+    );
+    await page.goto(PAGE);
+    await page.waitForTimeout(400);
+    assert.equal(await shown(page, '#auth-panel'), true);
+    assert.equal(await shown(page, '#app'), false);
+    assert.equal(await page.evaluate(() => localStorage.getItem('avex-session')), null, 'the stale token is gone');
+    await context.close();
+  });
+
   test('signing out hides everything again', async () => {
     // Including the case where the server refuses: the token must be cleared locally
     // whatever happens, because leaving it in memory is the wrong way to fail.

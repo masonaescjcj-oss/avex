@@ -3848,12 +3848,40 @@ function matchPreview(method, url, routes = previewRoutes()) {
   // ── transport ─────────────────────────────────────────────────────────────
 
   /**
-   * The session token lives in a closure, never in `localStorage`.
+   * The session token lives in a closure while the page runs, and in `localStorage` between
+   * visits.
    *
-   * An XSS on this origin can read storage; a token held here at least dies with the
-   * tab. It is the cheapest meaningful mitigation available to a page like this.
+   * It used to die with the tab, on the argument that an XSS on this origin can read storage.
+   * The merchant's answer was that signing in on every visit is not a dashboard, and the
+   * argument was weaker than it looked: this page is one file with no third-party script, and
+   * a session the server ends after two weeks — or the moment "Sign out" or "sign out other
+   * devices" is pressed. So the token is remembered, and every path that ends a session
+   * forgets it.
    */
   let token = null;
+  const SESSION_KEY = 'avex-session';
+  function rememberSession(value) {
+    try {
+      localStorage.setItem(SESSION_KEY, value);
+    } catch {
+      // Private browsing, or storage switched off: the session still works for this visit.
+    }
+  }
+  function forgetSession() {
+    try {
+      localStorage.removeItem(SESSION_KEY);
+    } catch {
+      // Nothing to forget.
+    }
+  }
+  function rememberedSession() {
+    try {
+      const stored = localStorage.getItem(SESSION_KEY);
+      return typeof stored === 'string' && stored.length > 0 ? stored : null;
+    } catch {
+      return null;
+    }
+  }
   let orgId = null;
   let orgName = '';
   /**
@@ -4152,6 +4180,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
         }
 
         token = created.token;
+        rememberSession(token);
         await start();
         flash('Account created. Confirm your email address from the link we sent you.', 'warn');
         return;
@@ -4186,6 +4215,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
       }
 
       token = outcome.token;
+      rememberSession(token);
       await start();
     } catch (problem) {
       error.textContent = problem.message || 'Could not sign in.';
@@ -4262,6 +4292,7 @@ function matchPreview(method, url, routes = previewRoutes()) {
       // because the server did not answer is the wrong direction to fail in.
     }
     token = null;
+    forgetSession();
     orgId = null;
     el('app').hidden = true;
     el('whoami').hidden = true;
@@ -6634,6 +6665,27 @@ function matchPreview(method, url, routes = previewRoutes()) {
       // The stub ignores it; the page must not take a different path because of it.
       token = 'preview';
       void start().catch((problem) => flash('Preview failed to load: ' + problem.message, 'error'));
+    }
+  }
+
+  /**
+   * A remembered session opens the dashboard straight away.
+   *
+   * Only where nothing at the door needs reading first: a verification link and a signup form
+   * are what the visitor came for. The invitation flow is the exception the other way — it
+   * needs a signed-in account, and `start` accepts the invitation once there is one. A token
+   * the server no longer honours is forgotten and the door is shown, exactly as if there had
+   * been none.
+   */
+  if (entry.get('preview') !== '1' && !verification && mode !== 'signup') {
+    const remembered = rememberedSession();
+    if (remembered) {
+      token = remembered;
+      void start().catch(() => {
+        token = null;
+        forgetSession();
+        el('auth-panel').hidden = false;
+      });
     }
   }
 
