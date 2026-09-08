@@ -364,6 +364,12 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         if (path.endsWith('/webhook-endpoints')) {
           return route.fulfill(json({ id: 'e1', secret: 'whsec_shown_once' }, 201));
         }
+        if (path.endsWith('/api-keys')) {
+          return route.fulfill(
+            overrides.keyCreated ??
+              json({ id: 'k2', key: 'ak_test_shown_once_only', prefix: 'ak_test_sh', mode: 'test', scopes: ['invoice:create'] }, 201),
+          );
+        }
         if (path.endsWith('/members')) {
           return route.fulfill(
             overrides.invited ?? json({ status: 'invited', id: 'inv-new', superseded: 0 }, 202),
@@ -1720,6 +1726,51 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
   });
 
   // ── keys ──────────────────────────────────────────────────────────────────
+
+  test('the API keys tab can create a key, and shows the secret once', async () => {
+    /**
+     * The tab listed and revoked keys and offered no way to make one. A merchant wanting to
+     * put AVEX Pay in their shop opened it, read "No keys yet", and had nowhere to click —
+     * the checklist's "Create a live API key" step pointed at a page that could not.
+     */
+    const { page, context, posts } = await open();
+    await openTab(page, 'API keys');
+    await page.waitForTimeout(150);
+
+    // Test mode and the two scopes a shop needs are the defaults; nothing else to decide.
+    assert.equal(await page.$eval('#key-mode', (node) => node.value), 'test');
+    const ticked = await page.$$eval('#key-scopes input:checked', (nodes) => nodes.map((n) => n.value));
+    assert.deepEqual(ticked, ['invoice:create', 'invoice:read']);
+
+    await page.fill('#key-name', 'My shop');
+    await page.click('#key-submit');
+    await page.waitForFunction(() => document.getElementById('key-secret')?.hidden === false, { timeout: 5000 });
+
+    assert.equal(await text(page, '#key-secret-value'), 'ak_test_shown_once_only');
+    assert.match(await text(page, '#key-secret'), /shown once/);
+    const created = posts.find((p) => p.path.endsWith('/api-keys'));
+    assert.deepEqual(created.body, { name: 'My shop', mode: 'test', scopes: ['invoice:create', 'invoice:read'] });
+    assert.equal(await page.$eval('#key-name', (node) => node.value), '', 'the form clears for the next key');
+    await context.close();
+  });
+
+  test('creating a key without a code sends the merchant to the security tab to unlock', async () => {
+    // `apikey:write` is elevated; the refusal names where the code goes and the page goes there.
+    const { page, context } = await open({
+      keyCreated: {
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'elevation_required', message: 'Enter a code from your authenticator first.' }),
+      },
+    });
+    await openTab(page, 'API keys');
+    await page.waitForTimeout(150);
+    await page.fill('#key-name', 'My shop');
+    await page.click('#key-submit');
+    await page.waitForFunction(() => !document.getElementById('view-security').hidden, { timeout: 5000 });
+    assert.match(await text(page, '#flash'), /authenticator/);
+    await context.close();
+  });
 
   test('a key is labelled by the mode its prefix implies', async () => {
     // The prefix is what the API enforces, so it is what the page reads.
