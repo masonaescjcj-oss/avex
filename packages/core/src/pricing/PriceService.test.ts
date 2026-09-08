@@ -54,14 +54,15 @@ test('agreeing sources produce a median rate', async () => {
 });
 
 test('only sources that support the symbol are consulted', async () => {
-  const ethOnly = new FakeSource('eth-only', { price: '2000' }, ['ETH']);
-  const both = new FakeSource('both', { price: '1' }, ['ETH', 'USDT']);
-  const service = new PriceService([ethOnly, both]);
+  const usdtOnly = new FakeSource('usdt-only', { price: '1' }, ['USDT']);
+  const both = new FakeSource('both', { price: '2000' }, ['ETH', 'USDT']);
+  const service = new PriceService([usdtOnly, both]);
 
   // Binance not pricing USDT is the real instance of this: a source that cannot
-  // quote a symbol must be skipped, not counted as a failure.
-  const result = await service.getRate('USDT', NOW);
-  assert.equal(ethOnly.calls, 0);
+  // quote a symbol must be skipped, not counted as a failure. ETH is asked for here
+  // because a stablecoin may stand on one source at the peg (see DOLLAR_PEGGED).
+  const result = await service.getRate('ETH', NOW);
+  assert.equal(usdtOnly.calls, 0);
   assert.equal(both.calls, 1);
   assert.ok(!result.ok, 'one source is below the minimum of two');
   assert.equal(result.reason, 'insufficient_sources');
@@ -287,4 +288,29 @@ test('without a stale fallback a failed fetch is still no price', async () => {
   await service.getRate('ETH', NOW);
   flaky.set({ fail: 'HTTP 429' });
   assert.equal((await service.getRate('ETH', NOW + 1000)).ok, false);
+});
+
+test('a dollar-pegged stablecoin stands on one source, if that source says a dollar', async () => {
+  /**
+   * USDT had two sources and a two-source minimum, so one bad minute at either made the
+   * currency nearly every payer holds "unavailable". A single source saying $0.9997 is not a
+   * guess — the peg is the second opinion — so it is accepted; a single source saying $0.90 is
+   * the depeg the rule exists to catch, and is refused.
+   */
+  const only = new FakeSource('kraken', { price: '0.9997' }, ['USDT']);
+  const down = new FakeSource('coingecko', { fail: 'HTTP 429' }, ['USDT']);
+  const service = new PriceService([only, down], { ...DEFAULT_PRICE_SERVICE, cacheTtlMs: 0 });
+
+  const result = await service.getRate('USDT', NOW);
+  assert.ok(result.ok, 'one source at the peg is enough for a stablecoin');
+  assert.deepEqual(result.sources, ['kraken']);
+
+  only.set({ price: '0.90' });
+  const depeg = await service.getRate('USDT', NOW + 1);
+  assert.equal(depeg.ok, false, 'one source off the peg is not believed');
+
+  // A non-pegged asset gets no such favour.
+  const lone = new FakeSource('a', { price: '3000' });
+  const strict = new PriceService([lone, new FakeSource('b', { fail: 'timeout' })], { ...DEFAULT_PRICE_SERVICE, cacheTtlMs: 0 });
+  assert.equal((await strict.getRate('ETH', NOW)).ok, false);
 });

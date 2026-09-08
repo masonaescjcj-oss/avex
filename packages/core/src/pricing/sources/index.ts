@@ -144,15 +144,104 @@ export class KrakenSource implements PriceSource {
   }
 }
 
-export type PriceSourceName = 'coingecko' | 'binance' | 'kraken';
+/**
+ * Coinbase. Genuine USD pairs, no key, generous limits — and it prices USDT.
+ *
+ * Added because USDT, the currency nearly every payer holds, had only two sources: CoinGecko,
+ * whose free tier rate-limits without warning, and Kraken. Two sources with a two-source
+ * minimum means one bad minute at CoinGecko makes USDT "unavailable" on the checkout, which is
+ * what a merchant watched happen on a two-dollar invoice while BNB and USDC stayed up.
+ */
+export class CoinbaseSource implements PriceSource {
+  readonly name = 'coinbase';
+
+  private static readonly PAIRS: Partial<Record<PriceSymbol, string>> = {
+    ETH: 'ETH-USD',
+    SOL: 'SOL-USD',
+    POL: 'POL-USD',
+    USDT: 'USDT-USD',
+    USDC: 'USDC-USD',
+  };
+
+  constructor(private readonly baseUrl = 'https://api.coinbase.com/v2') {}
+
+  supports(symbol: PriceSymbol): boolean {
+    return CoinbaseSource.PAIRS[symbol] !== undefined;
+  }
+
+  async fetchUsdPrice(symbol: PriceSymbol, signal?: AbortSignal): Promise<Rate> {
+    const pair = CoinbaseSource.PAIRS[symbol];
+    if (!pair) throw new UnsupportedSymbolError(this.name, symbol);
+
+    const body = (await fetchJson(
+      this.name,
+      `${this.baseUrl}/prices/${pair}/spot`,
+      signal,
+    )) as { data?: { amount?: string } };
+
+    const amount = body.data?.amount;
+    if (typeof amount !== 'string') {
+      throw new PriceSourceError(this.name, `no spot amount for ${pair}`);
+    }
+    return rateFromDecimalString(amount, Date.now());
+  }
+}
+
+/**
+ * Bitstamp. USD pairs, no key, and a third independent opinion on the stablecoins.
+ */
+export class BitstampSource implements PriceSource {
+  readonly name = 'bitstamp';
+
+  private static readonly PAIRS: Partial<Record<PriceSymbol, string>> = {
+    ETH: 'ethusd',
+    SOL: 'solusd',
+    POL: 'polusd',
+    TRX: 'trxusd',
+    USDT: 'usdtusd',
+    USDC: 'usdcusd',
+  };
+
+  constructor(private readonly baseUrl = 'https://www.bitstamp.net/api/v2') {}
+
+  supports(symbol: PriceSymbol): boolean {
+    return BitstampSource.PAIRS[symbol] !== undefined;
+  }
+
+  async fetchUsdPrice(symbol: PriceSymbol, signal?: AbortSignal): Promise<Rate> {
+    const pair = BitstampSource.PAIRS[symbol];
+    if (!pair) throw new UnsupportedSymbolError(this.name, symbol);
+
+    const body = (await fetchJson(
+      this.name,
+      `${this.baseUrl}/ticker/${pair}/`,
+      signal,
+    )) as { last?: string };
+
+    if (typeof body.last !== 'string') {
+      throw new PriceSourceError(this.name, `no last price for ${pair}`);
+    }
+    return rateFromDecimalString(body.last, Date.now());
+  }
+}
+
+export type PriceSourceName = 'coingecko' | 'binance' | 'kraken' | 'coinbase' | 'bitstamp';
 
 const FACTORIES: Record<PriceSourceName, () => PriceSource> = {
   coingecko: () => new CoinGeckoSource(),
   binance: () => new BinanceSource(),
   kraken: () => new KrakenSource(),
+  coinbase: () => new CoinbaseSource(),
+  bitstamp: () => new BitstampSource(),
 };
 
-export const ALL_PRICE_SOURCES: readonly PriceSourceName[] = ['coingecko', 'binance', 'kraken'];
+export const ALL_PRICE_SOURCES: readonly PriceSourceName[] = [
+  'coingecko',
+  'binance',
+  'kraken',
+  'coinbase',
+  'bitstamp',
+];
 
 /**
  * Build the configured source set.

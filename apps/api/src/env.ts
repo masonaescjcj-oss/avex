@@ -80,7 +80,7 @@ const schema = z.object({
    */
   PRICE_SOURCES: z
     .string()
-    .default('coingecko,binance,kraken')
+    .default('coingecko,binance,kraken,coinbase,bitstamp')
     .transform((value) => value.split(',').map((entry) => entry.trim()).filter(Boolean)),
 
   /** Usable sources required before a rate is trusted. */

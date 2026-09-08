@@ -15,7 +15,7 @@ import {
   type BreakerStatus,
 } from './breaker.js';
 import type { Rate } from './rate.js';
-import { rateToNumber } from './rate.js';
+import { rateFromDecimalString, rateToNumber } from './rate.js';
 import type { PriceSource, PriceSymbol } from './sources/index.js';
 
 /**
@@ -77,6 +77,20 @@ export interface TickObserver {
     readonly error: string | null;
   }): void;
 }
+
+/**
+ * Assets that are a dollar by design, and how far from it one is still believed.
+ *
+ * A stablecoin quote needs two agreeing sources like anything else — until it has only one.
+ * Then the ordinary rule says "no price", and the checkout loses USDT, the currency nearly
+ * every payer holds, for the length of one exchange's bad minute. But a single source saying a
+ * stablecoin is worth $0.9997 is not a guess; the peg is the second opinion. So for these
+ * symbols one fresh observation within `PEG_TOLERANCE_BPS` of the peg is accepted. One that is
+ * *not* within it is exactly the depeg a merchant needs to be protected from, and is refused
+ * as before.
+ */
+export const DOLLAR_PEGGED: Readonly<Partial<Record<PriceSymbol, number>>> = { USDT: 1, USDC: 1 };
+export const PEG_TOLERANCE_BPS = 100;
 
 export class PriceUnavailableError extends Error {
   constructor(
@@ -181,7 +195,12 @@ export class PriceService {
       }),
     );
 
-    const result = aggregate(observations, this.config.aggregation, now);
+    let result = aggregate(observations, this.config.aggregation, now);
+
+    if (!result.ok && result.reason === 'insufficient_sources') {
+      const pegged = this.peggedFallback(symbol, observations, now);
+      if (pegged) result = pegged;
+    }
 
     if (!result.ok) {
       // The breaker still learns of the failure; a feed that stays down is still suspended.
@@ -207,6 +226,28 @@ export class PriceService {
     };
     this.cache.set(symbol, { result: success, fetchedAt: now });
     return success;
+  }
+
+  /**
+   * One fresh source on a dollar-pegged asset, if it agrees with the peg. See `DOLLAR_PEGGED`.
+   */
+  private peggedFallback(
+    symbol: PriceSymbol,
+    observations: readonly SourceObservation[],
+    now: number,
+  ): ReturnType<typeof aggregate> | null {
+    const peg = DOLLAR_PEGGED[symbol];
+    if (peg === undefined) return null;
+    const pegScaled = rateFromDecimalString(peg.toFixed(6), now).priceScaled;
+    const usable = observations.filter((observation) => {
+      if (!observation.rate) return false;
+      if (now - observation.rate.observedAt > this.config.aggregation.maxStalenessMs) return false;
+      const diff = observation.rate.priceScaled - pegScaled;
+      const bps = Number(((diff < 0n ? -diff : diff) * 10_000n) / pegScaled);
+      return bps <= PEG_TOLERANCE_BPS;
+    });
+    if (usable.length === 0) return null;
+    return aggregate(usable, { ...this.config.aggregation, minSources: 1 }, now);
   }
 
   private breakerAllows(symbol: PriceSymbol, now: number): boolean {
