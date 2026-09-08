@@ -19,10 +19,16 @@ import { sameHumanAmount } from '@avex/core';
  *    invoice closed, because the pool keeps the number reserved that long: a payer who let the
  *    invoice expire and paid an hour later still sent the exact figure they were shown.
  *
- * 2. **The same sender.** A wallet that has already paid one invoice here and now sends again,
- *    with a different amount, is topping up or paying twice. That payment belongs with the
- *    first, as an over- or under-payment of the same invoice, not to whichever stranger's
- *    invoice happens to be open.
+ * 2. **The same sender, topping up.** A wallet that paid part of an invoice here and now sends
+ *    again, with a different amount, is completing it. That payment belongs with the first,
+ *    not to whichever stranger's invoice happens to be open. Only an invoice still short —
+ *    pending, confirming, underpaid — counts as evidence. One already paid does not: a
+ *    wallet that settled an order this morning and sends a new amount this afternoon is a
+ *    repeat customer with a new invoice, not somebody paying a finished order twice. (The
+ *    first version treated it as the latter, and a merchant's own test wallet, paying every
+ *    trial invoice from one address, saw each new payment attached to the previous order.)
+ *    The rare genuine double payment of a settled invoice still finds it, through rule 1,
+ *    when it repeats the exact figure.
  *
  * 3. **The only candidate.** When exactly one invoice is open on the wallet, nothing else the
  *    transfer could be for exists, whatever the amount and whatever the token. Credited, and
@@ -109,6 +115,9 @@ export const LATE_PAYMENT_GRACE_MS = 24 * 60 * 60 * 1000;
 
 const OPEN = new Set(['pending', 'confirming']);
 
+/** Statuses a second transfer from the same wallet can be completing. Never `paid`. */
+const TOPPABLE = new Set(['pending', 'confirming', 'underpaid']);
+
 export function isOpen(candidate: CandidateInvoice, now: number): boolean {
   return OPEN.has(candidate.status) && candidate.expiresAt > now;
 }
@@ -160,13 +169,14 @@ export function decidePooled(
     return { kind: 'park', reason: 'ambiguous' };
   }
 
-  // 2. The same sender as a payment already credited here.
+  // 2. The same sender as a payment already credited here, to an invoice still short of it.
   if (transfer.from !== null) {
     const known = new Set<string>();
     for (const prior of context.priorPayments) {
       if (prior.from === null || prior.from !== transfer.from) continue;
       if (prior.creditedAt < now - LATE_PAYMENT_GRACE_MS) continue;
-      if (!candidates.some((c) => c.id === prior.invoiceId)) continue;
+      const invoice = candidates.find((c) => c.id === prior.invoiceId);
+      if (invoice === undefined || !TOPPABLE.has(invoice.status)) continue;
       known.add(prior.invoiceId);
     }
     if (known.size === 1) {

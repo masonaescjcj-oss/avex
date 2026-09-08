@@ -400,22 +400,44 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
     assert.equal(row.amountPaid, '20000000');
   });
 
-  test('a second transfer from the wallet that paid an invoice goes with the first', async () => {
+  test('a top-up from the wallet that underpaid an invoice goes with the first', async () => {
     /**
-     * Two invoices open. A's payer pays A exactly, then sends a round top-up from the same
-     * wallet. It belongs with A, not with B — though B is the only invoice still open.
+     * A's payer sent too little while A was the only invoice, so it was credited as underpaid.
+     * B opens. The same wallet now sends the rest: it belongs with A, not with B — though B
+     * is the only invoice still open.
      */
     const wallet = tronAddress();
     const a = await openInvoice(wallet, 20_001_000n);
-    const b = await openInvoice(wallet, 20_002_000n);
     const payer = 'TPayerWalletAddressYYYYYYYYYYYYYYYY';
 
-    await sink.credit(payment(wallet, 20_001_000n, { from: payer }));
-    assert.equal(await statusOf(a), 'paid');
+    await sink.credit(payment(wallet, 15_000_000n, { from: payer }));
+    assert.equal(await statusOf(a), 'underpaid');
+    const b = await openInvoice(wallet, 20_002_000n);
 
-    assert.equal(await sink.credit(payment(wallet, 5_000_000n, { from: payer })), 'credited');
-    assert.equal(await statusOf(a), 'overpaid');
+    assert.equal(await sink.credit(payment(wallet, 5_001_000n, { from: payer })), 'credited');
+    assert.equal(await statusOf(a), 'paid');
     assert.equal(await statusOf(b), 'pending');
+  });
+
+  test('a repeat customer whose earlier invoice is settled is paying the new one', async () => {
+    /**
+     * The merchant's own report. One wallet paid invoice A a cent over; three hours later it
+     * paid new invoice B, a cent over again, on an otherwise idle wallet — and the money went
+     * to A, an order already settled, because "same sender" outranked "only invoice open".
+     * A settled invoice is not something anybody tops up.
+     */
+    const wallet = tronAddress();
+    const a = await openInvoice(wallet, 911_000n);
+    const payer = 'TPayerWalletAddressYYYYYYYYYYYYYYYY';
+
+    await sink.credit(payment(wallet, 921_000n, { from: payer }));
+    assert.equal(await statusOf(a), 'overpaid');
+    const b = await openInvoice(wallet, 1_012_000n);
+
+    assert.equal(await sink.credit(payment(wallet, 1_022_000n, { from: payer })), 'credited');
+    assert.equal(await statusOf(b), 'overpaid');
+    assert.equal((await invoiceRow(b)).amountPaid, '1022000');
+    assert.equal((await invoiceRow(a)).amountPaid, '921000', 'A is left exactly as it was');
   });
 
   test('a transfer not yet final is deferred, and the invoice shows it coming', async () => {

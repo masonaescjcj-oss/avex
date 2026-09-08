@@ -111,13 +111,13 @@ describe('rule 1: the exact number', () => {
   });
 });
 
-describe('rule 2: the same sender', () => {
-  test('a second transfer from the wallet that paid an invoice goes with the first', () => {
+describe('rule 2: the same sender, topping up', () => {
+  test('a second transfer from the wallet that underpaid an invoice goes with the first', () => {
     /**
-     * Two invoices open. The payer of A already paid A from 0xPAYER and now sends a top-up with
-     * a round number. It is A's — not B's, though B is open and A is already paid.
+     * The payer of A sent too little from TPAYER and now sends the rest, a round number. It is
+     * A's — not B's, though B is open and A is closed as underpaid.
      */
-    const a = invoice({ id: 'a', amountDue: 20_001_000n, status: 'paid' });
+    const a = invoice({ id: 'a', amountDue: 20_001_000n, status: 'underpaid' });
     const b = invoice({ id: 'b', amountDue: 30_001_000n });
     const decision = decidePooled(
       transfer(5_000_000n, { from: 'TPAYER' }),
@@ -126,9 +126,9 @@ describe('rule 2: the same sender', () => {
     assert.deepEqual(decision, credit('a', 'same_sender'));
   });
 
-  test('a sender who paid two invoices here and sends a third amount is nobody\'s to decide', () => {
-    const a = invoice({ id: 'a', amountDue: 20_001_000n, status: 'paid' });
-    const b = invoice({ id: 'b', amountDue: 30_001_000n, status: 'paid' });
+  test('a sender short on two invoices here who sends a third amount is nobody\'s to decide', () => {
+    const a = invoice({ id: 'a', amountDue: 20_001_000n, status: 'underpaid' });
+    const b = invoice({ id: 'b', amountDue: 30_001_000n, status: 'underpaid' });
     const decision = decidePooled(
       transfer(5_000_000n, { from: 'TPAYER' }),
       context([a, b], {
@@ -141,9 +141,9 @@ describe('rule 2: the same sender', () => {
     assert.deepEqual(decision, { kind: 'park', reason: 'ambiguous' });
   });
 
-  test('the sender rule outranks the sole open invoice', () => {
-    // One invoice open (B), but the sender is A's payer. A wins.
-    const a = invoice({ id: 'a', amountDue: 20_001_000n, status: 'paid' });
+  test('a top-up outranks the sole open invoice', () => {
+    // One invoice open (B), but the sender is A's payer and A is still short. A wins.
+    const a = invoice({ id: 'a', amountDue: 20_001_000n, status: 'underpaid' });
     const b = invoice({ id: 'b', amountDue: 30_001_000n });
     const decision = decidePooled(
       transfer(1_000_000n, { from: 'TPAYER' }),
@@ -152,8 +152,41 @@ describe('rule 2: the same sender', () => {
     assert.deepEqual(decision, credit('a', 'same_sender'));
   });
 
+  test('a repeat customer whose earlier invoice is paid is paying the new one', () => {
+    /**
+     * The case that produced this rule's rewrite. A merchant tested with one wallet: it paid
+     * invoice A (over, by a cent), then three hours later paid new invoice B — one cent over
+     * again, so rule 1 missed. The old rule read "same sender as A" and attached the money to
+     * A, an order already settled, while B sat unpaid on an otherwise idle wallet. A paid
+     * invoice is not something anybody tops up.
+     */
+    const a = invoice({ id: 'a', amountDue: 911_000n, status: 'overpaid', createdAt: NOW - 4 * HOUR });
+    const b = invoice({ id: 'b', amountDue: 1_012_000n });
+    const decision = decidePooled(
+      transfer(1_022_000n, { from: 'TPAYER' }),
+      context([a, b], { priorPayments: [{ invoiceId: 'a', from: 'TPAYER', creditedAt: NOW - 3 * HOUR }] }),
+    );
+    assert.deepEqual(decision, credit('b', 'sole_open'));
+  });
+
+  test('a repeat customer with two settled invoices here is not ambiguous either', () => {
+    const a = invoice({ id: 'a', amountDue: 911_000n, status: 'overpaid' });
+    const b = invoice({ id: 'b', amountDue: 508_000n, status: 'paid' });
+    const c = invoice({ id: 'c', amountDue: 1_012_000n });
+    const decision = decidePooled(
+      transfer(1_022_000n, { from: 'TPAYER' }),
+      context([a, b, c], {
+        priorPayments: [
+          { invoiceId: 'a', from: 'TPAYER', creditedAt: NOW - HOUR },
+          { invoiceId: 'b', from: 'TPAYER', creditedAt: NOW - 2 * HOUR },
+        ],
+      }),
+    );
+    assert.deepEqual(decision, credit('c', 'sole_open'));
+  });
+
   test('a prior payment older than the grace is not evidence', () => {
-    const a = invoice({ id: 'a', amountDue: 20_001_000n, status: 'paid', expiresAt: NOW - 2 * HOUR });
+    const a = invoice({ id: 'a', amountDue: 20_001_000n, status: 'underpaid', expiresAt: NOW - 2 * HOUR });
     const b = invoice({ id: 'b', amountDue: 30_001_000n });
     const decision = decidePooled(
       transfer(1_000_000n, { from: 'TPAYER' }),

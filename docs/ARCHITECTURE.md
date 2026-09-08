@@ -99,8 +99,10 @@ in `apps/api/src/domain/pooled-matching.ts`, and every scenario is a test. In sh
   payment back. Underpayments are credited as underpaid, with what arrived.
 - **The exact number wins**, compared as the number a person read, whatever the token or its
   decimals; honoured for a day after the invoice closed, because the wallet keeps the number
-  reserved that long. **The same sender** as an earlier payment to an invoice here goes with
-  that invoice. **Nothing is guessed** between two open invoices: the transfer is parked in
+  reserved that long. **The same sender** as an earlier payment to an invoice here that is
+  still short — pending, confirming or underpaid — goes with that invoice as a top-up; a
+  sender whose earlier invoice is already paid is a repeat customer, and their new payment
+  goes to the open invoice like anyone else's. **Nothing is guessed** between two open invoices: the transfer is parked in
   the reconciliation queue, and a sweep credits it once the other invoice is paid or has
   expired — only to an invoice that existed when the transfer arrived.
 - **Invoices expire on a clock** (three hours by default on a shared wallet), which frees
