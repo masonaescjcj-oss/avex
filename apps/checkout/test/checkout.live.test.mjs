@@ -283,6 +283,25 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
     await context.close();
   });
 
+  test('a payer can switch to light or dark, and the choice is remembered', async () => {
+    /**
+     * The tokens follow the phone's setting; a payer reading a dark checkout in daylight needs
+     * one tap to change that. The choice goes under the key the site and dashboard share, so
+     * it carries across avexpay.net.
+     */
+    const { page, context } = await open();
+    assert.equal(await page.getAttribute('html', 'data-theme'), null, 'system by default');
+    await page.click('#theme-toggle');
+    assert.equal(await page.getAttribute('html', 'data-theme'), 'dark', 'a light context goes dark');
+    assert.equal(await page.evaluate(() => localStorage.getItem('avex-theme')), 'dark');
+    assert.equal(await page.getAttribute('#theme-toggle', 'aria-label'), 'Switch to light mode');
+    await page.click('#theme-toggle');
+    assert.equal(await page.getAttribute('html', 'data-theme'), 'light');
+    await page.reload();
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light', { timeout: 5000 });
+    await context.close();
+  });
+
   test('the demo controls are gone in live mode', async () => {
     // Not hidden — removed. A button that can force a real payment page into
     // "Confirmed" has no business in the DOM of a page a stranger is looking at.
