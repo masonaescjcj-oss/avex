@@ -283,22 +283,34 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
     await context.close();
   });
 
-  test('a payer can switch to light or dark, and the choice is remembered', async () => {
+  test('the page follows the phone, and a tap flips it for this visit only', async () => {
     /**
-     * The tokens follow the phone's setting; a payer reading a dark checkout in daylight needs
-     * one tap to change that. The choice goes under the key the site and dashboard share, so
-     * it carries across avexpay.net.
+     * A payer on a light phone sees a light checkout, on a dark phone a dark one. The button
+     * flips it for the visit; nothing is stored, so the next open follows the phone again and
+     * a merchant's dashboard preference on the same browser never reaches a payer's page.
      */
     const { page, context } = await open();
-    assert.equal(await page.getAttribute('html', 'data-theme'), null, 'system by default');
+    assert.equal(await page.getAttribute('html', 'data-theme'), null, 'the phone decides');
     await page.click('#theme-toggle');
-    assert.equal(await page.getAttribute('html', 'data-theme'), 'dark', 'a light context goes dark');
-    assert.equal(await page.evaluate(() => localStorage.getItem('avex-theme')), 'dark');
+    assert.equal(await page.getAttribute('html', 'data-theme'), 'dark', 'a light phone flips to dark');
     assert.equal(await page.getAttribute('#theme-toggle', 'aria-label'), 'Switch to light mode');
-    await page.click('#theme-toggle');
-    assert.equal(await page.getAttribute('html', 'data-theme'), 'light');
+    assert.equal(await page.evaluate(() => localStorage.getItem('avex-theme')), null, 'nothing stored');
     await page.reload();
-    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light', { timeout: 5000 });
+    await page.waitForFunction(() => document.querySelector('#theme-toggle') !== null, { timeout: 5000 });
+    assert.equal(await page.getAttribute('html', 'data-theme'), null, 'back to the phone');
+    await context.close();
+  });
+
+  test('a dark phone gets a dark checkout without being asked', async () => {
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 }, colorScheme: 'dark' });
+    const page = await context.newPage();
+    await page.route(`${PAGE}*`, (route) => route.fulfill({ path: pageFile, contentType: 'text/html' }));
+    await page.goto(`${PAGE}?s=${SESSION}`);
+    await page.waitForFunction(() => document.querelector?.('#theme-toggle') !== undefined || document.getElementById('theme-toggle') !== null, { timeout: 5000 });
+    const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    const [r, g, b] = bg.match(/\d+/g).map(Number);
+    assert.ok(r + g + b < 150, `dark ground expected, got ${bg}`);
+    assert.equal(await page.getAttribute('#theme-toggle', 'aria-label'), 'Switch to light mode');
     await context.close();
   });
 
