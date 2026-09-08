@@ -198,6 +198,8 @@ test('the event name and body reach the endpoint', async () => {
 
   const body = JSON.parse(post.body);
   assert.equal(body.event, 'invoice.paid');
+  assert.equal(body.type, 'invoice.paid', 'the name most webhook libraries look for');
+  assert.equal(body.id, 'evt_1', "the delivery's id, one per event — never the invoice's");
   assert.equal(body.invoiceId, 'inv_1');
   // Amounts stay strings end to end; JSON numbers cannot hold an 18-decimal value.
   assert.equal(typeof body.amount, 'string');

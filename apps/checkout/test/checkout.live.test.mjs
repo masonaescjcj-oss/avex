@@ -283,34 +283,17 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
     await context.close();
   });
 
-  test('the page follows the phone, and a tap flips it for this visit only', async () => {
-    /**
-     * A payer on a light phone sees a light checkout, on a dark phone a dark one. The button
-     * flips it for the visit; nothing is stored, so the next open follows the phone again and
-     * a merchant's dashboard preference on the same browser never reaches a payer's page.
-     */
-    const { page, context } = await open();
-    assert.equal(await page.getAttribute('html', 'data-theme'), null, 'the phone decides');
-    await page.click('#theme-toggle');
-    assert.equal(await page.getAttribute('html', 'data-theme'), 'dark', 'a light phone flips to dark');
-    assert.equal(await page.getAttribute('#theme-toggle', 'aria-label'), 'Switch to light mode');
-    assert.equal(await page.evaluate(() => localStorage.getItem('avex-theme')), null, 'nothing stored');
-    await page.reload();
-    await page.waitForFunction(() => document.querySelector('#theme-toggle') !== null, { timeout: 5000 });
-    assert.equal(await page.getAttribute('html', 'data-theme'), null, 'back to the phone');
-    await context.close();
-  });
-
   test('a dark phone gets a dark checkout without being asked', async () => {
     const context = await browser.newContext({ viewport: { width: 430, height: 900 }, colorScheme: 'dark' });
     const page = await context.newPage();
     await page.route(`${PAGE}*`, (route) => route.fulfill({ path: pageFile, contentType: 'text/html' }));
     await page.goto(`${PAGE}?s=${SESSION}`);
-    await page.waitForFunction(() => document.querelector?.('#theme-toggle') !== undefined || document.getElementById('theme-toggle') !== null, { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('pay-heading') !== null, { timeout: 5000 });
     const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     const [r, g, b] = bg.match(/\d+/g).map(Number);
     assert.ok(r + g + b < 150, `dark ground expected, got ${bg}`);
-    assert.equal(await page.getAttribute('#theme-toggle', 'aria-label'), 'Switch to light mode');
+    // And no switch to argue with it: the header carries the brand and the reference, on one line.
+    assert.equal(await page.$('#theme-toggle'), null);
     await context.close();
   });
 
@@ -365,6 +348,86 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
     assert.equal(await shown(page, '#receipt-offer'), true);
     const href = await page.$eval('#receipt-link', (node) => node.getAttribute('href'));
     assert.equal(href, `receipt.html?s=${SESSION}`);
+    await context.close();
+  });
+
+  test('a confirmed payment offers the way back to the store, and takes it', async () => {
+    /**
+     * The merchant gave a successUrl and the page ignored it: a payer whose payment had
+     * confirmed was told to close the tab while the shop that sent them waited for a return
+     * that never came. The button is live at once; the count is visible; then the page goes.
+     */
+    const paid = {
+      id: SESSION,
+      merchantName: 'Propology',
+      description: 'Wallet deposit',
+      amountFiatMicros: '1000000',
+      status: 'paid',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      successUrl: 'https://shop.example/store?deposit=sent',
+      cancelUrl: 'https://shop.example/store',
+      payment: {
+        invoiceId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        chain: 'bsc',
+        symbol: 'USDT',
+        decimals: 18,
+        amountDue: '1012000000000000000',
+        amountPaid: '1012000000000000000',
+        depositAddress: BSC_ADDRESS,
+        memo: null,
+        status: 'paid',
+        toleranceBps: 50,
+        feeIncluded: '0',
+        feeBps: 0,
+        expiresAt: new Date(Date.now() + 900_000).toISOString(),
+      },
+    };
+    const { page, context } = await open({ session: paid });
+    await page.route('https://shop.example/**', (route) =>
+      route.fulfill({ contentType: 'text/html', body: '<title>Back at the shop</title>' }),
+    );
+
+    assert.equal(await shown(page, '#return-offer'), true);
+    assert.equal(await page.textContent('#return-link'), 'Return to Propology →');
+    assert.equal(await page.getAttribute('#return-link', 'href'), 'https://shop.example/store?deposit=sent');
+    assert.match(await page.textContent('#return-note'), /Taking you back in \d…/);
+    assert.equal(await shown(page, '#cancel-offer'), false, 'nothing to back out of once paid');
+    assert.doesNotMatch(await page.textContent('#status-text'), /close this page/);
+
+    await page.waitForURL('https://shop.example/store?deposit=sent', { timeout: 10_000 });
+    await context.close();
+  });
+
+  test('without a successUrl the confirmed page stays put', async () => {
+    const { page, context } = await open({
+      session: {
+        id: SESSION,
+        merchantName: 'Example Store',
+        description: 'Order 42',
+        amountFiatMicros: '20000000',
+        status: 'paid',
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        payment: {
+          invoiceId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+          chain: 'bsc', symbol: 'USDT', decimals: 18,
+          amountDue: '20100502512562814071', amountPaid: '20100502512562814071',
+          depositAddress: BSC_ADDRESS, memo: null, status: 'paid', toleranceBps: 50,
+          feeIncluded: '0', feeBps: 0, expiresAt: new Date(Date.now() + 900_000).toISOString(),
+        },
+      },
+    });
+    assert.equal(await shown(page, '#return-offer'), false);
+    assert.equal(await shown(page, '#receipt-offer'), true);
+    await context.close();
+  });
+
+  test('a payer who has not paid can go back to the store; the link goes once payment is seen', async () => {
+    const { page, context } = await open({
+      session: { cancelUrl: 'https://shop.example/store', merchantName: 'Propology' },
+    });
+    assert.equal(await shown(page, '#cancel-offer'), true);
+    assert.equal(await page.textContent('#cancel-link'), '← Back to Propology without paying');
+    assert.equal(await page.getAttribute('#cancel-link', 'href'), 'https://shop.example/store');
     await context.close();
   });
 

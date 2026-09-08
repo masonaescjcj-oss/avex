@@ -430,6 +430,27 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
 
   // ── the payer opens the link ───────────────────────────────────────────────
 
+  test('the payer view carries the return addresses the merchant gave', async () => {
+    /**
+     * Accepted at creation and stored since the first version; read by nothing until the
+     * page learned to send the payer back. A shop's successUrl that the payer never
+     * reaches is an order the shop never completes.
+     */
+    await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const session = (
+      await createCheckout({
+        amountFiatMicros: '1000000',
+        successUrl: 'https://shop.example/thanks?order=7',
+        cancelUrl: 'https://shop.example/cart',
+      })
+    ).json();
+
+    const view = (await state(session.id)).json();
+    assert.equal(view.successUrl, 'https://shop.example/thanks?order=7');
+    assert.equal(view.cancelUrl, 'https://shop.example/cart');
+  });
+
   test('the payer sees the amount and who is charging, with no invoice yet', async () => {
     await enableAsset({ symbol: 'USDT' });
     await ensurePayout('bsc');
@@ -443,6 +464,9 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     assert.equal(view.description, 'A thing');
     assert.match(view.merchantName, /Checkout Shop/);
     assert.equal(view.status, 'open');
+    // Not given, so null — and present, so a page can tell "none" from "not sent".
+    assert.equal(view.successUrl, null);
+    assert.equal(view.cancelUrl, null);
     // No currency chosen, so nothing to pay to. The address cannot exist yet.
     assert.equal(view.payment, null);
   });

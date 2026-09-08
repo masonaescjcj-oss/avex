@@ -1794,6 +1794,26 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     assert.equal(response.statusCode, 400);
   });
 
+  test('an endpoint subscribed to an event that does not exist is refused, and told the list', async () => {
+    /**
+     * Free text was accepted here for a year. An integrator who typed a name from another
+     * gateway got an endpoint that never fired and nothing saying why, and subscribed to
+     * `*` as well as thirteen guesses to be safe.
+     */
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${merchantOrgId}/webhook-endpoints`,
+      headers: { authorization: `Bearer ${merchantSessionToken}` },
+      payload: { url: 'https://example.com/hook', events: ['not_a_real_event'] },
+    });
+    assert.equal(response.statusCode, 400);
+    const body = response.json();
+    assert.equal(body.error, 'invalid_request');
+    assert.equal(body.fields[0].path, 'events.0');
+    assert.match(body.fields[0].message, /invoice\.paid/);
+    assert.match(body.fields[0].message, /payment\.reversed/);
+  });
+
   test('the signing secret is returned once and never again', async () => {
     const created = await app.inject({
       method: 'POST',

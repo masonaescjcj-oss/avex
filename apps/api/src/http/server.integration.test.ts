@@ -287,6 +287,20 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     });
   });
 
+  test('a path that is not a route is a 404, with or without credentials', async () => {
+    /**
+     * Every unknown path used to be a 401. `/v1/health` — a natural guess, the real route
+     * has no prefix — said "sign in to continue", and an integrator spent the afternoon on
+     * credentials when the fix was the path.
+     */
+    for (const url of ['/v1/health', '/v1/pay/some-session/state', '/nothing-here']) {
+      const response = await app.inject({ method: 'GET', url });
+      assert.equal(response.statusCode, 404, url);
+      assert.equal(response.json().error, 'not_found');
+      assert.match(response.json().message, /avexpay\.net\/docs/);
+    }
+  });
+
   test('anonymous requests to protected routes are refused', async () => {
     // Default-deny: a route is protected by existing, not by remembering to guard it.
     const response = await app.inject({ method: 'GET', url: '/v1/organizations' });

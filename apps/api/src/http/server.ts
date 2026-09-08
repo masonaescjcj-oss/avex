@@ -322,7 +322,16 @@ export function buildServer(context: AppContext): FastifyInstance {
    * developer has to add it to PUBLIC_ROUTES on purpose to open it up.
    */
   app.addHook('onRequest', async (request) => {
-    const url = request.routeOptions.url ?? request.url;
+    /**
+     * A path that matches no route is answered by the not-found handler, not by this one.
+     *
+     * Before this line every unknown path was a 401: `/v1/health`, `/v1/pay/…` and any
+     * typo said "sign in to continue", and an integrator reading that spent an afternoon
+     * on credentials when the fix was the path. Nothing is revealed by a 404 here — the
+     * route table is in the public documentation.
+     */
+    if (request.routeOptions.url === undefined) return;
+    const url = request.routeOptions.url;
     const route = `${request.method} ${url}`;
 
     /**
@@ -348,6 +357,13 @@ export function buildServer(context: AppContext): FastifyInstance {
 
     if (PUBLIC_ROUTES.has(route)) return;
     if (request.principal === null) throw new UnauthenticatedError();
+  });
+
+  app.setNotFoundHandler(async (request, reply) => {
+    return reply.status(404).send({
+      error: 'not_found',
+      message: `No route ${request.method} ${request.url.split('?')[0]}. The routes are listed at https://avexpay.net/docs.`,
+    });
   });
 
   app.setErrorHandler((error, request, reply) => {
@@ -476,7 +492,7 @@ export function buildServer(context: AppContext): FastifyInstance {
     if (error instanceof ScopeMissingError) {
       return reply.status(403).send({
         error: 'scope_missing',
-        message: 'This API key was not granted that permission.',
+        message: `This API key was not granted ${error.permission}. Create one with that permission, or add it to this key's replacement.`,
         permission: error.permission,
       });
     }

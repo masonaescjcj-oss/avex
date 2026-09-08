@@ -565,11 +565,35 @@
       <pre><span class="c"># Your server. The key carries its own mode and its own permissions.</span>
 curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
   -H <span class="s">"Authorization: Bearer ak_live_…"</span></pre>
+      <div class="endpoint" data-route="GET /v1/organizations">
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/v1/organizations</span></div>
+        <p>
+          Who this credential belongs to. For an API key, exactly one organisation — this is
+          how a server finds the <code>orgId</code> that every other path needs, so nothing has
+          to be copied out of the dashboard by hand (though the API keys tab shows it too).
+        </p>
+        <pre><span class="c"># 200</span>
+{ <span class="k">"data"</span>: [{ <span class="k">"id"</span>: <span class="s">"7b2c1e40-…"</span>, <span class="k">"name"</span>: <span class="s">"Your Store"</span>, <span class="k">"slug"</span>: <span class="s">"your-store"</span> }] }</pre>
+      </div>
       <p class="note">
         Keys are shown once, at creation, and stored only as a hash — we cannot recover
-        one for you. Scope each key to what it needs: a key that opens invoices does not
-        need <code>settings:write</code>, and an integration that only reads should not
-        be able to move your payout address.
+        one for you. Each key carries a list of permissions, chosen when it is created, and
+        a call it lacks the permission for fails with <code>403 scope_missing</code> naming
+        the one it needed. A shop's key needs <code>invoice:create</code> and
+        <code>invoice:read</code> and nothing else.
+      </p>
+      <div class="params">
+        <div class="param"><code>invoice:create</code><span>Open checkouts and invoices.</span></div>
+        <div class="param"><code>invoice:read</code><span>Read them back, list them, fetch receipts.</span></div>
+        <div class="param"><code>invoice:refund</code><span>Mark an over- or underpayment for return.</span></div>
+        <div class="param"><code>webhook:read</code> / <code>webhook:write</code><span>List, add, disable and replay webhook endpoints and deliveries.</span></div>
+        <div class="param"><code>asset:read</code><span>Which currencies and networks are enabled.</span></div>
+        <div class="param"><code>org:read</code>, <code>member:read</code>, <code>apikey:read</code>, <code>payout_address:read</code><span>Read-only views of the rest.</span></div>
+      </div>
+      <p class="note">
+        A key can never be given <code>apikey:write</code>, <code>payout_address:write</code>
+        or any permission that changes who is in the organisation: those are for a person
+        with an authenticator, in the dashboard, never for a credential on a server.
       </p>
       <p class="note">
         Never put a key in a browser, a mobile app or anything a customer can read.
@@ -884,8 +908,8 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
           <div class="param"><code>amountFiatMicros</code><span><span class="req">required</span> — micro-dollars. <code>"25000000"</code> is $25.00.</span></div>
           <div class="param"><code>reference</code><span>Your order id. Also the idempotency key — see below.</span></div>
           <div class="param"><code>description</code><span>Shown to the customer above the amount.</span></div>
-          <div class="param"><code>successUrl</code><span>Where to send them once the payment is final.</span></div>
-          <div class="param"><code>cancelUrl</code><span>Where to send them if they give up.</span></div>
+          <div class="param"><code>successUrl</code><span>Where the payer goes once the payment is final: a “Return to <em>your store</em>” button the moment it confirms, and the page goes there by itself five seconds later. Without one the payer is told the payment is confirmed and stays on the receipt. Confirm the order from the webhook, never from this redirect — the URL carries nothing signed.</span></div>
+          <div class="param"><code>cancelUrl</code><span>A “back to the store without paying” link, shown until a payment is seen.</span></div>
           <div class="param"><code>ttlMs</code><span>How long they have to choose. One minute to one day; one hour by default.</span></div>
           <div class="param"><code>mode</code><span>Session credentials only. An API key's mode always wins.</span></div>
         </div>
@@ -1155,7 +1179,7 @@ curl -X POST https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices/<
         the payer reaches it from the payment page themselves, with no sign-in.
       </p>
       <div class="endpoint" data-route="GET /pay/:sessionId/receipt">
-        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/pay/<em>:sessionId</em>/receipt</span></div>
+        <div class="route"><span class="verb" data-verb="GET">GET</span><span class="path">/pay/<em>:sessionId</em>/receipt</span><span class="tag" data-tag="public">public</span></div>
         <p>
           What was bought, from whom, for how much, in which asset on which chain, and the
           transaction hashes. The hashes are the point: everything else on a receipt is
@@ -1192,7 +1216,7 @@ curl -X POST https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices/<
         <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/webhook-endpoints</span></div>
         <div class="params">
           <div class="param"><code>url</code><span><span class="req">required</span> — HTTPS.</span></div>
-          <div class="param"><code>events</code><span><span class="req">required</span> — at least one. An endpoint subscribed to nothing receives nothing, which looks exactly like a broken integration.</span></div>
+          <div class="param"><code>events</code><span><span class="req">required</span> — at least one of <code>*</code>, <code>invoice.confirming</code>, <code>invoice.paid</code>, <code>invoice.underpaid</code>, <code>invoice.overpaid</code>, <code>invoice.expired</code>, <code>payment.reversed</code>. Anything else is a <code>400</code> naming the list. <code>*</code> is all of them, present and future. An endpoint subscribed to nothing receives nothing, which looks exactly like a broken integration.</span></div>
         </div>
         <pre><span class="c"># 201 Created — store the secret now, it is shown once.</span>
 { <span class="k">"id"</span>: <span class="s">"…"</span>, <span class="k">"secret"</span>: <span class="s">"whsec_…"</span> }</pre>
@@ -1226,12 +1250,48 @@ curl -X POST https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices/<
         <p>Queue one delivery again after you have fixed your end.</p>
       </div>
 
+      <h3>What arrives</h3>
+      <p>
+        One <code>POST</code> per event, JSON, with these headers. There is no other scheme
+        and no other header names — not Svix's, not Stripe's.
+      </p>
+      <div class="params">
+        <div class="param"><code>avex-signature</code><span><code>t=&lt;unix seconds&gt;,v1=&lt;hex&gt;</code> — HMAC-SHA256 of <code>`${t}.${rawBody}`</code> with your <code>whsec_…</code> secret. The only header you must check.</span></div>
+        <div class="param"><code>avex-event</code><span>The event name, same as <code>type</code> in the body.</span></div>
+        <div class="param"><code>avex-idempotency-key</code><span>Stable across every retry of one event. Dedupe on this, or on <code>id</code> in the body — they identify the same thing.</span></div>
+        <div class="param"><code>avex-attempt</code><span>1 on the first try, counting up.</span></div>
+      </div>
+      <pre><span class="c"># invoice.paid</span>
+{
+  <span class="k">"id"</span>: <span class="s">"6f1c…"</span>,                 <span class="c">// this event's id — one per event, never the invoice's</span>
+  <span class="k">"type"</span>: <span class="s">"invoice.paid"</span>,
+  <span class="k">"event"</span>: <span class="s">"invoice.paid"</span>,          <span class="c">// the same, older name</span>
+  <span class="k">"invoiceId"</span>: <span class="s">"36f0…"</span>,
+  <span class="k">"reference"</span>: <span class="s">"order-1042"</span>,     <span class="c">// what you passed at creation</span>
+  <span class="k">"mode"</span>: <span class="s">"live"</span>,                <span class="c">// refuse a test event against a live order</span>
+  <span class="k">"chain"</span>: <span class="s">"bsc"</span>,
+  <span class="k">"status"</span>: <span class="s">"paid"</span>,
+  <span class="k">"amountDue"</span>: <span class="s">"1012000000000000000"</span>,
+  <span class="k">"amountPaid"</span>: <span class="s">"1012000000000000000"</span>,
+  <span class="k">"txHash"</span>: <span class="s">"0x…"</span>
+}</pre>
+      <p class="note">
+        One invoice produces several events — <code>confirming</code> when a transfer is
+        seen, then <code>paid</code> (or <code>underpaid</code>, <code>overpaid</code>) when it
+        is final — and they share <code>invoiceId</code>. A handler that dedupes on
+        <code>invoiceId</code> keeps the first and drops the one that mattered. Dedupe on
+        <code>id</code>; act on <code>status</code>.
+      </p>
+
       <h3>Verifying a delivery</h3>
       <p class="note">
         Compare in constant time, and check the timestamp. A signature check that leaks
         timing, or that accepts an hour-old payload, is not a signature check.
       </p>
-      <pre><span class="c"># Node</span>
+      <pre><span class="c"># Node — parse the header, then check</span>
+<span class="k">const</span> header = req.headers[<span class="s">'avex-signature'</span>];            <span class="c">// "t=1725800000,v1=ab12…"</span>
+<span class="k">const</span> timestamp = Number(header.match(<span class="s">/t=(\d+)/</span>)[1]);
+<span class="k">const</span> signature = header.match(<span class="s">/v1=([0-9a-f]+)/</span>)[1];
 <span class="k">const</span> expected = crypto
   .createHmac(<span class="s">'sha256'</span>, secret)
   .update(<span class="s">`${timestamp}.${rawBody}`</span>)
@@ -1241,7 +1301,8 @@ curl -X POST https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices/<
 <span class="k">if</span> (Math.abs(Date.now() / <span class="s">1000</span> - timestamp) &gt; <span class="s">300</span>) reject();</pre>
       <p class="note">
         Deliveries retry, so your handler must be <strong>idempotent</strong> — key on the
-        invoice id and the status, not on having received the request. And read the
+        event <code>id</code>, not on having received the request. Answer <code>2xx</code>
+        quickly and do the work after; anything else is retried with backoff. And read the
         amount, not just the status: an <code>underpaid</code> invoice has real money
         against it.
       </p>
@@ -1334,8 +1395,10 @@ curl -X POST https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices/<
       <div class="codes">
         <div class="code-row"><b>400</b><code>invalid_request</code><span>The body did not parse. <code>fields</code> says which.</span></div>
         <div class="code-row"><b>401</b><code>unauthenticated</code><span>No credential, or not a valid one.</span></div>
-        <div class="code-row"><b>403</b><code>forbidden</code><span>The credential is real but lacks the permission.</span></div>
-        <div class="code-row"><b>404</b><code>not_found</code><span>Also what you get for something belonging to another merchant — confirming it exists would leak the id space.</span></div>
+        <div class="code-row"><b>403</b><code>scope_missing</code><span>The API key is real but was not given that permission. <code>permission</code> names it.</span></div>
+        <div class="code-row"><b>403</b><code>permission_denied</code><span>A session whose role does not allow the action.</span></div>
+        <div class="code-row"><b>403</b><code>elevation_required</code><span>A dashboard action that needs a code from the authenticator within the last five minutes.</span></div>
+        <div class="code-row"><b>404</b><code>not_found</code><span>No such route, or no such object — also what you get for something belonging to another merchant, since confirming it exists would leak the id space. Every route is on this page; there is no <code>/v1/health</code> and no <code>/v1/pay/…</code>.</span></div>
         <div class="code-row"><b>409</b><code>asset_disabled</code><span>Enable it first.</span></div>
         <div class="code-row"><b>409</b><code>asset_unapproved</code><span>Still in review, or blocked.</span></div>
         <div class="code-row"><b>409</b><code>asset_unlisted</code><span>We have stopped accepting that currency — our side, not yours. Invoices already open still complete.</span></div>

@@ -83,9 +83,11 @@
 
   /* ── masthead ───────────────────────────────────────────────────────── */
 
+  /* One line, always: the brand left, the reference right, and a long reference is cut
+     with an ellipsis rather than pushing the header onto a second row. */
   .masthead {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     justify-content: space-between;
     gap: var(--sp-2) var(--sp-3);
@@ -95,25 +97,6 @@
 
   .masthead-right { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
 
-  /* The theme switch: one tap-sized button, sun for "go light", moon for "go dark". Always
-     painted from tokens so it reads in either mode; hidden in print. */
-  .theme-btn {
-    width: var(--tap);
-    height: var(--tap);
-    flex: none;
-    display: grid;
-    place-items: center;
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    background: var(--surface);
-    color: var(--ink-2);
-    cursor: pointer;
-    padding: 0;
-  }
-  .theme-btn:hover { color: var(--ink); border-color: var(--line-strong); background: var(--surface-2); }
-  .theme-btn:focus-visible { outline: none; box-shadow: var(--focus); }
-  .theme-icon { width: 1.25rem; height: 1.25rem; display: block; }
-  @media print { .theme-btn { display: none; } }
 
   .brand {
     display: flex;
@@ -150,7 +133,10 @@
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
     padding: 0.125rem var(--sp-2);
-    overflow-wrap: anywhere;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 14rem;
   }
 
   /* ── layout ─────────────────────────────────────────────────────────── */
@@ -746,6 +732,12 @@
     border-radius: var(--r-md);
     background: var(--ok-soft);
   }
+  .return-offer { display: flex; flex-direction: column; gap: var(--sp-2); align-items: stretch; }
+  .return-link { display: flex; align-items: center; justify-content: center; text-decoration: none; }
+  .return-note { font-size: var(--s-1); color: var(--muted); text-align: center; }
+  .cancel-offer { margin: var(--sp-3) 0 0; text-align: center; font-size: var(--s-1); }
+  .cancel-offer a { color: var(--muted); }
+  .cancel-offer a:hover { color: var(--ink); }
   .receipt-link {
     display: inline-flex;
     align-items: center;
@@ -1041,7 +1033,6 @@
     </div>
     <div class="masthead-right">
       <div class="invoice-ref">Invoice <code id="invoice-ref">#INV-8F2C41</code></div>
-      <button class="theme-btn" type="button" id="theme-toggle" aria-label="Switch to dark mode"><svg class="theme-icon" data-icon="sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><svg class="theme-icon" data-icon="moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" hidden><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
     </div>
   </header>
 
@@ -1129,6 +1120,17 @@
           <span class="receipt-note">Keep it, print it, or forward it. No sign-in.</span>
         </section>
 
+        <!--
+          Back to the shop. Shown once the payment is final and the merchant gave a return
+          address; the page goes there by itself after a short count, and the button is for
+          anyone who does not want to wait. The count is visible so nobody is yanked away
+          from a page they were reading.
+        -->
+        <section class="return-offer" id="return-offer" hidden>
+          <a class="primary return-link" id="return-link" href="#">Return to the store →</a>
+          <span class="return-note" id="return-note"></span>
+        </section>
+
         <section class="lock" id="lock">
           <div class="lock-line">
             <span class="lock-left">Rate locked for</span>
@@ -1160,6 +1162,7 @@
 
           <button class="primary" type="button" id="to-pay" disabled>Continue</button>
           <p class="hint" id="choose-hint">Pick a currency to continue.</p>
+          <p class="cancel-offer" id="cancel-offer" hidden><a id="cancel-link" href="#">← Back to the store without paying</a></p>
         </section>
 
         <!-- ── screen 2: pay ──────────────────────────────────────────── -->
@@ -1276,37 +1279,13 @@
   'use strict';
 
   /**
-   * Light or dark: the phone decides.
+   * Light or dark: the phone decides, and nothing on the page argues.
    *
-   * The tokens follow the device's setting, and every visit starts from it — a payer on a
-   * light phone sees a light checkout, on a dark phone a dark one. The button in the header
-   * lets somebody reading in unexpected light flip it for this visit only; nothing is stored,
-   * so the next open follows the phone again, and a merchant's own dashboard preference on
-   * the same browser never reaches a payer's page. It shows the mode a tap will switch *to*.
+   * The tokens follow the device's setting through `prefers-color-scheme`, so a payer on a
+   * light phone sees a light checkout and on a dark phone a dark one. There is no switch: an
+   * earlier one took a tap-sized slot in a header already carrying the invoice reference,
+   * wrapped it onto two lines on a phone, and nobody asked for it.
    */
-  function effectiveTheme() {
-    const set = document.documentElement.dataset.theme;
-    if (set === 'light' || set === 'dark') return set;
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  }
-  function paintThemeButton() {
-    const button = document.getElementById('theme-toggle');
-    if (!button) return;
-    const dark = effectiveTheme() === 'dark';
-    for (const icon of button.querySelectorAll('.theme-icon')) {
-      icon.hidden = icon.dataset.icon !== (dark ? 'sun' : 'moon');
-    }
-    button.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
-  }
-  paintThemeButton();
-  document.getElementById('theme-toggle')?.addEventListener('click', () => {
-    document.documentElement.dataset.theme = effectiveTheme() === 'dark' ? 'light' : 'dark';
-    paintThemeButton();
-  });
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
-    // The phone changed its mind mid-visit; follow it unless the payer chose for this visit.
-    paintThemeButton();
-  });
 
   /**
    * What we can take, as currency-then-network.
@@ -2131,6 +2110,45 @@
     return value.toFixed(2).replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
   }
 
+  /** The merchant's return addresses, from the session; null on the demo and when not given. */
+  let successUrl = null;
+  let cancelUrl = null;
+  let returnTimer = null;
+  const RETURN_AFTER_S = 5;
+
+  function storeName() {
+    const heading = el('pay-heading').textContent.replace(/^Pay\s+/, '').trim();
+    return heading || 'the store';
+  }
+
+  /**
+   * Offer the way back, then take it.
+   *
+   * The count is out loud — "Taking you back in 5…" — and the button is live from the first
+   * second, so a payer in a hurry taps and a payer reading the receipt link has time to.
+   * Runs once: a second `paid` from the poll must not restart the count on a payer who has
+   * already gone, and a page reopened later still gets the button but not another shove.
+   */
+  function offerReturn() {
+    if (!successUrl || returnTimer !== null) return;
+    const offer = el('return-offer');
+    el('return-link').href = successUrl;
+    el('return-link').textContent = 'Return to ' + storeName() + ' →';
+    offer.hidden = false;
+    let left = RETURN_AFTER_S;
+    const tick = () => {
+      el('return-note').textContent = left > 0 ? 'Taking you back in ' + left + '…' : 'Taking you back…';
+      if (left <= 0) {
+        clearInterval(returnTimer);
+        window.location.assign(successUrl);
+        return;
+      }
+      left -= 1;
+    };
+    tick();
+    returnTimer = setInterval(tick, 1000);
+  }
+
   /** Map the API's invoice status onto the page's own state machine. */
   function applyInvoiceStatus(status, amountPaid) {
     if (status === 'paid' || status === 'overpaid') return setState('paid');
@@ -2207,6 +2225,13 @@
       el('summary-item').textContent = 'Payment';
     }
     setLiveExpiry(view.expiresAt);
+    successUrl = typeof view.successUrl === 'string' && /^https?:\/\//.test(view.successUrl) ? view.successUrl : null;
+    cancelUrl = typeof view.cancelUrl === 'string' && /^https?:\/\//.test(view.cancelUrl) ? view.cancelUrl : null;
+    if (cancelUrl) {
+      el('cancel-link').href = cancelUrl;
+      el('cancel-link').textContent = '← Back to ' + storeName() + ' without paying';
+      el('cancel-offer').hidden = false;
+    }
 
     if (view.status === 'cancelled' || view.status === 'expired') {
       renderFatal({
@@ -2370,7 +2395,7 @@
   const STATES = {
     awaiting: 'Waiting for your payment',
     confirming: 'Payment seen — waiting for the network to confirm',
-    paid: 'Payment confirmed. You can close this page.',
+    paid: 'Payment confirmed.',
     underpaid: 'Less than the amount due arrived — send the difference',
     expired: 'The rate lock expired — reload the page for a fresh rate',
   };
@@ -2409,6 +2434,9 @@
      */
     el('receipt-offer').hidden = !(settled && LIVE);
     if (settled && LIVE) el('receipt-link').href = receiptHref();
+    // Nobody backs out of a payment that has been seen; the link would only confuse.
+    if (next !== 'awaiting') el('cancel-offer').hidden = true;
+    if (settled) offerReturn();
     for (const row of el('networks').children) row.disabled = settled;
 
     // Confirmation progress is only meaningful while a transfer is maturing.

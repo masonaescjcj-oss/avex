@@ -298,6 +298,14 @@ export class CheckoutService {
        */
       mode: session.mode,
       expiresAt: session.expiresAt.toISOString(),
+      /**
+       * Where the merchant asked for the payer to go afterwards, and where a payer who gives
+       * up should go. Both were accepted at creation, stored, and — until this line — read
+       * by nothing: a payer whose payment had confirmed was told to close the tab while the
+       * shop that sent them waited for a return that never came.
+       */
+      successUrl: session.successUrl,
+      cancelUrl: session.cancelUrl,
       /** Present once a currency has been chosen. This is what the payer pays to. */
       payment: invoice,
     };

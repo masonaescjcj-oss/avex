@@ -106,9 +106,18 @@ export class WebhookDispatcher {
     const attempts = delivery.attempts + 1;
     const timestamp = Math.floor(now / 1000);
 
+    /**
+     * The envelope: the event's own id, its name twice, and the fields.
+     *
+     * `id` is this delivery's id — one per event, stable across its retries, never the
+     * invoice's. A receiver that dedupes on `id` sees `confirming` and `paid` for one
+     * invoice as two events, which they are; one that dedupes on `invoiceId` drops the
+     * second and never marks the order paid. `type` repeats `event` under the name most
+     * webhook libraries expect, so a generic handler finds it without a mapping.
+     */
     const signed = signWebhook(
       delivery.secret,
-      { ...delivery.payload, event: delivery.event, id: delivery.id },
+      { ...delivery.payload, event: delivery.event, type: delivery.event, id: delivery.id },
       timestamp,
     );
 

@@ -135,13 +135,38 @@ function serialiseInvoice(invoice: {
   };
 }
 
+/**
+ * Every event a webhook can carry. `*` is all of them, present and future.
+ *
+ * A closed list rather than free text, because free text was accepted for a year and an
+ * integrator who subscribed to `invoice.payed` — or to a name they guessed from another
+ * gateway — got an endpoint that never fired and no error saying why. The dispatcher
+ * emits exactly these; the `invoice.*` names are the invoice's own statuses.
+ */
+export const WEBHOOK_EVENTS = [
+  '*',
+  'invoice.confirming',
+  'invoice.paid',
+  'invoice.underpaid',
+  'invoice.overpaid',
+  'invoice.expired',
+  'payment.reversed',
+] as const;
+
 const endpointBody = z.object({
   url: z.string().url().max(2000),
   /**
-   * At least one event. An endpoint subscribed to nothing receives nothing, which
-   * looks identical to a broken integration from the merchant's side.
+   * At least one event, each from the list. An endpoint subscribed to nothing receives
+   * nothing, which looks identical to a broken integration from the merchant's side.
    */
-  events: z.array(z.string().trim().min(1).max(60)).min(1).max(20),
+  events: z
+    .array(
+      z.enum(WEBHOOK_EVENTS, {
+        errorMap: () => ({ message: `Unknown event. One of: ${WEBHOOK_EVENTS.join(', ')}.` }),
+      }),
+    )
+    .min(1)
+    .max(20),
 });
 
 export function registerMerchantRoutes(app: FastifyInstance, context: AppContext): void {
