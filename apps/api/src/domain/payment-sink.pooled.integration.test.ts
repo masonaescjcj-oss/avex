@@ -419,6 +419,63 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
     assert.equal(await statusOf(b), 'pending');
   });
 
+  test('a comment names the invoice, even when another one asks for the exact amount', async () => {
+    /**
+     * TON is the one chain where the payer says which invoice they are paying, and this is
+     * why that is better than any amount rule: the comment is read before the amount, so it
+     * decides even against an invoice whose figure matches exactly. Two invoices on one
+     * wallet, a transfer for B's amount carrying A's comment — it is A's, because A's payer
+     * is the one who was shown that comment.
+     *
+     * The sink's memo branch predates TON being watchable at all; nothing had ever written a
+     * memo onto a pooled row, so nothing exercised it against amount matching.
+     */
+    const wallet = tronAddress();
+    /**
+     * Unique per run, because the memo column is uniquely indexed for exactly the reason
+     * this test is about: two invoices with one comment could not be told apart. A fixed
+     * fixture passed the first time and collided with itself on the second.
+     */
+    const memo = `AVEX-${randomBytes(6).toString('hex').toUpperCase()}`;
+    const a = await openInvoice(wallet, 20_001_000n, { memo });
+    const b = await openInvoice(wallet, 20_002_000n);
+
+    const outcome = await sink.credit(payment(wallet, 20_002_000n, { memo }));
+
+    assert.equal(outcome, 'credited');
+    assert.equal(await statusOf(a), 'overpaid', 'the comment won, and A was overpaid');
+    assert.equal(await statusOf(b), 'pending', 'B is still waiting for its own payer');
+  });
+
+  test('a comment nobody issued falls through to the amount rules', async () => {
+    /**
+     * A payer who typed something of their own into the comment field, or an exchange that
+     * put a reference of its own there. The memo matches no invoice, so it is ignored and
+     * the exact amount decides — rather than the payment being parked because a field
+     * nobody asked them to fill in was filled in wrongly.
+     */
+    const wallet = tronAddress();
+    const only = await openInvoice(wallet, 20_001_000n);
+
+    const outcome = await sink.credit(
+      payment(wallet, 20_001_000n, { memo: 'order 55 for mum' }),
+    );
+
+    assert.equal(outcome, 'credited');
+    assert.equal(await statusOf(only), 'paid');
+  });
+
+  test('a payment with no comment at all is still credited by its amount', async () => {
+    // The fallback that makes a forgotten comment a matched payment rather than a lost one.
+    const wallet = tronAddress();
+    const only = await openInvoice(wallet, 20_001_000n, {
+      memo: `AVEX-${randomBytes(6).toString('hex').toUpperCase()}`,
+    });
+
+    assert.equal(await sink.credit(payment(wallet, 20_001_000n)), 'credited');
+    assert.equal(await statusOf(only), 'paid');
+  });
+
   test('a repeat customer whose earlier invoice is settled is paying the new one', async () => {
     /**
      * The merchant's own report. One wallet paid invoice A a cent over; three hours later it

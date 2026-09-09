@@ -141,9 +141,14 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
            */
           polygon: { factory: FACTORY, implementation: IMPLEMENTATION },
         },
-        shared: { ton: TON_WALLET },
-        // TRON, so a pooled currency can reach the options list at all.
-        pooled: ['tron'],
+        /**
+         * Empty, because no chain uses that model any more: TON was its only one and is
+         * pooled now, on the merchant's own wallet. Kept as `{}` so this is a configuration
+         * `depositAddressConfig` could actually produce — it named TON, which it cannot.
+         */
+        shared: {},
+        // TRON and TON, so a pooled currency can reach the options list at all.
+        pooled: ['tron', 'ton'],
       },
       'checkout-suite-memo-secret',
     );
@@ -872,7 +877,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     const usdt = await enableAsset({ symbol: 'USDT' });
     const ton = await enableAsset({ chain: 'ton', symbol: 'TON', decimals: 9 });
     await ensurePayout('bsc');
-    await ensurePayout('ton');
+    const wallet = await walletPool.register({ organizationId: orgId, chain: 'ton', address: TON_WALLET });
     const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
 
     const first = await select(session.id, usdt);
@@ -881,9 +886,12 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     assert.equal(switched.json().changed, true);
     assert.notEqual(switched.json().payment.invoiceId, first.json().payment.invoiceId);
     assert.equal(switched.json().payment.chain, 'ton');
-    // A shared-address chain, so the wallet is the configured one and a memo identifies
-    // the invoice.
-    assert.equal(switched.json().payment.depositAddress, TON_WALLET);
+    /**
+     * The payer is shown the merchant's own wallet and a comment to include with the
+     * transfer. Both matter on this screen: the comment is what names the invoice, and it
+     * used to be the configured wallet of *ours* that appeared here.
+     */
+    assert.equal(switched.json().payment.depositAddress, wallet.address);
     assert.match(switched.json().payment.memo, /^AVEX-[0-9A-F]{12}$/);
   });
 
@@ -893,7 +901,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     const usdt = await enableAsset({ symbol: 'USDT' });
     const ton = await enableAsset({ chain: 'ton', symbol: 'TON', decimals: 9 });
     await ensurePayout('bsc');
-    await ensurePayout('ton');
+    await walletPool.register({ organizationId: orgId, chain: 'ton', address: TON_WALLET });
     const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
 
     const first = await select(session.id, usdt);

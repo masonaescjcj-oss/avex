@@ -146,11 +146,29 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
         evm: {
           bsc: { factory: FACTORY, implementation: IMPLEMENTATION },
           ethereum: { factory: FACTORY, implementation: IMPLEMENTATION },
+          /**
+           * A chain with forwarders and no fee collector, which is the one shape that
+           * charges no commission at all: nothing taken on chain and nothing accrued.
+           *
+           * TON used to be it, while TON meant one shared wallet of ours. TON is pooled now
+           * and a pooled chain accrues, so the property "do not surcharge a payer for a fee
+           * we are not charging" had nowhere left to be tested. It has here.
+           */
+          polygon: { factory: FACTORY, implementation: IMPLEMENTATION },
         },
-        shared: { ton: TON_WALLET },
+        /**
+         * Empty, because no chain uses that model any more.
+         *
+         * TON was its only one and is pooled now: the wallet is the merchant's own and the
+         * comment names the invoice on it. Left as `{}` rather than removed so this config
+         * is one `depositAddressConfig` could actually produce — it was `{ton: …}`, which it
+         * cannot, and every TON test here was passing against a shape production never
+         * builds.
+         */
+        shared: {},
         // TRON, so a pooled invoice can be created here at all — `payableAssets` and the
         // deriver both filter to the chains this list names.
-        pooled: ['tron'],
+        pooled: ['tron', 'ton'],
       },
       'invoice-suite-memo-secret',
     );
@@ -638,13 +656,18 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
 
   test('passing on a commission that does not exist changes nothing', async () => {
     /**
-     * `ton` has a deposit wallet in this deployment but no fee collector, so there is no
-     * commission on it. A merchant who passes fees on must not be surcharging their
-     * customers for a fee we are not charging — that would be us inventing a fee for them
-     * to keep.
+     * `polygon` has forwarders in this deployment and no fee collector, so there is no
+     * commission on it: nothing is taken on chain and nothing accrues. A merchant who
+     * passes fees on must not be surcharging their customers for a fee we are not charging
+     * — that would be us inventing a fee for them to keep.
+     *
+     * This was written against `ton`, which had the same shape while TON meant one shared
+     * wallet of ours. TON is pooled now, and a pooled chain *does* charge: the commission
+     * accrues to the merchant's balance instead of being taken on chain, so passing it on
+     * is real and the amounts are meant to differ. The chain moved; the property did not.
      */
-    const assetId = await enableAsset({ chain: 'ton', symbol: 'TON', decimals: 9 });
-    await addPayoutAddress('ton');
+    const assetId = await enableAsset({ chain: 'polygon', symbol: 'POL', decimals: 18 });
+    await addPayoutAddress('polygon');
 
     const first = await open({ assetId, amountFiatMicros: '20000000' });
     assert.equal(first.statusCode, 201, first.body);
@@ -679,13 +702,36 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
   });
 
   test('a chain with no fee collector charges nothing', async () => {
-    // `polygon` has no collector in this deployment. The invoice still opens; it just
-    // carries no commission, rather than sending the fee to a BSC address.
+    /**
+     * `polygon` has forwarders here and no collector. The invoice opens and carries no
+     * commission, rather than sending our cut to a BSC address.
+     *
+     * This asserted a 500 before, because polygon had no factory either — so the test's
+     * name described one property and its assertion checked a different one, and the
+     * property in the name was not tested anywhere. The chain has a factory now, so the
+     * name is what is checked; the 500 belongs to a chain that really is unconfigured, and
+     * has its own test below.
+     */
     const assetId = await enableAsset({ chain: 'polygon', symbol: 'USDT' });
     await addPayoutAddress('polygon');
 
     const response = await open({ assetId, amountFiatMicros: '1000000' });
-    // Polygon has no forwarder factory configured either, so this is our own gap.
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(response.json().feeBps, 0, 'nothing taken on chain');
+  });
+
+  test('a chain this deployment has not configured is reported as our gap, not the caller’s', async () => {
+    /**
+     * `solana` has no entry in this deployment's deposit configuration, so there is no
+     * address to derive and no wallet to allocate from. That is our misconfiguration and is
+     * a 500: reporting it as a client error would send a merchant looking for a mistake in
+     * their request, and reporting it as "unsupported" would send an operator looking for a
+     * missing feature instead of a missing setting.
+     */
+    const assetId = await enableAsset({ chain: 'solana', symbol: 'USDT' });
+    await addPayoutAddress('solana', 'So11111111111111111111111111111111111111112');
+
+    const response = await open({ assetId, amountFiatMicros: '1000000' });
     assert.equal(response.statusCode, 500, response.body);
     assert.equal(response.json().error, 'not_configured');
   });
@@ -761,29 +807,68 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     assert.notEqual(first.json().id, second.json().id);
   });
 
-  // ── shared-address chains ──────────────────────────────────────────────────
+  // ── TON: the merchant's own wallet, and a comment that names the invoice ───
 
-  test('a TON invoice gets the shared wallet and its own memo', async () => {
+  test('a TON invoice is issued against the merchant’s own wallet, with a comment', async () => {
+    /**
+     * Both halves of what TON is, and neither was covered before: the address is a wallet
+     * from the merchant's pool — not one of ours, which is what `shared-memo` used to mean
+     * and what made that model custodial — and the invoice carries a comment, because TON
+     * transfers have a field for one and a payer can be asked to fill it in.
+     */
     const assetId = await enableAsset({ chain: 'ton', symbol: 'TON', decimals: 9 });
-    await addPayoutAddress('ton', 'EQmerchantwallet');
+    const wallet = await walletPool.register({
+      organizationId: orgId,
+      chain: 'ton',
+      address: TON_WALLET,
+    });
 
     const response = await open({ assetId, amountFiatMicros: '1000000' });
     assert.equal(response.statusCode, 201, response.body);
-    assert.equal(response.json().depositAddress, TON_WALLET);
-    assert.match(response.json().memo, /^AVEX-[0-9A-F]{12}$/);
+    assert.equal(response.json().depositAddress, wallet.address, 'the merchant’s own wallet');
+    assert.match(response.json().memo, /^AVEX-[0-9A-F]{12}$/, 'and a comment to quote');
   });
 
-  test('two TON invoices share an address but never a memo', async () => {
-    // On a shared-address chain the memo is the only thing distinguishing one
-    // invoice's payment from another's, so a collision would misattribute money.
+  test('the comment is not the invoice id, because anyone can read it off the chain', async () => {
+    /**
+     * A comment is visible to everybody watching the wallet. One that carried the invoice's
+     * uuid would hand a stranger the identifier — which is why it is an HMAC under the
+     * deployment's memo secret and not `AVEX-<uuid>`, the form the old sketch used.
+     */
     const assetId = await enableAsset({ chain: 'ton', symbol: 'TON', decimals: 9 });
-    await addPayoutAddress('ton', 'EQmerchantwallet2');
+    await walletPool.register({ organizationId: orgId, chain: 'ton', address: TON_WALLET });
+
+    const created = (await open({ assetId, amountFiatMicros: '1000000' })).json();
+    assert.equal(created.memo.includes(created.id), false);
+    assert.equal(created.memo.includes(created.id.slice(0, 8)), false);
+  });
+
+  test('two TON invoices share the wallet but never the comment', async () => {
+    // The comment is what distinguishes one payment from another on that wallet, so a
+    // collision would put one payer's money against the other's order.
+    const assetId = await enableAsset({ chain: 'ton', symbol: 'TON', decimals: 9 });
+    await walletPool.register({ organizationId: orgId, chain: 'ton', address: TON_WALLET });
 
     const first = await open({ assetId, amountFiatMicros: '1000000' });
     const second = await open({ assetId, amountFiatMicros: '1000000' });
 
     assert.equal(first.json().depositAddress, second.json().depositAddress);
     assert.notEqual(first.json().memo, second.json().memo);
+    // And the amounts differ too, so a payer who omits the comment can still be matched.
+    assert.notEqual(first.json().amountDue, second.json().amountDue);
+  });
+
+  test('a chain whose transfers carry no comment gets no memo at all', async () => {
+    /**
+     * The other side of the registry fact. An invoice that required a comment on a chain
+     * with nowhere to put one would be an invoice a payer cannot pay correctly.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+
+    const response = await open({ assetId, amountFiatMicros: '1000000' });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(response.json().memo ?? null, null);
   });
 
   // ── refusals ───────────────────────────────────────────────────────────────
