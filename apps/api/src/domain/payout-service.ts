@@ -1,4 +1,4 @@
-import { SUPPORTED_CHAINS, toChecksumAddress, type ChainId } from '@avex/core';
+import { SUPPORTED_CHAINS, isTonAddress, normalizeTonAddress, toChecksumAddress, type ChainId } from '@avex/core';
 import { and, eq, isNull, lte } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
@@ -83,14 +83,24 @@ export class PayoutAddressService {
     }
 
     if (chain === 'ton') {
-      // TON user-friendly addresses are 48 base64url characters.
-      if (!/^[A-Za-z0-9_-]{48}$/.test(trimmed)) {
+      /**
+       * Checked by its checksum, and stored in one canonical form.
+       *
+       * The rule this replaces was a 48-character base64url regex, which accepts any 48
+       * characters — a mistyped address included, since the checksum was never verified. It
+       * also stored whatever was pasted, and a TON wallet has four spellings: raw, and
+       * friendly in bounceable (`EQ…`) or non-bounceable (`UQ…`) form, either flagged for
+       * testnet. They are the same account. Stored as given, a merchant who registered one
+       * form and a payment reported against another were two wallets, and the payment went
+       * unmatched.
+       */
+      if (!isTonAddress(trimmed)) {
         throw new PayoutAddressError(
           'invalid_address',
-          'A TON address must be 48 characters in base64url form.',
+          'That is not a valid TON address. Paste the one your wallet shows, starting UQ or EQ.',
         );
       }
-      return trimmed;
+      return normalizeTonAddress(trimmed);
     }
 
     if (chain === 'tron') {

@@ -1,12 +1,7 @@
 import { createHmac } from 'node:crypto';
 
-import {
-  invoiceSalt,
-  predictForwarder,
-  toChecksumAddress,
-  type Create2Config,
-  type FeeSplit,
-} from '@avex/core';
+import type { ChainId } from '@avex/core';
+import { chainConfig, invoiceSalt, predictForwarder, toChecksumAddress, type Create2Config, type FeeSplit } from '@avex/core';
 
 /**
  * Where a payer sends, derived from configuration alone.
@@ -218,6 +213,23 @@ export class DepositAddressDeriver {
       );
     }
     throw new DepositAddressError('chain_unsupported', `Unknown chain: ${input.chain}.`);
+  }
+
+  /**
+   * The comment an invoice on this chain must carry, or nothing where transfers have none.
+   *
+   * A registry fact — `carriesMemo` — rather than a chain name, so a second chain with a
+   * comment field needs no change here. It is an HMAC of the invoice id under the
+   * deployment's memo secret, for the reason `memoFor` states: a comment is visible to
+   * anybody watching the wallet, and one that carried the invoice's uuid would let a stranger
+   * read it off the chain.
+   *
+   * Public because invoice creation calls it for a pooled chain, where the address comes from
+   * the wallet pool rather than from `derive` — the memo is the one part of the deposit
+   * target that is still ours to generate.
+   */
+  invoiceMemo(chain: ChainId, invoiceId: string): string | undefined {
+    return chainConfig(chain).carriesMemo ? memoFor(invoiceId, this.memoSecret) : undefined;
   }
 
   /** The salt an invoice's forwarder is deployed at, for settlement to reproduce. */

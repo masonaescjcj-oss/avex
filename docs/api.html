@@ -757,10 +757,10 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
         later.
       </p>
       <p class="note">
-        <strong>TRON and Solana have no such floor</strong>, down to fifty cents. The payer
-        pays a wallet of yours directly, so there is no settlement of ours to pay for and
-        nothing about the order size can go wrong — which is what those networks are for, and
-        where small orders belong.
+        <strong>TRON, Solana and TON have no such floor</strong>, down to fifty cents. The
+        payer pays a wallet of yours directly, so there is no settlement of ours to pay for
+        and nothing about the order size can go wrong — which is what those networks are for,
+        and where small orders belong.
       </p>
     </div>
   </section>
@@ -1002,9 +1002,10 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
           recoverable by us or by anyone.
         </p>
         <p class="note">
-          <code>memo</code> is non-null on shared-address chains such as TON, and there it
-          is what identifies the payment. A transfer without it cannot be matched
-          automatically.
+          <code>memo</code> is non-null on TON, where a transfer carries a text comment and
+          that comment is what names the invoice. Show it to your customer as prominently as
+          the amount: the hosted page does, and a payer who omits it is matched by the amount
+          rules instead, which is a fallback rather than the mechanism.
         </p>
       </div>
 

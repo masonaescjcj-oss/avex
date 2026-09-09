@@ -36,17 +36,25 @@ export const CREDITABLE_ADDRESS_MODELS: readonly AddressModel[] = ['unique', 'po
  * differently. They did not disagree before only because the condition was short enough to
  * copy correctly.
  *
- * Two variables feed it. `EVM_RPC_URLS` holds every chain that speaks the Ethereum JSON-RPC,
- * TRON included, because a TRON node really does answer `eth_getLogs`. Solana speaks a
- * different vocabulary entirely, so its endpoint is named separately rather than being put
- * in a map that the gas oracle and the contract prober also read.
+ * Three variables feed it, one per protocol. `EVM_RPC_URLS` holds every chain that speaks the
+ * Ethereum JSON-RPC, TRON included, because a TRON node really does answer `eth_getLogs`.
+ * Solana speaks a different vocabulary, and TON is not a node at all but an indexer — so each
+ * is named separately rather than being put in a map that the gas oracle and the contract
+ * prober also read and would get "method not found" from.
  */
 export function chainEndpoints(
   env: ReturnType<typeof loadEnv>,
 ): Readonly<Partial<Record<ChainId, readonly string[]>>> {
   const endpoints: Partial<Record<ChainId, readonly string[]>> = {};
   for (const chain of SUPPORTED_CHAINS) {
-    const urls = chain === 'solana' ? env.SOLANA_RPC_URLS : (env.EVM_RPC_URLS[chain] ?? []);
+    const urls =
+      chain === 'solana'
+        ? env.SOLANA_RPC_URLS
+        : chain === 'ton'
+          ? env.TON_API_URL === ''
+            ? []
+            : [env.TON_API_URL]
+          : (env.EVM_RPC_URLS[chain] ?? []);
     if (urls.length > 0) endpoints[chain] = urls;
   }
   return endpoints;

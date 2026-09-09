@@ -108,6 +108,17 @@ export interface ChainConfig {
    */
   readonly reorgs: 'possible' | 'none';
 
+  /**
+   * Whether a transfer on this chain carries a text comment the payer can be asked to include.
+   *
+   * True of TON alone, and it changes what identifies an invoice: the comment names it
+   * exactly, so the disambiguated amount every other shared-wallet chain relies on becomes a
+   * fallback rather than the mechanism. Invoice creation reads this to decide whether to
+   * generate a memo; a chain that cannot carry one must never be issued an invoice that
+   * requires one, because the payer would have nowhere to put it.
+   */
+  readonly carriesMemo: boolean;
+
   readonly settlement: SettlementProfile;
 }
 
@@ -120,6 +131,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
     confirmations: { standard: 12, highValue: 32, highValueThresholdUsd: 10_000 },
+    carriesMemo: false,
     reorgs: 'possible',
     settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
   },
@@ -133,6 +145,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeDecimals: 18,
     // Polygon PoS has historically produced deep reorgs; stay conservative.
     confirmations: { standard: 64, highValue: 128, highValueThresholdUsd: 10_000 },
+    carriesMemo: false,
     reorgs: 'possible',
     settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
   },
@@ -145,6 +158,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeSymbol: 'BNB',
     nativeDecimals: 18,
     confirmations: { standard: 15, highValue: 30, highValueThresholdUsd: 10_000 },
+    carriesMemo: false,
     reorgs: 'possible',
     settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
   },
@@ -165,6 +179,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeDecimals: 6,
     // TRON blocks are irreversible after 19 confirmations (2/3+1 of 27 SRs).
     confirmations: { standard: 19, highValue: 19, highValueThresholdUsd: 10_000 },
+    carriesMemo: false,
     reorgs: 'possible',
     // Nothing to settle: the payer's transfer already reached the merchant's own wallet.
     settlement: { kind: 'direct' },
@@ -197,6 +212,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
      * Thirty-two slots is about thirteen seconds and is roughly what finality costs anyway.
      */
     confirmations: { standard: 32, highValue: 32, highValueThresholdUsd: 10_000 },
+    carriesMemo: false,
     reorgs: 'none',
     // Nothing to settle: the payer's transfer already reached the merchant's own wallet.
     settlement: { kind: 'direct' },
@@ -205,15 +221,33 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
   ton: {
     chain: 'ton',
     displayName: 'TON',
-    // TON carries a native comment field, so one address serves every invoice
-    // and the payer's transfer already lands in the merchant's wallet.
-    addressModel: 'shared-memo',
+    /**
+     * Pooled, and the comment is what tells invoices apart.
+     *
+     * `shared-memo` was the model, and it meant something different: one wallet per
+     * deployment, ours, with a memo per invoice. That is custodial, and it is not what this
+     * product is. The wallet is the merchant's own, from their pool, exactly as on TRON and
+     * Solana — so `pooled` is the honest model — and the comment names the invoice on it,
+     * which is better than any amount-matching rule because the payer states it rather than
+     * us inferring it. The amount rules remain as the fallback for a payer who omits it.
+     */
+    addressModel: 'pooled',
     // Base64url, and case-significant like the base58 chains.
     addressCase: 'sensitive',
     nativeSymbol: 'TON',
     nativeDecimals: 9,
-    confirmations: { standard: 1, highValue: 3, highValueThresholdUsd: 10_000 },
-    reorgs: 'possible',
+    /**
+     * One, at any value, because depth is not what makes a TON payment final.
+     *
+     * TON commits blocks by BFT agreement and a committed block is not taken back, so there
+     * is no deeper count to wait for. It was three above ten thousand dollars, which on a
+     * chain that reports one confirmation would have deferred every large payment forever:
+     * the sink would keep asking for a depth the chain never reports.
+     */
+    confirmations: { standard: 1, highValue: 1, highValueThresholdUsd: 10_000 },
+    carriesMemo: true,
+    reorgs: 'none',
+    // Nothing to settle: the payer's transfer already reached the merchant's own wallet.
     settlement: { kind: 'direct' },
   },
 };

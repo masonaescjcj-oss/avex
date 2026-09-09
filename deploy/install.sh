@@ -90,7 +90,7 @@ app_url='' tron_rpc=''
 # never assigned. `--selftest` fills in only a couple of these and was failing on the first
 # one it had not — an unbound variable rather than a chain skipped, which is what the blank
 # answer to each prompt is supposed to mean.
-bsc_rpc='' polygon_rpc='' ethereum_rpc='' solana_rpc=''
+bsc_rpc='' polygon_rpc='' ethereum_rpc='' solana_rpc='' ton_api='' ton_key=''
 
 # ── output ───────────────────────────────────────────────────────────────────
 
@@ -546,6 +546,12 @@ PROMPT
   # is rate-limited to a level a busy poll trips over, and a chain that is on and intermittently
   # failing is worse than one that is off until an operator names an endpoint they trust.
   ask "Solana RPC endpoint (blank to skip)" solana_rpc ""
+  # Not a node: what has to be known on TON is what a wallet was paid and with what comment,
+  # and a jetton transfer reaches a contract derived from the wallet rather than the wallet.
+  # toncenter's v3 index has already done both. Without a key it allows about a request a
+  # second, which a poll over several wallets exceeds — so the key is asked for beside it.
+  ask "TON indexer (blank to skip; toncenter is https://toncenter.com/api/v3)" ton_api ""
+  [[ $ton_api ]] && ask "toncenter API key (blank for the anonymous rate limit)" ton_key ""
 }
 
 # Single-quote a value for the environment file.
@@ -626,6 +632,10 @@ EVM_RPC_URLS=$(quote_env "$rpc_urls")
 
 # Solana does not, which is why it does not. Blank leaves the chain off.
 SOLANA_RPC_URLS=$(quote_env "$solana_rpc")
+
+# TON is answered by an indexer rather than a node. Blank leaves the chain off.
+TON_API_URL=$(quote_env "$ton_api")
+$(optional_line TON_API_KEY "$ton_key")
 
 # Generated here, once. A memo is visible to anyone watching the shared wallet,
 # so a guessable one would let a stranger claim someone else's payment.
@@ -1088,7 +1098,7 @@ selftest() {
   # Every key the API refuses to boot without, plus the two whose absence is silent.
   for check in NODE_ENV PORT HOST DATABASE_URL DIRECT_DATABASE_URL APP_URL SMTP_URL MAIL_FROM \
                OPERATOR_EMAIL CHECKOUT_ORIGINS DASHBOARD_ORIGINS EVM_RPC_URLS \
-               SOLANA_RPC_URLS MEMO_SECRET; do
+               SOLANA_RPC_URLS TON_API_URL MEMO_SECRET; do
     if grep -q "^$check='" "$ENV_FILE"; then
       line "$check" 'present'
     else

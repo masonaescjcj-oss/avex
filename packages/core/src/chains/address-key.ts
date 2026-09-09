@@ -1,5 +1,6 @@
 import type { ChainId } from '../types.js';
 import { chainConfig } from './registry.js';
+import { isTonAddress, normalizeTonAddress } from './ton/address.js';
 import { isTronAddress, normalizeTronAddress } from './tron/address.js';
 
 /**
@@ -47,6 +48,16 @@ export function addressKey(chain: ChainId, address: string): string {
    * is the right answer arrived at without an exception.
    */
   if (chain === 'tron' && isTronAddress(trimmed)) return normalizeTronAddress(trimmed);
+
+  /**
+   * TON, where the same wallet has four spellings and two of them are common.
+   *
+   * Raw (`0:hex`) is what the indexer reports; friendly is what a merchant pastes, and its
+   * flags byte says whether a failed transfer bounces — `EQ…` or `UQ…` — without changing
+   * which account it is. Compared literally, a merchant who registered one form and a
+   * payment reported against the other are two wallets, and every payment goes unmatched.
+   */
+  if (chain === 'ton' && isTonAddress(trimmed)) return normalizeTonAddress(trimmed);
 
   return trimmed;
 }

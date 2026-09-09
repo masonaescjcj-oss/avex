@@ -8,6 +8,8 @@ import {
   PriceService,
   SolanaAdapter,
   SolanaRpc,
+  TonAdapter,
+  TonApi,
   TronAdapter,
   Watcher,
   WebhookDispatcher,
@@ -279,75 +281,90 @@ async function main(): Promise<void> {
      */
     const forwarders = hasForwarders(env, chain);
     /**
-     * Solana is pooled like TRON and shares nothing else with it.
+     * One adapter and one block source, chosen by which protocol the chain speaks.
      *
-     * Its own RPC client, which is also the watcher's block source: the `eth_*` caller the
-     * other chains use would ask a Solana node questions it has no answer for. Branching on
-     * the chain here rather than on the address model because the model says how invoices
-     * are addressed, and this is about which protocol the node speaks — the one thing about
-     * Solana that a table of address models cannot express.
+     * Not by address model: the model says how an invoice is addressed, and three chains here
+     * are `pooled` while speaking three different protocols. TRON answers `eth_getLogs` on a
+     * TRON node, Solana answers a vocabulary of its own, and TON is not a node at all but an
+     * indexer — because what has to be known there is what a wallet was paid and with what
+     * comment, which a node cannot say. Each brings its own block source for the same reason:
+     * the `eth_*` caller would ask the other two questions they have no answer for.
      */
-    const solanaRpc = chain === 'solana' ? new SolanaRpc({ url: urls[0]! }) : null;
-    const blocks: BlockSource = solanaRpc ?? new JsonRpcCaller({ [chain]: urls }, chain);
-    const adapter = solanaRpc
-      ? new SolanaAdapter(
-          {
-            acceptedAssets: accepted,
-            confirmationLag,
-            warn: (message) => log('watcher', { chain, detail: message }),
-          },
-          solanaRpc,
-          new DatabaseAddressBook(db, chain),
-          { nativePriceUsd: () => prices.nativePriceUsd(chain) },
-        )
-      : pooled
-      ? new TronAdapter(
-          {
-            chain,
-            rpcUrl: urls[0]!,
-            acceptedAssets: accepted,
-            pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
-            confirmationLag,
-          },
-          /**
-           * A real price, and on this chain it is only ever read for a log line.
-           *
-           * TRON settles directly — the payer's transfer reaches the merchant's own wallet — so
-           * `probeGas` here reports no cost to estimate. The TRX figure is still the real one
-           * because a snapshot that lies about a price is a snapshot somebody will eventually
-           * compare against another chain's.
-           */
-          { nativePriceUsd: () => prices.nativePriceUsd(chain) },
-          new DatabaseAddressBook(db, chain),
-        )
-      : new EvmAdapter(
-          {
-            chain,
-            rpcUrl: urls[0]!,
-            ...(forwarders
-              ? {
-                  create2: {
-                    factory: env.FORWARDER_FACTORIES[chain]!,
-                    implementation: env.FORWARDER_IMPLEMENTATIONS[chain]!,
-                  },
-                }
-              : {}),
-            acceptedAssets: accepted,
-            pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
-            confirmationLag,
-          },
-          /**
-           * Native price, for the gas model. Not consulted during a poll.
-           *
-           * It was `async () => 0`, which was harmless only while nothing settled. Now that the
-           * settlement queue runs in this process, that zero was the whole cost model: a
-           * settlement priced at $0 is always below `deferAboveUsd`, so the queue would have
-           * broadcast every batch the moment it was queued — at any gas price, during any spike,
-           * with the deferral logic present and inert.
-           */
-          { nativePriceUsd: (target: ChainId) => prices.nativePriceUsd(target) },
-          new DatabaseAddressBook(db, chain),
-        );
+    const addressBook = new DatabaseAddressBook(db, chain);
+    const nativePrice = { nativePriceUsd: (): Promise<number> => prices.nativePriceUsd(chain) };
+    const warn = (message: string): void => log('watcher', { chain, detail: message });
+
+    let adapter: ChainAdapter;
+    let blocks: BlockSource;
+
+    if (chain === 'solana') {
+      const rpc = new SolanaRpc({ url: urls[0]! });
+      blocks = rpc;
+      adapter = new SolanaAdapter(
+        { acceptedAssets: accepted, confirmationLag, warn },
+        rpc,
+        addressBook,
+        nativePrice,
+      );
+    } else if (chain === 'ton') {
+      const api = new TonApi({
+        apiUrl: urls[0]!,
+        ...(env.TON_API_KEY === undefined ? {} : { apiKey: env.TON_API_KEY }),
+      });
+      blocks = api;
+      adapter = new TonAdapter({ acceptedAssets: accepted, warn }, api, addressBook, nativePrice);
+    } else if (pooled) {
+      blocks = new JsonRpcCaller({ [chain]: urls }, chain);
+      adapter = new TronAdapter(
+        {
+          chain,
+          rpcUrl: urls[0]!,
+          acceptedAssets: accepted,
+          pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
+          confirmationLag,
+        },
+        /**
+         * A real price, and on this chain it is only ever read for a log line.
+         *
+         * TRON settles directly — the payer's transfer reaches the merchant's own wallet — so
+         * `probeGas` here reports no cost to estimate. The TRX figure is still the real one
+         * because a snapshot that lies about a price is a snapshot somebody will eventually
+         * compare against another chain's.
+         */
+        nativePrice,
+        addressBook,
+      );
+    } else {
+      blocks = new JsonRpcCaller({ [chain]: urls }, chain);
+      adapter = new EvmAdapter(
+        {
+          chain,
+          rpcUrl: urls[0]!,
+          ...(forwarders
+            ? {
+                create2: {
+                  factory: env.FORWARDER_FACTORIES[chain]!,
+                  implementation: env.FORWARDER_IMPLEMENTATIONS[chain]!,
+                },
+              }
+            : {}),
+          acceptedAssets: accepted,
+          pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
+          confirmationLag,
+        },
+        /**
+         * Native price, for the gas model. Not consulted during a poll.
+         *
+         * It was `async () => 0`, which was harmless only while nothing settled. Now that the
+         * settlement queue runs in this process, that zero was the whole cost model: a
+         * settlement priced at $0 is always below `deferAboveUsd`, so the queue would have
+         * broadcast every batch the moment it was queued — at any gas price, during any spike,
+         * with the deferral logic present and inert.
+         */
+        { nativePriceUsd: (target: ChainId) => prices.nativePriceUsd(target) },
+        addressBook,
+      );
+    }
 
     /**
      * Reorg depth from the chain's own configuration, not a constant.

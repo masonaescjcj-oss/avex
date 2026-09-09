@@ -121,6 +121,38 @@ a payer's wallet computes the associated account from the address it was given a
 know about any other. It matters only for a merchant whose own wallet keeps that token
 somewhere else, which normal wallets do not.
 
+## TON is pooled too, and the payer names the invoice
+
+Same model again — the merchant's own wallet, from their pool — with one thing no other
+chain here has: a transfer carries a text comment, and every wallet and exchange has a field
+for it. So the invoice is identified exactly rather than inferred from its amount, and the
+amount rules are the fallback for a payer who leaves the comment out.
+
+TON's endpoint is an indexer, not a node, and it has its own setting:
+
+```
+TON_API_URL=https://toncenter.com/api/v3
+TON_API_KEY=…            # optional, and you want one
+```
+
+It cannot be a node, and that is not a preference. A jetton transfer — USDT on TON is a
+jetton — does not arrive at the merchant's address at all: it arrives at that wallet's
+*jetton wallet*, a contract whose address is a hash of its own code and data, and the comment
+is inside a payload cell. Reading either from a node means building TL-B cells. toncenter's
+v3 index has done both already: one request per wallet gives the amount, the jetton, the
+sender and the comment decoded.
+
+Without a key, toncenter allows roughly one request a second, and a poll over several
+wallets exceeds that — the watcher reports the 429 and backs off, so the chain works and
+lags. Get a key.
+
+Two things about TON that were wrong before and are worth knowing if you read the old code:
+the address must be given to the index in its **friendly** form (`UQ…`/`EQ…`), because the
+raw `0:hex` form it answers with returns an empty list and a 200 rather than an error; and
+the jetton master comes back raw and upper case while the registry holds it friendly, so both
+sides go through the address codec before anything is compared. Each of those, got wrong,
+looks exactly like a chain nobody is paying on.
+
 TRON needs no forwarder factory, and `watchableChains` reflects that: an EVM chain without one
 is skipped, because the addresses it would look for are hashes over a factory that does not
 exist; a pooled chain is watched on its RPC endpoint alone.
@@ -271,8 +303,8 @@ npm run -w @avex/api watch   # the chain watcher, one per deployment
 ```
 
 The watcher needs `DATABASE_URL` and an endpoint for at least one chain — `EVM_RPC_URLS`,
-`SOLANA_RPC_URLS`, or both — plus `FORWARDER_FACTORIES` for any chain it should also settle
-on, and nothing else. It serves no HTTP: a payment it credits reaches a merchant through the webhook rows it
+`SOLANA_RPC_URLS`, `TON_API_URL`, or any of them — plus `FORWARDER_FACTORIES` for any chain
+it should also settle on, and nothing else. It serves no HTTP: a payment it credits reaches a merchant through the webhook rows it
 writes, which the API's own scheduler drains.
 
 Both may run alongside the Edge Function against the same database. The locks make that

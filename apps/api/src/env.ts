@@ -312,6 +312,26 @@ const schema = z.object({
         .filter(Boolean),
     ),
 
+  /**
+   * TON's indexer, which is not a node and cannot be one.
+   *
+   * What this system needs to know on TON — what was paid into a wallet and with what comment
+   * — is not a question a node answers: a jetton transfer arrives at a contract derived from
+   * the wallet and the jetton, and the comment is inside a payload cell. toncenter's v3 index
+   * has already done both. `https://toncenter.com/api/v3` is the public one.
+   *
+   * No default, for the same reason as Solana: the anonymous rate limit is about one request
+   * a second, and a chain that is quietly on and quietly failing is worse than one that is
+   * off until an operator names an endpoint.
+   */
+  TON_API_URL: z
+    .string()
+    .default('')
+    .transform((value) => value.trim().replace(/\/$/, '')),
+
+  /** Raises toncenter's rate limit well above the anonymous one. */
+  TON_API_KEY: z.string().min(1).optional(),
+
   EVM_RPC_URLS: z
     .string()
     .default('bsc=https://bsc-rpc.publicnode.com')

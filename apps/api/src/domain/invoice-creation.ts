@@ -441,10 +441,19 @@ export class InvoiceCreationService {
       target = { address: `${TELEGRAM_RAIL}:${invoiceId}`, memo: undefined };
     } else if (pooled) {
       /**
-       * Filled in by the allocation below. Not `undefined` here so the row builder can be one
-       * function rather than two: the alternative was duplicating a twenty-field insert.
+       * The address is filled in by the allocation below; the memo is not, because it does
+       * not depend on it.
+       *
+       * TON is why this is not simply `undefined`. Its wallet comes from the pool like any
+       * other pooled chain, and its comment names the invoice on that wallet — which is a
+       * better identity than the amount, since the payer states it rather than us inferring
+       * it. Generated here so it is written with the row, and read back by the payment sink,
+       * which matches a memo before it looks at any address.
        */
-      target = { address: '', memo: undefined };
+      target = {
+        address: '',
+        memo: this.deriver.invoiceMemo(config.asset.chain as ChainId, invoiceId),
+      };
     } else {
       try {
         target = this.deriver.derive({

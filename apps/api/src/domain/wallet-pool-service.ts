@@ -1,4 +1,4 @@
-import { SUPPORTED_CHAINS, addressKey, isSolanaAddress, isTronAddress } from '@avex/core';
+import { SUPPORTED_CHAINS, addressKey, isSolanaAddress, isTonAddress, isTronAddress } from '@avex/core';
 import type { ChainId } from '@avex/core';
 import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 
@@ -466,6 +466,12 @@ export class WalletPoolChanges {
         throw new WalletPoolChangeError('invalid_address', error.message);
       }
       throw error;
+    }
+    if (input.chain === 'ton' && !isTonAddress(input.address)) {
+      throw new WalletPoolChangeError(
+        'invalid_address',
+        'That is not a valid TON address: the checksum does not match, or it is a testnet one.',
+      );
     }
     if (input.chain === 'solana' && !isSolanaAddress(input.address)) {
       /**

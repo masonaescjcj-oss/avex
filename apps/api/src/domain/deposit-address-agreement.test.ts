@@ -61,6 +61,8 @@ const BASE: Env = {
   DASHBOARD_ORIGINS: [],
   EVM_RPC_URLS: {},
   SOLANA_RPC_URLS: [],
+  TON_API_URL: '',
+  TON_API_KEY: undefined,
 } as Env;
 
 const env = (overrides: Partial<Env>): Env => ({ ...BASE, ...overrides });
@@ -69,14 +71,16 @@ const env = (overrides: Partial<Env>): Env => ({ ...BASE, ...overrides });
  * One chain's endpoint, in the variable that chain's endpoint belongs in.
  *
  * Which is the fact this file has to encode rather than assume: `EVM_RPC_URLS` for everything
- * that speaks the Ethereum JSON-RPC, TRON included, and `SOLANA_RPC_URLS` for Solana, which
- * speaks its own. A chain added later with no route into either variable has no endpoint, so
+ * that speaks the Ethereum JSON-RPC, TRON included, `SOLANA_RPC_URLS` for Solana, which speaks
+ * its own, and `TON_API_URL` for TON, which is answered by an indexer rather than a node. A chain added later with no route into either variable has no endpoint, so
  * the tests below fail rather than quietly passing over it.
  */
 const endpointFor = (chain: string): Partial<Env> =>
   chain === 'solana'
     ? { SOLANA_RPC_URLS: ['https://solana.example'] }
-    : { EVM_RPC_URLS: { [chain]: ['https://rpc.example'] } };
+    : chain === 'ton'
+      ? { TON_API_URL: 'https://toncenter.example/api/v3' }
+      : { EVM_RPC_URLS: { [chain]: ['https://rpc.example'] } };
 
 /** What a merchant can be offered, decided exactly as `compose` decides it. */
 const offered = (source: Env): readonly string[] =>
@@ -93,6 +97,7 @@ describe('the invoice side and the watcher agree', () => {
       EVM_RPC_URLS: Object.fromEntries(
         SUPPORTED_CHAINS.map((chain) => [chain, ['https://rpc.example']]),
       ),
+      TON_API_URL: 'https://toncenter.example/api/v3',
       SOLANA_RPC_URLS: ['https://solana.example'],
       FORWARDER_FACTORIES: Object.fromEntries(
         SUPPORTED_CHAINS.map((chain) => [chain, '0x' + '11'.repeat(20)]),
@@ -115,19 +120,42 @@ describe('the invoice side and the watcher agree', () => {
     );
   });
 
-  test('a configured TON wallet does not put TON on the checkout', () => {
+  test('TON is offered and watched once it has an indexer, and is pooled', () => {
     /**
-     * The specific case, named, so that wiring a TON adapter later breaks this test and not the
-     * gateway. When `TonAdapter` is real, `'shared-memo'` joins `CREDITABLE_ADDRESS_MODELS` and
-     * this assertion is the one to invert — deliberately, having built the thing.
+     * This assertion used to be its own inverse: TON was excluded from both sides because no
+     * adapter was ever constructed for it, and the test said so with a note that building the
+     * thing was what would invert it. Built, so inverted.
+     *
+     * Pooled rather than shared: the wallet is the merchant's own, from their pool, and the
+     * comment names the invoice on it. The old model put one wallet of *ours* in front of
+     * every payer, which is custodial and is not this product.
      */
-    const withTon = env({
-      EVM_RPC_URLS: { ton: ['https://toncenter.example'] },
-      SHARED_DEPOSIT_WALLETS: { ton: 'UQexample' },
-    });
+    const withTon = env({ TON_API_URL: 'https://toncenter.example/api/v3' });
 
-    assert.equal(offered(withTon).includes('ton'), false);
-    assert.equal(watchableChains(withTon).includes('ton'), false);
+    assert.equal(offered(withTon).includes('ton'), true);
+    assert.equal(watchableChains(withTon).includes('ton'), true);
+    assert.ok(depositAddressConfig(withTon).pooled?.includes('ton'));
+    assert.equal(chainConfig('ton').addressModel, 'pooled');
+  });
+
+  test('TON without an indexer is offered nowhere, wallet or not', () => {
+    // The endpoint is the floor under every chain: a payment nobody polls for is never credited.
+    const silent = env({ SHARED_DEPOSIT_WALLETS: { ton: 'UQexample' } });
+    assert.equal(offered(silent).includes('ton'), false);
+    assert.equal(watchableChains(silent).includes('ton'), false);
+  });
+
+  test('no chain uses the shared-wallet model any more, so nothing is configured into it', () => {
+    /**
+     * TON was the only `shared-memo` chain and is now pooled, so `shared` is empty whatever is
+     * configured. The branch that fills it is kept for a chain that may need it, and this is
+     * the assertion that says it is currently unreachable rather than silently broken.
+     */
+    const everything = env({
+      TON_API_URL: 'https://toncenter.example/api/v3',
+      SHARED_DEPOSIT_WALLETS: Object.fromEntries(SUPPORTED_CHAINS.map((chain) => [chain, 'UQexample'])),
+    });
+    assert.deepEqual(depositAddressConfig(everything).shared, {});
   });
 
   test('an EVM chain missing either contract half has no forwarders, and is still offered', () => {

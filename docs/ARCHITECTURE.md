@@ -70,13 +70,20 @@ Hence:
 
 | Model | Chains | Reason |
 |---|---|---|
-| `shared-memo` | TON | Native comment field. Zero settlement cost — the payer's own transfer reaches the merchant. Strictly better where available. |
 | `unique` | Ethereum, Polygon, BNB | Reliable matching. Free to derive. Settlement cost controlled by deferral and batching. |
-| `pooled` | TRON, Solana | The merchant's own wallets take the payment and the exact amount names the invoice. Nothing to derive, nothing to sweep, no key held. |
+| `pooled` | TRON, Solana, TON | The merchant's own wallets take the payment. Nothing to derive, nothing to sweep, no key held. |
 
-On TON the tradeoff is that correctness depends on the payer including the memo.
-An unmatched transfer is not lost, but it must go to operator reconciliation and
-never be credited by guesswork.
+`shared-memo` was a third model — one wallet per deployment, ours, with a memo per
+invoice — and TON was its only chain. It is gone: that wallet would have been ours,
+which is custodial, and the whole product is that it is not. TON uses the merchant's
+own wallet like every other pooled chain.
+
+What TON adds on top is that the payer can be asked for a **comment**, which names
+the invoice exactly instead of it being inferred. So on TON the comment is the
+identity and the disambiguated amount is the fallback; everywhere else the amount is
+all there is. A transfer that arrives with no comment is still credited by the
+amount rules — it is real money that arrived — and only an amount that names nothing
+on a wallet with several invoices open goes to reconciliation.
 
 ### 3a. `pooled`: the merchant's own wallets, identified by amount
 
