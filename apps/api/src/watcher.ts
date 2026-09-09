@@ -322,6 +322,7 @@ async function main(): Promise<void> {
           acceptedAssets: accepted,
           pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
           confirmationLag,
+          warn,
         },
         /**
          * A real price, and on this chain it is only ever read for a log line.
@@ -351,6 +352,7 @@ async function main(): Promise<void> {
           acceptedAssets: accepted,
           pollRange: DEFAULT_WATCHER.maxBlocksPerPoll,
           confirmationLag,
+          warn,
         },
         /**
          * Native price, for the gas model. Not consulted during a poll.

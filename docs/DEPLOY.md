@@ -121,6 +121,53 @@ a payer's wallet computes the associated account from the address it was given a
 know about any other. It matters only for a merchant whose own wallet keeps that token
 somewhere else, which normal wallets do not.
 
+## The chain's own coin: BNB, ETH, POL, TRX, SOL, TON
+
+A payment in a chain's own coin emits no event. Every other kind this system detects is an
+ERC-20 style `Transfer` log, and a log can be filtered — one `eth_getLogs` covers five hundred
+blocks and every address at once. A transfer of BNB is a field on a transaction, so seeing it
+means reading transactions, and a block of BNB Chain is a quarter of a megabyte.
+
+So both EVM and TRON adapters skipped native assets, with a comment saying it needed "trace or
+balance polling". That was true and it was also a hole: BNB, ETH, POL and TRX are approved and
+listed, so a merchant could enable BNB, a customer could pay in BNB, the money would arrive in
+the merchant's wallet, and nothing would ever notice. The payer's transfer confirmed and the
+invoice stayed unpaid.
+
+The way it works now is a cheap question every poll and an expensive one only when the cheap
+one says yes. A merchant's wallet is quiet: its balance changes when somebody pays and at no
+other time. So each poll reads the balance of each watched wallet — one small call per wallet,
+batched into a single request — and only when one has gone *up* does it read that poll's blocks
+to find the transaction that raised it.
+
+Three consequences worth knowing:
+
+- **It costs nothing when no native coin is enabled.** The pass is not built at all unless the
+  chain's own coin is one of the merchant's accepted assets.
+- **A native invoice needs a wallet of the merchant's own.** The balance probe works for a
+  handful of wallets, not for the thousands of per-invoice forwarder addresses an EVM chain
+  derives. So the checkout marks the coin unavailable without one, and invoice creation refuses
+  it, rather than issuing something unpayable.
+- **A payment landing during a restart is missed.** The baseline is held in memory, because
+  fetching it means `eth_getBalance` at an old block and public nodes answer that with "archive
+  requests require a personal token". The first poll after a start records the balance, so a
+  payment already in it is not seen arriving. `--credit-tx` credits it by hand.
+
+Two things a public endpoint does that this had to be built around, both found by running it
+against BNB Chain rather than against a fixture. publicnode refuses
+`eth_getTransactionReceipt` outright with HTTP 403, for a transaction three blocks old, batched
+or not — so the balance itself is the confirmation: when the transactions addressed to a wallet
+add up to exactly what it gained, all of them moved their money and nothing else did, which is
+a stronger statement than a receipt's status flag. And where the sums disagree, nothing is
+credited and the difference is reported, because the difference could be a reverted transfer,
+gas the wallet spent, or a contract's internal call, and none of those can be told apart from
+outside.
+
+What it cannot see is a transfer made by a contract rather than by a transaction — an exchange
+paying out through a batching contract. The value moves in an internal call that appears in no
+transaction's `to` and in no log; only a tracing API would show it. When a balance rises with no
+transaction to account for it, the watcher says so, and `--credit-tx` is the remedy.
+
 ## TON is pooled too, and the payer names the invoice
 
 Same model again — the merchant's own wallet, from their pool — with one thing no other

@@ -769,6 +769,13 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
   <section class="panel" id="wallets">
     <div class="panel-head"><h2>👛 Your own wallets, on any network</h2></div>
     <div class="body">
+      <p class="note">
+        <strong>A payment in a network's own coin — BNB, ETH, POL, TRX, SOL, TON — needs one of
+        these.</strong> Those transfers emit no event, so they are found by watching the
+        balance of wallets we know about, which works for yours and not for the per-invoice
+        addresses we derive. Without a wallet on the network the coin is offered as
+        unavailable and an invoice in it is refused; tokens are unaffected.
+      </p>
       <p>
         Register one to ten of <em>your own</em> addresses on a network and we hand them out.
         The payer's transfer goes straight into your wallet: no contract of ours in the path,

@@ -3,6 +3,12 @@ export * from './types.js';
 export * from './chains/ChainAdapter.js';
 export * from './chains/registry.js';
 export * from './chains/address-key.js';
+export { NATIVE_TRANSFER_INDEX, NativeTransferScanner } from './chains/native-transfers.js';
+export type {
+  NativeRpcConfig,
+  NativeScanRequest,
+  NativeScannerConfig,
+} from './chains/native-transfers.js';
 export {
   base58Decode,
   base58Encode,

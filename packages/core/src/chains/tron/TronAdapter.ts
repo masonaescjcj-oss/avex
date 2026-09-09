@@ -11,6 +11,7 @@ import type {
   SettlementResult,
 } from '../ChainAdapter.js';
 import { isTronAddress, normalizeTronAddress, tronAddressToEvmHex } from './address.js';
+import { NativeTransferScanner } from '../native-transfers.js';
 import {
   RECIPIENTS_PER_FILTER,
   addressTopicOrNull,
@@ -73,6 +74,13 @@ export interface TronAdapterConfig {
    * it. Zero scans to the head. Set from the chain's standard confirmation count.
    */
   readonly confirmationLag?: number | undefined;
+  /**
+   * Somewhere to say what the native-coin pass saw and could not attribute.
+   *
+   * A TRX balance that rose with no transaction to explain it is money in the merchant's
+   * wallet that only a person can place, and it must not be silent.
+   */
+  readonly warn?: ((message: string) => void) | undefined;
 }
 
 /** Where a transfer's recipient is looked up, to decide whether it is ours. */
@@ -122,6 +130,15 @@ export class TronAdapter implements ChainAdapter {
   /** Successful polls since the range was last narrowed; the range grows back only after a run of them. */
   private pollsSinceNarrow = 0;
 
+  /**
+   * Finds TRX payments, which emit no log any more than BNB does.
+   *
+   * TRON's Ethereum-compatible RPC reports a `TransferContract` as a transaction with a
+   * value, so the same balance-then-blocks pass the EVM chains use works here unchanged —
+   * which is the second time that compatibility has paid for itself.
+   */
+  private readonly native: NativeTransferScanner | null;
+
   constructor(
     private readonly config: TronAdapterConfig,
     private readonly oracle: TronPriceOracle,
@@ -129,6 +146,20 @@ export class TronAdapter implements ChainAdapter {
   ) {
     this.rangeCap = config.pollRange;
     this.chain = config.chain;
+    this.native = config.acceptedAssets.some((asset) => asset.kind === 'native')
+      ? new NativeTransferScanner({
+          rpc: { url: config.rpcUrl, chain: config.chain },
+          /**
+           * Base58Check on one side and 20-byte hex on the other, which is the boundary this
+           * whole adapter exists to get right. A row that will not parse is skipped rather
+           * than fatal.
+           */
+          toRpcHex: (stored) =>
+            isTronAddress(stored) ? tronAddressToEvmHex(stored).toLowerCase() : null,
+          toStored: (hex) => normalizeTronAddress(hex),
+          ...(config.warn === undefined ? {} : { warn: config.warn }),
+        })
+      : null;
   }
 
   /**
@@ -176,6 +207,21 @@ export class TronAdapter implements ChainAdapter {
     if (from > safeHead) return { payments: [], cursor: cursor ?? String(safeHead) };
 
     const to = Math.min(safeHead, from + this.rangeCap - 1);
+    const payments: IncomingPayment[] = [];
+
+    /**
+     * TRX first, because the TRC-20 path below returns early in three places and a native
+     * payment must not be skipped by any of them.
+     */
+    const watchedAddresses = await this.addressBook.watched();
+    if (this.native !== null) {
+      const asset = this.config.acceptedAssets.find((candidate) => candidate.kind === 'native');
+      if (asset !== undefined) {
+        payments.push(
+          ...(await this.native.scan({ asset, watched: watchedAddresses, from, to, head })),
+        );
+      }
+    }
 
     /**
      * The watched contracts, keyed by the hex form the node will report.
@@ -187,6 +233,7 @@ export class TronAdapter implements ChainAdapter {
      */
     const byContract = new Map<string, Asset>();
     for (const asset of this.config.acceptedAssets) {
+      // Not in this map and not skipped: TRX is found above, by balance and then by blocks.
       if (asset.kind === 'native') continue;
       if (asset.contract === undefined) continue;
       /**
@@ -199,7 +246,7 @@ export class TronAdapter implements ChainAdapter {
       if (!isTronAddress(asset.contract)) continue;
       byContract.set(tronAddressToEvmHex(asset.contract).toLowerCase(), asset);
     }
-    if (byContract.size === 0) return { payments: [], cursor: String(to) };
+    if (byContract.size === 0) return { payments, cursor: String(to) };
 
     /**
      * Our own addresses, as the third topic of `Transfer`, in the hex form a log carries.
@@ -209,12 +256,12 @@ export class TronAdapter implements ChainAdapter {
      * fatal, for the same reason a bad contract is: somebody's typo must not stop the chain.
      */
     const recipients: string[] = [];
-    for (const address of await this.addressBook.watched()) {
+    for (const address of watchedAddresses) {
       if (!isTronAddress(address)) continue;
       const topic = addressTopicOrNull(tronAddressToEvmHex(address));
       if (topic !== null) recipients.push(topic);
     }
-    if (recipients.length === 0) return { payments: [], cursor: String(to) };
+    if (recipients.length === 0) return { payments, cursor: String(to) };
 
     const logs: RpcLog[] = [];
     try {
@@ -263,7 +310,6 @@ export class TronAdapter implements ChainAdapter {
       }
     }
 
-    const payments: IncomingPayment[] = [];
     for (const log of logs) {
       const asset = byContract.get(log.address.toLowerCase());
       // A log from a contract not in the map is dropped rather than attributed to a guess.

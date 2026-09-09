@@ -3,6 +3,7 @@ import { describe, mock, test } from 'node:test';
 
 import type { Asset } from '../../types.js';
 import { REGROW_AFTER_POLLS } from '../transfer-topics.js';
+import { NATIVE_TRANSFER_INDEX } from '../native-transfers.js';
 import { TronAdapter } from './TronAdapter.js';
 import { normalizeTronAddress, tronAddressToEvmHex } from './address.js';
 
@@ -73,11 +74,57 @@ function responder(input: {
   readonly logs: readonly unknown[];
   /** When set, a log query this wide or wider is refused the way a public node refuses it. */
   readonly refuseRangeAbove?: number;
+  /** Balances the native pass will read, keyed by lower-case 20-byte hex. */
+  readonly balances?: Readonly<Record<string, string>>;
+  /** Transactions every scanned block contains, for the native pass to attribute. */
+  readonly blockTransactions?: readonly unknown[];
 }) {
   const calls: { method: string; params: unknown[] }[] = [];
 
   const fetchMock = mock.fn(async (_url: string, init?: { body?: string }) => {
-    const request = JSON.parse(init?.body ?? '{}') as { method: string; params: unknown[] };
+    const parsed = JSON.parse(init?.body ?? '{}') as
+      | { id?: number; method: string; params: unknown[] }
+      | { id?: number; method: string; params: unknown[] }[];
+
+    /**
+     * A batched body, which is an array, because the native-coin pass sends one.
+     *
+     * Answered as an array with matching ids, the way a real node does. Getting this wrong in
+     * the fake would have hidden the fact that the scanner batches at all.
+     */
+    if (Array.isArray(parsed)) {
+      for (const entry of parsed) calls.push({ method: entry.method, params: entry.params });
+      return {
+        ok: true,
+        json: async () =>
+          parsed.map((entry) => ({
+            jsonrpc: '2.0',
+            id: entry.id,
+            result:
+              entry.method === 'eth_getBalance'
+                ? (input.balances?.[(entry.params[0] as string).toLowerCase()] ?? '0x0')
+                : entry.method === 'eth_getBlockByNumber'
+                  ? {
+                      /**
+                       * Only the transactions that really are in this block.
+                       *
+                       * Returning the same list for every height made one payment look like
+                       * five, which is what a fake that ignores its arguments does.
+                       */
+                      transactions: (input.blockTransactions ?? []).filter(
+                        (transaction) =>
+                          (transaction as { blockNumber?: string }).blockNumber ===
+                          (entry.params[0] as string),
+                      ),
+                    }
+                  : entry.method === 'eth_getTransactionReceipt'
+                    ? { status: '0x1' }
+                    : null,
+          })),
+      } as unknown as Response;
+    }
+
+    const request = parsed;
     calls.push({ method: request.method, params: request.params });
 
     if (request.method === 'eth_getLogs' && input.refuseRangeAbove !== undefined) {
@@ -114,11 +161,15 @@ function adapterWith(options: {
   readonly assets?: readonly Asset[];
   readonly confirmationLag?: number;
   readonly refuseRangeAbove?: number;
+  readonly balances?: Readonly<Record<string, string>>;
+  readonly blockTransactions?: readonly unknown[];
 }) {
   const { calls, fetchMock } = responder({
     head: options.head,
     logs: options.logs,
     ...(options.refuseRangeAbove === undefined ? {} : { refuseRangeAbove: options.refuseRangeAbove }),
+    ...(options.balances === undefined ? {} : { balances: options.balances }),
+    ...(options.blockTransactions === undefined ? {} : { blockTransactions: options.blockTransactions }),
   });
   const known = new Set((options.known ?? [WALLET]).map((address) => normalizeTronAddress(address)));
 
@@ -292,20 +343,74 @@ describe('watching TRON', () => {
     assert.equal(filter.address.length, 1);
   });
 
-  test('a catalogue with nothing watchable makes no request and still advances', async (t) => {
+  test('a native-only catalogue asks for balances rather than logs, and still advances', async (t) => {
     /**
-     * A native-only catalogue: an incoming TRX transfer emits no log, so a filter would find
-     * nothing however it were written. The cursor still moves, because those blocks *have* been
-     * examined and rescanning them forever would be a watcher that never catches up.
+     * A TRX transfer emits no log, so a filter would find nothing however it were written.
+     * That used to be the end of the story and the reason TRX payments were never detected;
+     * now the pass asks each wallet's balance instead, and reads blocks only if one moved.
+     * The cursor advances either way, because those blocks *have* been examined.
      */
     const trx: Asset = { symbol: 'TRX', chain: 'tron', decimals: 6, kind: 'native' };
     const { adapter, calls, fetchMock } = adapterWith({ head: 1000, logs: [], assets: [trx] });
     t.mock.method(globalThis, 'fetch', fetchMock);
 
     const result = await adapter.poll('990');
-    assert.deepEqual(result.payments, []);
+    assert.deepEqual(result.payments, [], 'the first poll is the baseline');
     assert.equal(result.cursor, '1000');
-    assert.equal(calls.filter((call) => call.method === 'eth_getLogs').length, 0);
+    assert.equal(calls.filter((call) => call.method === 'eth_getLogs').length, 0, 'no filter to write');
+    assert.equal(calls.filter((call) => call.method === 'eth_getBalance').length, 1, 'one per wallet');
+    // And no blocks read, because nothing has moved: the expensive half stays unpaid for.
+    assert.equal(calls.filter((call) => call.method === 'eth_getBlockByNumber').length, 0);
+  });
+
+  test('a TRX payment is found once a balance moves', async (t) => {
+    /**
+     * The hole this closes. TRX is approved and listed, so a merchant could enable it, a
+     * customer could pay in it, the money would arrive in their wallet and nothing in the
+     * system would ever notice — the payer's transfer confirmed and the invoice stayed
+     * unpaid. Two polls: the first takes the baseline, the second sees the rise and reads the
+     * blocks to attribute it.
+     */
+    const trx: Asset = { symbol: 'TRX', chain: 'tron', decimals: 6, kind: 'native' };
+    const walletHex = tronAddressToEvmHex(WALLET).toLowerCase();
+    const options = {
+      head: 1000,
+      logs: [],
+      assets: [trx],
+      balances: { [walletHex]: '0x0' },
+      blockTransactions: [
+        {
+          hash: `0x${'11'.repeat(32)}`,
+          from: tronAddressToEvmHex(STRANGER),
+          to: walletHex,
+          value: '0x1e8480',
+          blockNumber: '0x3e7',
+        },
+      ],
+    } as const;
+
+    const { adapter, calls, fetchMock } = adapterWith(options);
+    t.mock.method(globalThis, 'fetch', fetchMock);
+
+    // Poll one: the baseline, at zero.
+    assert.deepEqual((await adapter.poll('990')).payments, []);
+
+    // Poll two, with the balance risen. The same responder, a different answer.
+    const risen = responder({ ...options, balances: { [walletHex]: '0x1e8480' } });
+    t.mock.method(globalThis, 'fetch', risen.fetchMock);
+    const result = await adapter.poll('995');
+
+    assert.equal(result.payments.length, 1);
+    const [payment] = result.payments;
+    assert.equal(payment!.to, WALLET, 'Base58Check, as the merchant registered it');
+    assert.equal(payment!.from, STRANGER);
+    assert.equal(payment!.asset.symbol, 'TRX');
+    assert.equal(payment!.amount, 2_000_000n);
+    assert.equal(payment!.blockNumber, 999);
+    assert.equal(payment!.transferIndex, NATIVE_TRANSFER_INDEX, 'clear of any log index');
+    // The receipt was checked, because a reverted transaction moves nothing.
+    assert.ok(risen.calls.some((call) => call.method === 'eth_getTransactionReceipt'));
+    assert.ok(calls.length > 0);
   });
 
   test('a poll range longer than the gap stops at the head', async (t) => {

@@ -1,6 +1,7 @@
 import {
   DEFAULT_BREAKER,
   DEFAULT_DISPATCHER,
+  NATIVE_TRANSFER_INDEX,
   FetchPoster,
   PriceService,
   WebhookDispatcher,
@@ -58,6 +59,21 @@ interface Receipt {
   readonly blockNumber: string;
   readonly status?: string;
   readonly logs: readonly RpcLog[];
+}
+
+/**
+ * The transaction itself, which is the only place a native transfer is recorded.
+ *
+ * A receipt has logs and no value, so a payment in the chain's own coin — BNB, ETH, POL, TRX
+ * — is invisible in it. That is the whole reason the watcher has a separate pass for those,
+ * and the reason this reads both: an operator crediting a payment by hand does not know or
+ * care which kind it was.
+ */
+interface Transaction {
+  readonly to?: string | null;
+  readonly from?: string;
+  readonly value?: string;
+  readonly blockNumber?: string;
 }
 
 async function main(): Promise<void> {
@@ -157,6 +173,57 @@ async function main(): Promise<void> {
     const blockNumber = Number(BigInt(receipt.blockNumber));
 
     let considered = 0;
+
+    /**
+     * The chain's own coin first, from the transaction rather than the receipt.
+     *
+     * This is the case the watcher can genuinely miss — a native payment that landed while
+     * the process was restarting, so the balance baseline it took already included it — and
+     * it is what the warning in `native-transfers.ts` points an operator here for.
+     */
+    const nativeAsset = catalogue.find(
+      (row) => row.chain === chain && row.listed && row.verdict === 'approved' && row.kind === 'native',
+    );
+    if (nativeAsset !== undefined) {
+      const transaction = await rpc<Transaction>('eth_getTransactionByHash', [txHash]);
+      const rawTo = transaction.to ?? null;
+      const value = transaction.value === undefined ? 0n : BigInt(transaction.value);
+      if (rawTo !== null && value > 0n) {
+        const to = isTron ? normalizeTronAddress(rawTo) : toChecksumAddress(rawTo);
+        if ((await addressBook.lookup(to)) !== null) {
+          considered += 1;
+          const from = transaction.from === undefined
+            ? undefined
+            : isTron ? normalizeTronAddress(transaction.from) : toChecksumAddress(transaction.from);
+          const payment: IncomingPayment = {
+            chain,
+            txHash,
+            transferIndex: NATIVE_TRANSFER_INDEX,
+            to,
+            ...(from === undefined ? {} : { from }),
+            asset: {
+              symbol: nativeAsset.symbol,
+              chain,
+              decimals: nativeAsset.decimals,
+              kind: 'native',
+            },
+            amount: value,
+            blockNumber,
+            confirmations: head - blockNumber + 1,
+          };
+          const outcome = await sink.credit(payment);
+          log('replayed', {
+            outcome,
+            to,
+            from,
+            asset: nativeAsset.symbol,
+            amount: `${(Number(value) / 10 ** nativeAsset.decimals).toString()} ${nativeAsset.symbol}`,
+            blockNumber,
+            confirmations: payment.confirmations,
+          });
+        }
+      }
+    }
     for (const entry of receipt.logs) {
       if (entry.topics[0] !== TRANSFER_TOPIC || entry.topics.length < 3) continue;
       const asset = byContract.get(entry.address.toLowerCase());
@@ -196,7 +263,10 @@ async function main(): Promise<void> {
       });
     }
     if (considered === 0) {
-      log('no transfer in this transaction reaches an address we watch', { txHash, logs: receipt.logs.length });
+      log('no transfer in this transaction reaches an address we watch', {
+        txHash,
+        logs: receipt.logs.length,
+      });
     }
   } finally {
     await close();

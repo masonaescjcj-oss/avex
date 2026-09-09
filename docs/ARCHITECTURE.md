@@ -73,6 +73,13 @@ Hence:
 | `unique` | Ethereum, Polygon, BNB | Reliable matching. Free to derive. Settlement cost controlled by deferral and batching. |
 | `pooled` | TRON, Solana, TON | The merchant's own wallets take the payment. Nothing to derive, nothing to sweep, no key held. |
 
+A payment in a chain's own coin is found differently from a token on either model: those
+transfers emit no event at all, so the watcher reads each watched wallet's balance every poll
+and reads blocks only where one moved. That works for a merchant's own wallets and not for
+per-invoice forwarder addresses, so a native invoice is only issued against a wallet — the
+checkout marks the coin unavailable without one and invoice creation refuses it. See
+`chains/native-transfers.ts`.
+
 `shared-memo` was a third model — one wallet per deployment, ours, with a memo per
 invoice — and TON was its only chain. It is gone: that wallet would have been ours,
 which is custodial, and the whole product is that it is not. TON uses the merchant's

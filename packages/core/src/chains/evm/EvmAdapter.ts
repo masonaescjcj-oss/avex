@@ -17,6 +17,7 @@ import type {
   SettlementResult,
 } from '../ChainAdapter.js';
 import { chainConfig } from '../registry.js';
+import { NativeTransferScanner } from '../native-transfers.js';
 import {
   RECIPIENTS_PER_FILTER,
   addressTopicOrNull,
@@ -95,6 +96,14 @@ export interface EvmAdapterConfig {
    * it. Zero scans to the head. Set from the chain's standard confirmation count.
    */
   readonly confirmationLag?: number | undefined;
+  /**
+   * Somewhere to say what the native-coin pass saw and could not attribute.
+   *
+   * The token path never needs this — a log either matches an invoice or does not — but a
+   * balance that rose with no transaction to explain it is money in the merchant's wallet
+   * that only a person can place, and it must not be silent.
+   */
+  readonly warn?: ((message: string) => void) | undefined;
 }
 
 const TRANSFER_TOPIC = toHex(
@@ -139,6 +148,12 @@ export class EvmAdapter implements ChainAdapter {
   /** Successful polls since the range was last narrowed; the range grows back only after a run of them. */
   private pollsSinceNarrow = 0;
 
+  /**
+   * Finds payments in the chain's own coin, which emit no log. Built only when one is
+   * accepted, so a merchant taking nothing but stablecoins pays none of its cost.
+   */
+  private readonly native: NativeTransferScanner | null;
+
   constructor(
     private readonly config: EvmAdapterConfig,
     private readonly oracle: PriceOracle,
@@ -146,6 +161,23 @@ export class EvmAdapter implements ChainAdapter {
   ) {
     this.rangeCap = config.pollRange;
     this.chain = config.chain;
+    /**
+     * Only when the chain's own coin is one of the accepted assets.
+     *
+     * A merchant taking nothing but stablecoins pays none of its cost, which is the point:
+     * the cheap half of the native pass is a balance call per wallet per poll, and there is
+     * no reason to make it when nothing could be paid in.
+     */
+    this.native = config.acceptedAssets.some((asset) => asset.kind === 'native')
+      ? new NativeTransferScanner({
+          rpc: { url: config.rpcUrl, chain: config.chain },
+          // Hex on both sides here; only the case differs, and EIP-55 is what is stored.
+          toRpcHex: (stored) =>
+            /^0x[0-9a-fA-F]{40}$/.test(stored.trim()) ? stored.trim().toLowerCase() : null,
+          toStored: (hex) => toChecksumAddress(hex),
+          ...(config.warn === undefined ? {} : { warn: config.warn }),
+        })
+      : null;
   }
 
   async deriveDepositTarget(input: DeriveInput): Promise<DepositTarget> {
@@ -197,6 +229,20 @@ export class EvmAdapter implements ChainAdapter {
     const payments: IncomingPayment[] = [];
 
     /**
+     * The chain's own coin first, because the token path below returns early in three places
+     * — no token accepted, no address watched, nothing found — and a native payment must not
+     * be skipped by any of them. It has its own bound and its own gap reporting, so it never
+     * holds the cursor back.
+     */
+    const watched = await this.addressBook.watched();
+    if (this.native !== null) {
+      const asset = this.config.acceptedAssets.find((candidate) => candidate.kind === 'native');
+      if (asset !== undefined) {
+        payments.push(...(await this.native.scan({ asset, watched, from, to, head })));
+      }
+    }
+
+    /**
      * One request for every token, not one request per token.
      *
      * `eth_getLogs` takes an array of addresses, and using it is the difference between a
@@ -205,8 +251,9 @@ export class EvmAdapter implements ChainAdapter {
      * deciding to grow it — and a poll every few seconds multiplied by a few hundred tokens
      * is a rate limit, then a provider ban, then payments going unnoticed.
      *
-     * Native assets are skipped: an incoming native transfer emits no log, so finding one
-     * needs trace or balance polling rather than a filter.
+     * Native assets are not in this map, and are not skipped: an incoming native transfer
+     * emits no log, so no filter can find one. They are handled above, by balance and then
+     * by reading the blocks of a window whose balance moved — see `native-transfers.ts`.
      */
     const byContract = new Map<string, Asset>();
     for (const asset of this.config.acceptedAssets) {
@@ -214,7 +261,7 @@ export class EvmAdapter implements ChainAdapter {
       if (asset.contract === undefined) continue;
       byContract.set(asset.contract.toLowerCase(), asset);
     }
-    if (byContract.size === 0) return { payments: [], cursor: String(to) };
+    if (byContract.size === 0) return { payments, cursor: String(to) };
 
     /**
      * Our own addresses, as the third topic of `Transfer`.
@@ -224,10 +271,10 @@ export class EvmAdapter implements ChainAdapter {
      * filter — which is what this did — requests every transfer of every accepted token on
      * the chain, and BNB Chain answers "limit exceeded" instead of answering.
      */
-    const recipients = (await this.addressBook.watched())
+    const recipients = watched
       .map((address) => addressTopicOrNull(address))
       .filter((topic): topic is string => topic !== null);
-    if (recipients.length === 0) return { payments: [], cursor: String(to) };
+    if (recipients.length === 0) return { payments, cursor: String(to) };
 
     const logs: RpcLog[] = [];
     try {

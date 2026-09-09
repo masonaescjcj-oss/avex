@@ -232,6 +232,28 @@ export class InvoiceCreationService {
           (await this.pool.hasActiveWallet(organizationId, config.asset.chain as ChainId))));
 
     /**
+     * 1b. The chain's own coin is only taken into a wallet of the merchant's own.
+     *
+     * A native transfer emits no event, so the watcher finds one by reading the balance of
+     * every wallet it knows about and then the blocks of a window where a balance moved. That
+     * works for a merchant's handful of wallets. It does not work for the per-invoice
+     * forwarder addresses an EVM chain derives, of which a busy chain has thousands, and
+     * probing thousands of balances every five seconds is not a thing to do.
+     *
+     * So the invoice is refused rather than issued unpayable. The checkout marks the same
+     * case unavailable before a payer can pick it; this is the floor under that, for a caller
+     * coming straight to the API.
+     */
+    if (!pooled && !config.stars && config.asset.kind === 'native') {
+      // The code a missing wallet already has, rather than a new one for integrators to learn.
+      throw new InvoiceCreationError(
+        'no_deposit_wallet',
+        `Paying in ${config.asset.symbol} needs one of your own wallets on ${config.asset.chain}. ` +
+          'Add one under your own wallets, or invoice in a token on this network instead.',
+      );
+    }
+
+    /**
      * 2. Where the money ends up.
      *
      * Captured now, so a later payout-address change cannot retarget an invoice a payer is

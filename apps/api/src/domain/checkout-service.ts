@@ -459,6 +459,21 @@ export class CheckoutService {
       }
 
       /**
+       * The chain's own coin needs a wallet of the merchant's own on that chain.
+       *
+       * A native transfer emits no event, so it is found by watching the balance of each
+       * wallet we know about — which works for a handful of a merchant's wallets and not for
+       * the thousands of per-invoice forwarder addresses a busy chain derives. So a native
+       * invoice is only issued against a wallet, and invoice creation refuses the other case
+       * with the same reasoning. Shown as unavailable rather than hidden, like every reason
+       * in this loop: a currency that silently disappears reads as us not supporting it.
+       */
+      if (rate !== null && entry.kind === 'native' && !this.pooledOn(entry.chain, where)) {
+        rate = null;
+        reason = `Paying in ${entry.symbol} needs a wallet of the merchant's own on this network.`;
+      }
+
+      /**
        * A network too expensive to settle an order this small is shown, and shown as unavailable.
        *
        * Offered rather than hidden, like every other reason in this loop — a network that
@@ -715,6 +730,8 @@ export class CheckoutService {
         symbol: assets.symbol,
         chain: assets.chain,
         decimals: assets.decimals,
+        // Whether it is the chain's own coin, which is watched differently and needs a wallet.
+        kind: assets.kind,
         pricingMode: merchantAssets.pricingMode,
         spreadBps: merchantAssets.spreadBps,
         fixedRateScaled: merchantAssets.fixedRateScaled,
