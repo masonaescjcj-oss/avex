@@ -90,6 +90,24 @@ export interface ChainConfig {
     readonly highValueThresholdUsd: number;
   };
 
+  /**
+   * Whether a block this chain has confirmed can still be taken back.
+   *
+   * `'possible'` on every proof-of-work or proof-of-stake chain whose finality is
+   * probabilistic, which is all of them here bar one: the watcher remembers block hashes,
+   * compares them every pass, and rewinds when they disagree. `'none'` where finality is a
+   * property of the consensus rather than of depth — Solana's `finalized` commitment means
+   * rooted by a supermajority of stake, and a rooted slot is never removed.
+   *
+   * It is a registry fact and not a watcher setting because the watcher would otherwise have
+   * to name the chain to know it, and this codebase decides per-address-model and
+   * per-profile precisely so that adding a chain is a table entry. With `'none'` the reorg
+   * machinery is switched off rather than fed slot hashes it would never disagree with —
+   * which on Solana would be a hundred and twenty-eight `getBlock` calls per poll looking
+   * for something that cannot happen.
+   */
+  readonly reorgs: 'possible' | 'none';
+
   readonly settlement: SettlementProfile;
 }
 
@@ -102,6 +120,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
     confirmations: { standard: 12, highValue: 32, highValueThresholdUsd: 10_000 },
+    reorgs: 'possible',
     settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
   },
 
@@ -114,6 +133,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeDecimals: 18,
     // Polygon PoS has historically produced deep reorgs; stay conservative.
     confirmations: { standard: 64, highValue: 128, highValueThresholdUsd: 10_000 },
+    reorgs: 'possible',
     settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
   },
 
@@ -125,6 +145,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeSymbol: 'BNB',
     nativeDecimals: 18,
     confirmations: { standard: 15, highValue: 30, highValueThresholdUsd: 10_000 },
+    reorgs: 'possible',
     settlement: { kind: 'evm', gasDeployAndFlushToken: EVM_GAS_DEPLOY_AND_FLUSH, gasFlushNative: EVM_GAS_FLUSH_ONLY },
   },
 
@@ -144,6 +165,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeDecimals: 6,
     // TRON blocks are irreversible after 19 confirmations (2/3+1 of 27 SRs).
     confirmations: { standard: 19, highValue: 19, highValueThresholdUsd: 10_000 },
+    reorgs: 'possible',
     // Nothing to settle: the payer's transfer already reached the merchant's own wallet.
     settlement: { kind: 'direct' },
   },
@@ -151,14 +173,33 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
   solana: {
     chain: 'solana',
     displayName: 'Solana',
-    addressModel: 'unique',
+    /**
+     * Pooled, not unique, and that is a decision about what was built.
+     *
+     * A unique deposit account per invoice is a better matching story and needs three things
+     * this repository does not have: an ed25519 key per invoice, a sweep that closes the
+     * associated token account to reclaim its rent, and a signer. None were written, so the
+     * chain was excluded from the watcher and never offered to a payer — correct, and also
+     * permanently unavailable. Pooled is what the product is built on everywhere else: the
+     * payer sends to a wallet the merchant owns, the exact amount names the invoice, and
+     * there is nothing to sweep and no key to hold. See `chains/solana/SolanaAdapter.ts`.
+     */
+    addressModel: 'pooled',
     // Base58, without the checksum wrapper TRON adds. Still case-significant.
     addressCase: 'sensitive',
     nativeSymbol: 'SOL',
     nativeDecimals: 9,
-    // 32 slots ≈ the `finalized` commitment level.
+    /**
+     * Slots, and they are not what makes a payment final here — the commitment is.
+     *
+     * Everything is read at `finalized`, which is already irreversible, so this count is
+     * only the depth the sink is shown so that an ordinary payment credits on first sight.
+     * Thirty-two slots is about thirteen seconds and is roughly what finality costs anyway.
+     */
     confirmations: { standard: 32, highValue: 32, highValueThresholdUsd: 10_000 },
-    settlement: { kind: 'solana', signaturesPerFlush: 1, ataRentLamports: 2_039_280 },
+    reorgs: 'none',
+    // Nothing to settle: the payer's transfer already reached the merchant's own wallet.
+    settlement: { kind: 'direct' },
   },
 
   ton: {
@@ -172,6 +213,7 @@ export const CHAINS: Readonly<Record<ChainId, ChainConfig>> = {
     nativeSymbol: 'TON',
     nativeDecimals: 9,
     confirmations: { standard: 1, highValue: 3, highValueThresholdUsd: 10_000 },
+    reorgs: 'possible',
     settlement: { kind: 'direct' },
   },
 };

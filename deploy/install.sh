@@ -86,6 +86,11 @@ API_PORT=3000
 # visible in `ps` to every user on the host.
 db_url='' direct_url='' smtp_url='' mail_from='' operator_email=''
 app_url='' tron_rpc=''
+# Every endpoint, declared empty, because `set -u` is on and a chain left off is a variable
+# never assigned. `--selftest` fills in only a couple of these and was failing on the first
+# one it had not — an unbound variable rather than a chain skipped, which is what the blank
+# answer to each prompt is supposed to mean.
+bsc_rpc='' polygon_rpc='' ethereum_rpc='' solana_rpc=''
 
 # ── output ───────────────────────────────────────────────────────────────────
 
@@ -536,6 +541,11 @@ PROMPT
   # cannot see. The publicnode endpoint needs none.
   ask "Polygon JSON-RPC endpoint (blank to skip)" polygon_rpc "https://polygon-bor-rpc.publicnode.com"
   ask "Ethereum JSON-RPC endpoint (blank to skip)" ethereum_rpc ""
+  # Its own variable, because Solana answers none of the `eth_*` calls the others do, and the
+  # same map is read by the gas oracle and the contract prober. No default: the public endpoint
+  # is rate-limited to a level a busy poll trips over, and a chain that is on and intermittently
+  # failing is worse than one that is off until an operator names an endpoint they trust.
+  ask "Solana RPC endpoint (blank to skip)" solana_rpc ""
 }
 
 # Single-quote a value for the environment file.
@@ -613,6 +623,9 @@ DASHBOARD_ORIGINS=$(quote_env "$app_url")
 
 # TRON serves an Ethereum-compatible JSON-RPC, which is why it lives here.
 EVM_RPC_URLS=$(quote_env "$rpc_urls")
+
+# Solana does not, which is why it does not. Blank leaves the chain off.
+SOLANA_RPC_URLS=$(quote_env "$solana_rpc")
 
 # Generated here, once. A memo is visible to anyone watching the shared wallet,
 # so a guessable one would let a stranger claim someone else's payment.
@@ -1074,7 +1087,8 @@ selftest() {
   local check
   # Every key the API refuses to boot without, plus the two whose absence is silent.
   for check in NODE_ENV PORT HOST DATABASE_URL DIRECT_DATABASE_URL APP_URL SMTP_URL MAIL_FROM \
-               OPERATOR_EMAIL CHECKOUT_ORIGINS DASHBOARD_ORIGINS EVM_RPC_URLS MEMO_SECRET; do
+               OPERATOR_EMAIL CHECKOUT_ORIGINS DASHBOARD_ORIGINS EVM_RPC_URLS \
+               SOLANA_RPC_URLS MEMO_SECRET; do
     if grep -q "^$check='" "$ENV_FILE"; then
       line "$check" 'present'
     else

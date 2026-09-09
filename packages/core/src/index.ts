@@ -25,6 +25,18 @@ export type {
   TronPriceOracle,
 } from './chains/tron/TronAdapter.js';
 export { SolanaAdapter } from './chains/solana/SolanaAdapter.js';
+export type {
+  SolanaAdapterConfig,
+  SolanaAddressBook,
+  SolanaPriceOracle,
+} from './chains/solana/SolanaAdapter.js';
+export { SolanaRpc } from './chains/solana/SolanaRpc.js';
+export type { SolanaRpcConfig } from './chains/solana/SolanaRpc.js';
+export {
+  isSolanaAddress,
+  normalizeSolanaAddress,
+  solanaAddressBytes,
+} from './chains/solana/address.js';
 
 export * from './fees/FeePolicy.js';
 export * from './fees/fee-payer.js';

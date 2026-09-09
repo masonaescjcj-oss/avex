@@ -29,6 +29,30 @@ import type { loadEnv } from '../env.js';
 export const CREDITABLE_ADDRESS_MODELS: readonly AddressModel[] = ['unique', 'pooled'];
 
 /**
+ * Which chains this deployment has an endpoint for, and where each one's came from.
+ *
+ * One function because two modules ask the question — this file, to decide what is watched,
+ * and `depositAddressConfig`, to decide what is offered — and they must never answer it
+ * differently. They did not disagree before only because the condition was short enough to
+ * copy correctly.
+ *
+ * Two variables feed it. `EVM_RPC_URLS` holds every chain that speaks the Ethereum JSON-RPC,
+ * TRON included, because a TRON node really does answer `eth_getLogs`. Solana speaks a
+ * different vocabulary entirely, so its endpoint is named separately rather than being put
+ * in a map that the gas oracle and the contract prober also read.
+ */
+export function chainEndpoints(
+  env: ReturnType<typeof loadEnv>,
+): Readonly<Partial<Record<ChainId, readonly string[]>>> {
+  const endpoints: Partial<Record<ChainId, readonly string[]>> = {};
+  for (const chain of SUPPORTED_CHAINS) {
+    const urls = chain === 'solana' ? env.SOLANA_RPC_URLS : (env.EVM_RPC_URLS[chain] ?? []);
+    if (urls.length > 0) endpoints[chain] = urls;
+  }
+  return endpoints;
+}
+
+/**
  * Which chains this build can actually watch.
  *
  * An RPC endpoint, and that is all. It used to take a forwarder factory as well on the EVM
@@ -43,15 +67,18 @@ export const CREDITABLE_ADDRESS_MODELS: readonly AddressModel[] = ['unique', 'po
  * process talks to it; a second variable would be the same list under a second name.
  */
 export function watchableChains(env: ReturnType<typeof loadEnv>): readonly ChainId[] {
-  return Object.keys(env.EVM_RPC_URLS)
-    .filter((chain): chain is ChainId => SUPPORTED_CHAINS.includes(chain as ChainId))
-    .filter((chain) => (env.EVM_RPC_URLS[chain]?.length ?? 0) > 0)
-    .filter((chain) => {
-      const model = chainConfig(chain).addressModel;
-      if (!CREDITABLE_ADDRESS_MODELS.includes(model)) return false;
-      // Solana is `unique` and not EVM: no adapter this build can construct.
-      return model === 'pooled' || chain in EVM_CHAIN_IDS;
-    });
+  return (Object.keys(chainEndpoints(env)) as ChainId[]).filter((chain) => {
+    const model = chainConfig(chain).addressModel;
+    if (!CREDITABLE_ADDRESS_MODELS.includes(model)) return false;
+    /**
+     * An adapter this build can actually construct.
+     *
+     * Every pooled chain has one — `TronAdapter` for the chains that speak the Ethereum
+     * JSON-RPC, `SolanaAdapter` for Solana — and a `unique` chain needs the EVM adapter's
+     * CREATE2 derivation, which needs a chain id. What is excluded is `shared-memo`, above.
+     */
+    return model === 'pooled' || chain in EVM_CHAIN_IDS;
+  });
 }
 
 /**

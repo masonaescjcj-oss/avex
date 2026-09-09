@@ -79,6 +79,48 @@ event is the same event with the same topic — so the adapter shares its shape,
 handling and its block source with the EVM one. TronGrid's event endpoint pages by timestamp,
 which cannot express "rescan from block N" and therefore cannot survive a reorg honestly.
 
+## Solana is pooled too, and its endpoint is not in that variable
+
+Same model — the payer sends to a wallet the merchant owns and the exact amount names the
+invoice — and a completely different protocol. A Solana node answers none of the `eth_*`
+calls, so its endpoint has its own setting:
+
+```
+SOLANA_RPC_URLS=https://your-endpoint.example
+```
+
+Not in `EVM_RPC_URLS`, and that is the point of the separate name: that map is also read by
+the gas oracle and the contract prober, and a Solana URL in it would give both an endpoint
+that replies "method not found" to everything they ask. A key naming `solana` in there is
+therefore treated as a typo and ignored.
+
+There is no default. The public endpoint at `api.mainnet-beta.solana.com` works and is rate
+limited hard enough that a poll trips over it intermittently, which is the worst of the
+available failures — a chain that is on, mostly working, and occasionally missing a payment.
+Name an endpoint you trust, or leave the chain off.
+
+What a Solana poll costs, so the rate limit can be reasoned about rather than guessed at:
+one request for the finalized slot, one per watched account for its recent signatures, and
+one per new transaction. With no Solana wallet registered it is a single request every five
+seconds. Reorg handling is switched off for the chain — a finalized slot is rooted by a
+supermajority of stake and never removed — so none of the ~130 block-hash reads the EVM
+chains make per poll happen here.
+
+The account a payer's transfer actually reaches is not the merchant's address. It is the
+*associated token account* for that wallet and that mint, and it is derived locally rather
+than asked for: the derivation is in `chains/solana/ata.ts` and is held against real mainnet
+accounts by its test. That is deliberate, and it is what makes a merchant's *first* payment
+on the chain work — the account does not exist until the transfer that creates and credits
+it, so an adapter that waited to be told the address would be watching nothing at the moment
+it mattered.
+
+`getTokenAccountsByOwner` is still called once per wallet and mint, where the endpoint serves
+it, to pick up a token account that is not the associated one. publicnode's free Solana
+endpoint answers that method with HTTP 403; the watcher says so once and carries on, because
+a payer's wallet computes the associated account from the address it was given and cannot
+know about any other. It matters only for a merchant whose own wallet keeps that token
+somewhere else, which normal wallets do not.
+
 TRON needs no forwarder factory, and `watchableChains` reflects that: an EVM chain without one
 is skipped, because the addresses it would look for are hashes over a factory that does not
 exist; a pooled chain is watched on its RPC endpoint alone.
@@ -228,8 +270,9 @@ npm run -w @avex/api start   # the HTTP API; RUN_JOBS_IN_PROCESS=true drives the
 npm run -w @avex/api watch   # the chain watcher, one per deployment
 ```
 
-The watcher needs `DATABASE_URL`, `EVM_RPC_URLS` and `FORWARDER_FACTORIES`, and nothing
-else. It serves no HTTP: a payment it credits reaches a merchant through the webhook rows it
+The watcher needs `DATABASE_URL` and an endpoint for at least one chain — `EVM_RPC_URLS`,
+`SOLANA_RPC_URLS`, or both — plus `FORWARDER_FACTORIES` for any chain it should also settle
+on, and nothing else. It serves no HTTP: a payment it credits reaches a merchant through the webhook rows it
 writes, which the API's own scheduler drains.
 
 Both may run alongside the Edge Function against the same database. The locks make that

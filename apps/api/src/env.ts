@@ -290,6 +290,28 @@ const schema = z.object({
         .filter(Boolean),
     ),
 
+  /**
+   * Solana's endpoint, in its own variable because Solana speaks its own RPC.
+   *
+   * `EVM_RPC_URLS` is where TRON's endpoint lives and that is not a mistake — a TRON node
+   * answers `eth_getLogs`. A Solana node answers none of it, and the same map is read by the
+   * gas oracle and the contract prober, so a Solana URL in there would give both an endpoint
+   * that replies "method not found" to everything they ask.
+   *
+   * No default, deliberately. The public endpoint exists but is rate-limited to a level that
+   * would make a busy poll fail intermittently, and a chain that is quietly on and quietly
+   * failing is worse than one that is off until an operator names an endpoint.
+   */
+  SOLANA_RPC_URLS: z
+    .string()
+    .default('')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((entry) => entry.trim().replace(/\/$/, ''))
+        .filter(Boolean),
+    ),
+
   EVM_RPC_URLS: z
     .string()
     .default('bsc=https://bsc-rpc.publicnode.com')

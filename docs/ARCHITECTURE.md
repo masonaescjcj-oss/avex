@@ -71,7 +71,8 @@ Hence:
 | Model | Chains | Reason |
 |---|---|---|
 | `shared-memo` | TON | Native comment field. Zero settlement cost — the payer's own transfer reaches the merchant. Strictly better where available. |
-| `unique` | Ethereum, Polygon, BNB, TRON, Solana | Reliable matching. Free to derive. Settlement cost controlled by deferral and batching. |
+| `unique` | Ethereum, Polygon, BNB | Reliable matching. Free to derive. Settlement cost controlled by deferral and batching. |
+| `pooled` | TRON, Solana | The merchant's own wallets take the payment and the exact amount names the invoice. Nothing to derive, nothing to sweep, no key held. |
 
 On TON the tradeoff is that correctness depends on the payer including the memo.
 An unmatched transfer is not lost, but it must go to operator reconciliation and

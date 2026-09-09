@@ -60,9 +60,23 @@ const BASE: Env = {
   CHECKOUT_ORIGINS: [],
   DASHBOARD_ORIGINS: [],
   EVM_RPC_URLS: {},
+  SOLANA_RPC_URLS: [],
 } as Env;
 
 const env = (overrides: Partial<Env>): Env => ({ ...BASE, ...overrides });
+
+/**
+ * One chain's endpoint, in the variable that chain's endpoint belongs in.
+ *
+ * Which is the fact this file has to encode rather than assume: `EVM_RPC_URLS` for everything
+ * that speaks the Ethereum JSON-RPC, TRON included, and `SOLANA_RPC_URLS` for Solana, which
+ * speaks its own. A chain added later with no route into either variable has no endpoint, so
+ * the tests below fail rather than quietly passing over it.
+ */
+const endpointFor = (chain: string): Partial<Env> =>
+  chain === 'solana'
+    ? { SOLANA_RPC_URLS: ['https://solana.example'] }
+    : { EVM_RPC_URLS: { [chain]: ['https://rpc.example'] } };
 
 /** What a merchant can be offered, decided exactly as `compose` decides it. */
 const offered = (source: Env): readonly string[] =>
@@ -79,6 +93,7 @@ describe('the invoice side and the watcher agree', () => {
       EVM_RPC_URLS: Object.fromEntries(
         SUPPORTED_CHAINS.map((chain) => [chain, ['https://rpc.example']]),
       ),
+      SOLANA_RPC_URLS: ['https://solana.example'],
       FORWARDER_FACTORIES: Object.fromEntries(
         SUPPORTED_CHAINS.map((chain) => [chain, '0x' + '11'.repeat(20)]),
       ),
@@ -151,12 +166,46 @@ describe('the invoice side and the watcher agree', () => {
     const tron = SUPPORTED_CHAINS.filter((chain) => chainConfig(chain).addressModel === 'pooled');
     assert.ok(tron.length > 0, 'no pooled chain in the registry to check');
 
-    const pooled = env({ EVM_RPC_URLS: { tron: ['https://api.trongrid.io/jsonrpc'] } });
-
     for (const chain of tron) {
-      assert.equal(offered(pooled).includes(chain), true, `${chain} must be offerable`);
-      assert.equal(watchableChains(pooled).includes(chain), true, `${chain} must be watchable`);
+      const only = env(endpointFor(chain));
+      assert.equal(offered(only).includes(chain), true, `${chain} must be offerable`);
+      assert.equal(watchableChains(only).includes(chain), true, `${chain} must be watchable`);
     }
+  });
+
+  test('Solana takes its endpoint from its own variable, and only from there', () => {
+    /**
+     * Solana speaks its own RPC, so its endpoint cannot live in `EVM_RPC_URLS` — that map is
+     * also read by the gas oracle and the contract prober, both of which would get an endpoint
+     * that answers "method not found" to everything they ask. A key naming Solana in there is
+     * therefore a typo, and is ignored rather than believed, which is the same rule
+     * `SHARED_DEPOSIT_WALLETS` follows two tests down.
+     */
+    const proper = env({ SOLANA_RPC_URLS: ['https://solana.example'] });
+    assert.equal(offered(proper).includes('solana'), true);
+    assert.equal(watchableChains(proper).includes('solana'), true);
+
+    const misplaced = env({ EVM_RPC_URLS: { solana: ['https://solana.example'] } });
+    assert.equal(offered(misplaced).includes('solana'), false);
+    assert.equal(watchableChains(misplaced).includes('solana'), false);
+  });
+
+  test('Solana is offered as a pooled chain, never as a derived one', () => {
+    /**
+     * The failure this replaced: Solana was `unique`, so a factory key naming it derived a
+     * CREATE2 address for a chain that has no CREATE2 — a payer would have been handed an
+     * address that cannot exist. It is pooled now, so a merchant's own wallet takes the
+     * payment and nothing is derived. A factory configured for it must still change nothing.
+     */
+    const withFactory = env({
+      SOLANA_RPC_URLS: ['https://solana.example'],
+      FORWARDER_FACTORIES: { solana: '0x' + '11'.repeat(20) },
+      FORWARDER_IMPLEMENTATIONS: { solana: '0x' + '22'.repeat(20) },
+    });
+
+    const config = depositAddressConfig(withFactory);
+    assert.equal('solana' in config.evm, false, 'nothing to derive on Solana');
+    assert.ok(config.pooled?.includes('solana'), 'and wallets work there');
   });
 
   test('a shared-address entry naming a chain that is not shared-address is dropped', () => {

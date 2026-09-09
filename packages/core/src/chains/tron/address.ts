@@ -1,4 +1,7 @@
+import { base58Decode, base58Encode } from '../base58.js';
 import { sha256d } from '../../crypto/sha256.js';
+
+export { base58Decode, base58Encode };
 
 /**
  * TRON addresses, in the two forms every TRON integration has to move between.
@@ -26,12 +29,6 @@ import { sha256d } from '../../crypto/sha256.js';
  * before it is stored, rather than a fold at the point of comparison.
  */
 
-/** Bitcoin's alphabet, which TRON uses unchanged. No `0`, `O`, `I` or `l`. */
-const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-
-/** Reverse lookup, built once. A `Map` rather than `indexOf` per character. */
-const INDEX = new Map<string, number>([...ALPHABET].map((char, i) => [char, i]));
-
 /** The one-byte prefix that makes every mainnet TRON address start with `T`. */
 export const TRON_ADDRESS_PREFIX = 0x41;
 
@@ -40,63 +37,6 @@ const ADDRESS_BYTES = 21;
 
 /** Base58Check appends the first four bytes of the double-SHA-256 of the payload. */
 const CHECKSUM_BYTES = 4;
-
-export function base58Encode(input: Uint8Array): string {
-  if (input.length === 0) return '';
-
-  /**
-   * Base conversion through BigInt.
-   *
-   * The textbook version is repeated division over a byte array, which is faster and much
-   * easier to get subtly wrong. These inputs are 25 bytes.
-   */
-  let value = 0n;
-  for (const byte of input) value = value * 256n + BigInt(byte);
-
-  let out = '';
-  while (value > 0n) {
-    out = ALPHABET[Number(value % 58n)]! + out;
-    value /= 58n;
-  }
-
-  /**
-   * Leading zero bytes are not carried by the number, so they are re-added as `1`s.
-   *
-   * No TRON address has one — the payload starts with 0x41 — but a codec that silently drops
-   * them is a codec that cannot be reused, and this one is also how we will read TRC-20
-   * contract addresses out of a config file.
-   */
-  for (const byte of input) {
-    if (byte !== 0) break;
-    out = `1${out}`;
-  }
-  return out;
-}
-
-export function base58Decode(input: string): Uint8Array {
-  if (input.length === 0) return new Uint8Array(0);
-
-  let value = 0n;
-  for (const char of input) {
-    const digit = INDEX.get(char);
-    // Named in the message: `0`, `O`, `I` and `l` are the characters somebody typing an
-    // address by hand will produce, and "invalid base58" alone does not say which one.
-    if (digit === undefined) throw new Error(`not base58: ${JSON.stringify(char)} in ${input}`);
-    value = value * 58n + BigInt(digit);
-  }
-
-  const bytes: number[] = [];
-  while (value > 0n) {
-    bytes.unshift(Number(value % 256n));
-    value /= 256n;
-  }
-
-  for (const char of input) {
-    if (char !== '1') break;
-    bytes.unshift(0);
-  }
-  return new Uint8Array(bytes);
-}
 
 /** Strip an optional `0x`, and reject anything that is not clean hex. */
 function hexToBytes(hex: string): Uint8Array {

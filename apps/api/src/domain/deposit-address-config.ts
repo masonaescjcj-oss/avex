@@ -3,7 +3,7 @@ import type { ChainId } from '@avex/core';
 
 import type { DepositAddressConfig, EvmChainConfig } from './deposit-address.js';
 import type { Env } from '../env.js';
-import { CREDITABLE_ADDRESS_MODELS } from '../watch/watchable-chains.js';
+import { CREDITABLE_ADDRESS_MODELS, chainEndpoints } from '../watch/watchable-chains.js';
 
 /**
  * Which chains a merchant can be offered, from configuration alone.
@@ -29,6 +29,8 @@ export function depositAddressConfig(env: Env): DepositAddressConfig {
   const evm: Record<string, EvmChainConfig> = {};
   const shared: Record<string, string> = {};
   const pooled: ChainId[] = [];
+  // The same answer the watcher gets, from the same function, so the two cannot drift.
+  const endpoints = chainEndpoints(env);
 
   for (const chain of SUPPORTED_CHAINS) {
     const model = chainConfig(chain).addressModel;
@@ -43,7 +45,7 @@ export function depositAddressConfig(env: Env): DepositAddressConfig {
      */
     if (
       CREDITABLE_ADDRESS_MODELS.includes(model) &&
-      (env.EVM_RPC_URLS[chain]?.length ?? 0) > 0 &&
+      endpoints[chain] !== undefined &&
       (model === 'pooled' || chain in EVM_CHAIN_IDS)
     ) {
       pooled.push(chain);

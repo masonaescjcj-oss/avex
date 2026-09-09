@@ -6,6 +6,8 @@ import {
   EvmAdapter,
   FetchPoster,
   PriceService,
+  SolanaAdapter,
+  SolanaRpc,
   TronAdapter,
   Watcher,
   WebhookDispatcher,
@@ -13,7 +15,7 @@ import {
   chainConfig,
   createPriceSources,
 } from '@avex/core';
-import type { Asset, ChainAdapter, ChainId } from '@avex/core';
+import type { Asset, BlockSource, ChainAdapter, ChainId } from '@avex/core';
 
 import { createDatabase } from './db/client.js';
 import { JOB_LOCKS, withJobLock } from './db/lock.js';
@@ -34,7 +36,7 @@ import { AlertForwarder } from './settle/alerts.js';
 import { startSettlement } from './settle/start.js';
 import { DEFAULT_LOOP, runLoop } from './watch/loop.js';
 import { WatchHealth } from './watch/health.js';
-import { hasForwarders, watchableChains } from './watch/watchable-chains.js';
+import { chainEndpoints, hasForwarders, watchableChains } from './watch/watchable-chains.js';
 import type { LoopHandle } from './watch/loop.js';
 
 /**
@@ -175,6 +177,7 @@ async function main(): Promise<void> {
    */
   const assetService = new AssetService(db, audit, probeStub, []);
 
+  const endpoints = chainEndpoints(env);
   const chains = watchableChains(env);
   if (chains.length === 0) {
     /**
@@ -185,8 +188,9 @@ async function main(): Promise<void> {
      * detected. Failing at startup is the only version of this that gets noticed.
      */
     throw new Error(
-      'no chain is watchable: needs EVM_RPC_URLS and FORWARDER_FACTORIES for at least one ' +
-        'EVM chain',
+      'no chain is watchable: needs an endpoint for at least one chain — EVM_RPC_URLS for ' +
+        'the chains that speak the Ethereum JSON-RPC (TRON included), SOLANA_RPC_URLS for ' +
+        'Solana',
     );
   }
 
@@ -236,8 +240,7 @@ async function main(): Promise<void> {
   const adapters = new Map<ChainId, ChainAdapter>();
 
   for (const chain of chains) {
-    const urls = env.EVM_RPC_URLS[chain]!;
-    const caller = new JsonRpcCaller({ [chain]: urls }, chain);
+    const urls = endpoints[chain]!;
 
     const accepted = acceptedFor(chain);
     if (accepted.length === 0) {
@@ -275,7 +278,29 @@ async function main(): Promise<void> {
      * settle, which is exactly what such a chain has.
      */
     const forwarders = hasForwarders(env, chain);
-    const adapter = pooled
+    /**
+     * Solana is pooled like TRON and shares nothing else with it.
+     *
+     * Its own RPC client, which is also the watcher's block source: the `eth_*` caller the
+     * other chains use would ask a Solana node questions it has no answer for. Branching on
+     * the chain here rather than on the address model because the model says how invoices
+     * are addressed, and this is about which protocol the node speaks — the one thing about
+     * Solana that a table of address models cannot express.
+     */
+    const solanaRpc = chain === 'solana' ? new SolanaRpc({ url: urls[0]! }) : null;
+    const blocks: BlockSource = solanaRpc ?? new JsonRpcCaller({ [chain]: urls }, chain);
+    const adapter = solanaRpc
+      ? new SolanaAdapter(
+          {
+            acceptedAssets: accepted,
+            confirmationLag,
+            warn: (message) => log('watcher', { chain, detail: message }),
+          },
+          solanaRpc,
+          new DatabaseAddressBook(db, chain),
+          { nativePriceUsd: () => prices.nativePriceUsd(chain) },
+        )
+      : pooled
       ? new TronAdapter(
           {
             chain,
@@ -332,17 +357,26 @@ async function main(): Promise<void> {
      * a payment that no longer exists, with nothing in the system that will ever notice.
      */
     const config = chainConfig(chain);
-    const reorgDepth = config.confirmations.highValue;
+    /**
+     * Zero on a chain that cannot reorganise, which switches the rewind machinery off.
+     *
+     * With no depth and no memory the watcher remembers no block hashes and compares none,
+     * so `detectReorg` finds nothing to disagree with and `rememberRange` asks for nothing.
+     * That is the difference between a Solana poll costing two requests and costing a
+     * hundred and thirty `getBlock` calls looking for a fork that a finalized slot cannot
+     * have. `reorgs` is a registry fact; see `chains/registry.ts`.
+     */
+    const reorgDepth = config.reorgs === 'none' ? 0 : config.confirmations.highValue;
     const watcher = new Watcher(
       chain,
       adapter,
-      caller,
+      blocks,
       state,
       sink,
       {
         reorgDepth,
         // Must be at least reorgDepth, and deeper is only memory.
-        blockMemory: Math.max(reorgDepth * 2, DEFAULT_WATCHER.blockMemory),
+        blockMemory: reorgDepth === 0 ? 0 : Math.max(reorgDepth * 2, DEFAULT_WATCHER.blockMemory),
         maxBlocksPerPoll: DEFAULT_WATCHER.maxBlocksPerPoll,
       },
       (message) => log('watcher', { chain, detail: message }),

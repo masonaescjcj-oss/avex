@@ -1,4 +1,4 @@
-import { SUPPORTED_CHAINS, addressKey, isTronAddress } from '@avex/core';
+import { SUPPORTED_CHAINS, addressKey, isSolanaAddress, isTronAddress } from '@avex/core';
 import type { ChainId } from '@avex/core';
 import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 
@@ -466,6 +466,20 @@ export class WalletPoolChanges {
         throw new WalletPoolChangeError('invalid_address', error.message);
       }
       throw error;
+    }
+    if (input.chain === 'solana' && !isSolanaAddress(input.address)) {
+      /**
+       * Decoded length, not character count.
+       *
+       * The payout validator's 32-to-44-character rule accepts strings that decode to 31 or
+       * 33 bytes, because base58 is not a power of two. The commonest way to fail this is
+       * pasting a transaction signature, which is 64 bytes and looks exactly like a public
+       * key to a human.
+       */
+      throw new WalletPoolChangeError(
+        'invalid_address',
+        'That is not a valid Solana address: it must decode to 32 bytes of base58.',
+      );
     }
     if (input.chain === 'tron' && !isTronAddress(input.address)) {
       throw new WalletPoolChangeError('invalid_address', 'That is not a valid TRON address.');
