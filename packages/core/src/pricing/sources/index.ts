@@ -83,18 +83,44 @@ export class BinanceSource implements PriceSource {
     const pair = BinanceSource.PAIRS[symbol];
     if (!pair) throw new UnsupportedSymbolError(this.name, symbol);
 
+    /**
+     * The 24-hour ticker rather than the cheaper `ticker/price`, for one reason: it carries
+     * the order book's best bid and ask, and a pair Binance has *halted* keeps serving a
+     * last-trade price with an empty book behind it.
+     *
+     * That is not hypothetical. TONUSDT sat at `status: BREAK` with `lastPrice` frozen at the
+     * figure of its final trade, weeks stale, while the market had moved 16% away. Two sources,
+     * one frozen: the median landed between them, both were then further from it than the
+     * outlier tolerance allows, and every currency priced that way became "no trustworthy
+     * price" on the checkout. A halted market has no price, and saying so is the whole job.
+     */
     const body = (await fetchJson(
       this.name,
-      `${this.baseUrl}/ticker/price?symbol=${pair}`,
+      `${this.baseUrl}/ticker/24hr?symbol=${pair}`,
       signal,
-    )) as { price?: string };
+    )) as { lastPrice?: string; bidPrice?: string; askPrice?: string };
 
-    if (typeof body.price !== 'string') {
+    if (typeof body.lastPrice !== 'string') {
       throw new PriceSourceError(this.name, `no price field for ${pair}`);
     }
+
+    if (!quoted(body.bidPrice) || !quoted(body.askPrice)) {
+      throw new PriceSourceError(
+        this.name,
+        `${pair} is not trading (no bid or ask); its last price is not a market price`,
+      );
+    }
+
     // Already a decimal string — parsed straight into integer form.
-    return rateFromDecimalString(body.price, Date.now());
+    return rateFromDecimalString(body.lastPrice, Date.now());
   }
+}
+
+/** A side of the book that actually holds an order. Binance sends `"0.00000000"` when it does not. */
+function quoted(price: string | undefined): boolean {
+  if (typeof price !== 'string') return false;
+  const value = Number(price);
+  return Number.isFinite(value) && value > 0;
 }
 
 /**
@@ -107,8 +133,11 @@ export class KrakenSource implements PriceSource {
 
   private static readonly PAIRS: Partial<Record<PriceSymbol, string>> = {
     ETH: 'XETHZUSD',
+    BNB: 'BNBUSD',
+    POL: 'POLUSD',
     SOL: 'SOLUSD',
     TRX: 'TRXUSD',
+    TON: 'TONUSD',
     USDT: 'USDTZUSD',
     USDC: 'USDCUSD',
   };
@@ -157,8 +186,11 @@ export class CoinbaseSource implements PriceSource {
 
   private static readonly PAIRS: Partial<Record<PriceSymbol, string>> = {
     ETH: 'ETH-USD',
+    BNB: 'BNB-USD',
     SOL: 'SOL-USD',
     POL: 'POL-USD',
+    TRX: 'TRX-USD',
+    TON: 'TON-USD',
     USDT: 'USDT-USD',
     USDC: 'USDC-USD',
   };
@@ -195,9 +227,11 @@ export class BitstampSource implements PriceSource {
 
   private static readonly PAIRS: Partial<Record<PriceSymbol, string>> = {
     ETH: 'ethusd',
+    BNB: 'bnbusd',
     SOL: 'solusd',
     POL: 'polusd',
     TRX: 'trxusd',
+    TON: 'tonusd',
     USDT: 'usdtusd',
     USDC: 'usdcusd',
   };
