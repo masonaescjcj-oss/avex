@@ -318,8 +318,15 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
 
   test('the session id comes from the query string and drives the requests', async () => {
     const { page, context, requests } = await open();
-    // Both loads, in order: the session first, then what it may be paid in.
-    assert.deepEqual(requests.slice(0, 2), ['state', 'options']);
+    /**
+     * Both loads, and deliberately in no particular order.
+     *
+     * They go out together: `/options` is keyed on the session id, which is in the address bar
+     * before either call is made, so waiting for `/state` to come back first spent a whole
+     * round trip on nothing. Asserting a sequence here would pin the slow shape back in
+     * place — what matters is that the id from the query string reached both.
+     */
+    assert.deepEqual([...requests.slice(0, 2)].sort(), ['options', 'state']);
     assert.equal(await text(page, '#amount'), '20.00');
     assert.equal(await text(page, '#amount-unit'), 'USD');
     // The merchant's own description, not ours.

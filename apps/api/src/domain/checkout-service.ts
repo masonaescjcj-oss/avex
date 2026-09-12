@@ -396,14 +396,21 @@ export class CheckoutService {
      */
     const fees = new Map<
       string,
-      | {
-          readonly feeBps: number;
-          readonly accruedFeeBps: number;
-          readonly recoveryBps: number;
-          readonly networkFeeBps: number;
-          readonly feePayer: FeePayer;
-        }
-      | undefined
+      Promise<
+        | {
+            readonly feeBps: number;
+            readonly accruedFeeBps: number;
+            readonly recoveryBps: number;
+            readonly networkFeeBps: number;
+            readonly feePayer: FeePayer;
+          }
+        | undefined
+      >
+    >();
+    /** Keyed by chain *and* model: a pooled invoice and a forwarder one have different floors. */
+    const minimums = new Map<
+      string,
+      Promise<{ readonly ok: true } | { readonly ok: false; readonly minUsdMicros: bigint }>
     >();
     /**
      * The session's dollar figure goes in, and it has to.
@@ -414,17 +421,45 @@ export class CheckoutService {
      * $20.00 and asked for $20.10, which reads as a scam rather than a rounding.
      */
     const where = await this.destinations(session.organizationId);
-    const feeForChain = async (chain: string) => {
-      if (!fees.has(chain)) {
-        fees.set(
-          chain,
-          await this.feePlans.feeFor(session.organizationId, chain, amountFiat, {
-            // The same decision invoice creation makes, so the quoted amount is the asked one.
-            pooled: this.pooledOn(chain, where),
-          }),
-        );
+
+    /**
+     * The promise is what is cached, not the answer.
+     *
+     * That is the whole difference between one lookup per chain and one per row. This map used
+     * to hold resolved values, which is correct only while the rows are built one after
+     * another: the moment they are built together, three USDT rows on BNB Chain all find the
+     * map empty and all three fetch. Storing the in-flight promise makes the second and third
+     * wait on the first.
+     */
+    const feeForChain = (chain: string) => {
+      let pending = fees.get(chain);
+      if (pending === undefined) {
+        pending = this.feePlans.feeFor(session.organizationId, chain, amountFiat, {
+          // The same decision invoice creation makes, so the quoted amount is the asked one.
+          pooled: this.pooledOn(chain, where),
+        });
+        fees.set(chain, pending);
       }
-      return fees.get(chain);
+      return pending;
+    };
+
+    /**
+     * The same, for the smallest order a chain can carry.
+     *
+     * Worth more than the fee is, because of what is behind it: the minimum comes from a gas
+     * snapshot, and a cold snapshot is two RPC calls to that chain's node. Unshared, a
+     * checkout offering USDT, USDC and BNB on BNB Chain made six.
+     */
+    const minimumFor = (chain: string, pooled: boolean) => {
+      const key = `${chain}:${pooled ? 'pooled' : 'forwarder'}`;
+      let pending = minimums.get(key);
+      if (pending === undefined) {
+        pending = this.minimums
+          ? this.minimums.verdict(chain, amountFiat, { pooled })
+          : Promise.resolve({ ok: true as const });
+        minimums.set(key, pending);
+      }
+      return pending;
     };
 
     /**
@@ -446,7 +481,20 @@ export class CheckoutService {
      * state, with no explanation that could be given without disclosing it.
      */
 
-    for (const entry of payable) {
+    /**
+     * Every row at once, rather than one after another.
+     *
+     * This was a sequential loop, and each pass awaited three things: a price, a fee, and the
+     * chain's minimum — the last of which is two RPC calls to that chain's node on a cold
+     * cache. A payer picking a currency therefore waited for the sum of every row rather than
+     * the slowest one, which on a merchant taking eight currencies across four chains is the
+     * difference between a page that appears and one somebody watches load.
+     *
+     * Safe to parallelise because nothing in a row depends on another row. The two shared
+     * lookups — the fee and the minimum — are shared by promise above, so running the rows
+     * together makes fewer requests rather than more.
+     */
+    const built = await Promise.all(payable.map(async (entry): Promise<CheckoutOption> => {
       const spread = BigInt(entry.spreadBps);
       let rate: bigint | null = null;
       let reason: string | null = null;
@@ -532,7 +580,7 @@ export class CheckoutService {
        */
       if (rate !== null && this.minimums) {
         const pooled = this.pooledOn(entry.chain, where);
-        const verdict = await this.minimums.verdict(entry.chain, amountFiat, { pooled });
+        const verdict = await minimumFor(entry.chain, pooled);
         if (!verdict.ok) {
           rate = null;
           reason =
@@ -557,7 +605,7 @@ export class CheckoutService {
        */
       const disclosed = disclosedFees(charged.amountDue, fee, fee?.feePayer ?? 'merchant');
 
-      options.push({
+      return {
         assetId: entry.assetId,
         symbol: entry.symbol,
         name: entry.symbol,
@@ -586,8 +634,9 @@ export class CheckoutService {
         rateUsd: rate === null ? null : rate.toString(),
         available: rate !== null,
         unavailableReason: reason,
-      });
-    }
+      };
+    }));
+    options.push(...built);
 
     // Cheapest to confirm first is not knowable here, so order by symbol for a stable
     // list. The page orders networks by settlement cost, which it does know.

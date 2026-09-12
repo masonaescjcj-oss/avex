@@ -2258,6 +2258,23 @@
    * Losing that on refresh would be the worst possible moment to lose it.
    */
   async function loadLive() {
+    /**
+     * Both requests at once, because the second never needed the first.
+     *
+     * `/options` is keyed on the session id, which is in the address bar before either call is
+     * made — so waiting for `/state` to come back first was one whole round trip spent on
+     * nothing. On a phone, on a mobile network, that is the difference a payer notices between
+     * tapping the link and seeing what they can pay with.
+     *
+     * The rejection is caught here and re-thrown at the point of use. An unawaited promise that
+     * fails is an unhandled rejection in the console and, in some browsers, a dead page — and
+     * this one *is* unawaited whenever the session turns out to be cancelled or expired below.
+     */
+    const optionsRequest = getJson(api('/options')).then(
+      (body) => ({ body }),
+      (error) => ({ error }),
+    );
+
     let view;
     try {
       view = await getJson(api('/state'));
@@ -2309,13 +2326,12 @@
       return;
     }
 
-    try {
-      const { options } = await getJson(api('/options'));
-      catalogue = groupOptions(options);
-    } catch (error) {
-      renderFatal(error);
+    const answer = await optionsRequest;
+    if (answer.error) {
+      renderFatal(answer.error);
       return;
     }
+    catalogue = groupOptions(answer.body.options);
 
     if (catalogue.length === 0) {
       renderFatal({ message: 'No currency is available for this payment right now.' });
