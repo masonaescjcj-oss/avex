@@ -551,7 +551,7 @@ PROMPT
   # toncenter's v3 index has already done both. Without a key it allows about a request a
   # second, which a poll over several wallets exceeds — so the key is asked for beside it.
   ask "TON indexer (blank to skip; toncenter is https://toncenter.com/api/v3)" ton_api ""
-  [[ $ton_api ]] && ask "toncenter API key (blank for the anonymous rate limit)" ton_key ""
+  [[ $ton_api ]] && ask "toncenter API key (blank paces TON to one request a second)" ton_key ""
 }
 
 # Single-quote a value for the environment file.

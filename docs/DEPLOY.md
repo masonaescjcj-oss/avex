@@ -189,9 +189,19 @@ is inside a payload cell. Reading either from a node means building TL-B cells. 
 v3 index has done both already: one request per wallet gives the amount, the jetton, the
 sender and the comment decoded.
 
-Without a key, toncenter allows roughly one request a second, and a poll over several
-wallets exceeds that — the watcher reports the 429 and backs off, so the chain works and
-lags. Get a key.
+Without a key, toncenter allows roughly one request a second. A single poll is three
+requests — the head, then the jetton transfers and the plain transfers for each wallet — so
+the watcher paces itself to one a second when no key is set, and waits out a refusal rather
+than failing the round. That is enough to work: it is not enough to be quick. One wallet is
+about three seconds a poll and ten wallets is closer to half a minute, which is half a minute
+a payer spends looking at a page that has not noticed them yet.
+
+With a key the pace is ten times that and the limit stops mattering. Get a key.
+
+This used to be a real outage rather than a slow poll: the requests went out back to back, so
+the second and third of every round were refused and the whole poll failed. A merchant's TON
+payment went unseen with `ton api masterchainInfo: HTTP 429` in the log. If you see a 429 now
+it is a line in the log and a slower round, not a payment nobody saw.
 
 Two things about TON that were wrong before and are worth knowing if you read the old code:
 the address must be given to the index in its **friendly** form (`UQ…`/`EQ…`), because the

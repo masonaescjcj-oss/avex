@@ -44,7 +44,36 @@ export interface TonApiConfig {
   readonly apiUrl: string;
   /** Raises the rate limit well above the anonymous one. Sent as `X-API-Key`. */
   readonly apiKey?: string | undefined;
+  /**
+   * Smallest gap between two requests. Defaults by whether a key is configured.
+   *
+   * Set rather than guessed because the two regimes are an order of magnitude apart, and
+   * getting it wrong in either direction is costly: too fast and every poll is refused, too
+   * slow and a merchant with ten wallets waits minutes to be told they were paid.
+   */
+  readonly minIntervalMs?: number | undefined;
+  /** How many times a request refused for rate is tried again before the poll fails. */
+  readonly maxRetries?: number | undefined;
+  readonly warn?: ((message: string) => void) | undefined;
 }
+
+/**
+ * One request a second, near enough, which is toncenter's anonymous allowance.
+ *
+ * Not a safety margin somebody chose to be careful: without it TON does not work at all on a
+ * free endpoint. A single poll is three requests — the head, then the jetton transfers and
+ * the plain transfers for each wallet — fired one after another as fast as they complete, so
+ * the second and third are refused and the whole poll fails. A merchant watched TON payments
+ * go unseen with `HTTP 429` in the log for exactly this reason.
+ */
+const ANONYMOUS_MIN_INTERVAL_MS = 1100;
+
+/** With a key the allowance is many times a second; this leaves plenty of room under it. */
+const KEYED_MIN_INTERVAL_MS = 110;
+
+const DEFAULT_MAX_RETRIES = 3;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 interface MasterchainInfo {
   readonly last: {
@@ -56,7 +85,43 @@ interface MasterchainInfo {
 }
 
 export class TonApi implements BlockSource {
+  /**
+   * The pacer: one promise chain every request waits its turn in.
+   *
+   * A queue rather than a token bucket because the requests are not independent — a poll
+   * issues them in order and each result is needed before the next decision — so there is
+   * nothing to gain from letting two run at once, and a queue cannot burst by construction.
+   */
+  private turn: Promise<void> = Promise.resolve();
+  private lastRequestAt = 0;
+
   constructor(private readonly config: TonApiConfig) {}
+
+  private get minIntervalMs(): number {
+    return (
+      this.config.minIntervalMs ??
+      (this.config.apiKey ? KEYED_MIN_INTERVAL_MS : ANONYMOUS_MIN_INTERVAL_MS)
+    );
+  }
+
+  /** Run `work` no sooner than `minIntervalMs` after the last request finished. */
+  private paced<T>(work: () => Promise<T>): Promise<T> {
+    const mine = this.turn.then(async () => {
+      const waited = Date.now() - this.lastRequestAt;
+      if (waited < this.minIntervalMs) await sleep(this.minIntervalMs - waited);
+      try {
+        return await work();
+      } finally {
+        this.lastRequestAt = Date.now();
+      }
+    });
+    // The queue must not break on a failed request, and must not report that failure twice.
+    this.turn = mine.then(
+      () => undefined,
+      () => undefined,
+    );
+    return mine;
+  }
 
   /** The time of the newest committed masterchain block, which is the scan's ceiling. */
   async utime(): Promise<number> {
@@ -95,19 +160,68 @@ export class TonApi implements BlockSource {
     for (const [key, value] of Object.entries(params)) query.set(key, String(value));
     const url = `${this.config.apiUrl.replace(/\/$/, '')}/${path}${query.size > 0 ? `?${query}` : ''}`;
 
-    const response = await fetch(url, {
-      headers: this.config.apiKey ? { 'X-API-Key': this.config.apiKey } : {},
-    });
-    if (!response.ok) {
+    const headers = this.config.apiKey ? { 'X-API-Key': this.config.apiKey } : {};
+    const maxRetries = this.config.maxRetries ?? DEFAULT_MAX_RETRIES;
+
+    for (let attempt = 0; ; attempt++) {
+      const response = await this.paced(() => fetch(url, { headers }));
+      if (response.ok) return (await response.json()) as T;
+
+      /**
+       * Refused for rate: waited out and tried again, rather than failing the poll.
+       *
+       * The pacing above is what should keep this from happening, but it cannot know what
+       * else shares the allowance — another process, another service on the same key, or the
+       * anonymous pool being busy. Retrying here turns a burst into a slow poll; failing
+       * would turn it into a payment nobody sees until the next round.
+       */
+      if (response.status === 429 && attempt < maxRetries) {
+        await discard(response);
+        const wait = retryAfterMs(response) ?? this.minIntervalMs * 2 ** (attempt + 1);
+        this.config.warn?.(
+          `ton api ${path}: rate limited, waiting ${wait}ms (attempt ${attempt + 1} of ${maxRetries})`,
+        );
+        await sleep(wait);
+        continue;
+      }
+
       /**
        * The status, and the path, and nothing from the body.
        *
-       * 429 is the one that will happen: the anonymous rate limit is about one request a
-       * second, and a poll over several wallets is more than that. The loop's backoff is the
-       * right response, so this throws and says which call was refused.
+       * Reached when the retries are spent or the refusal is something else. Whatever the
+       * poll had gathered is thrown away with it and the cursor does not move, so nothing is
+       * lost — the same window is read again next round.
        */
+      await discard(response);
       throw new Error(`ton api ${path}: HTTP ${response.status}`);
     }
-    return (await response.json()) as T;
+  }
+}
+
+/** `Retry-After`, in milliseconds, when the server said one. Seconds or an HTTP date. */
+function retryAfterMs(response: Response): number | null {
+  // Guarded, because a refusal can arrive through anything shaped like a response.
+  const header = response.headers?.get('retry-after') ?? null;
+  if (header === null) return null;
+
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 60_000);
+
+  const at = Date.parse(header);
+  if (Number.isNaN(at)) return null;
+  return Math.min(Math.max(at - Date.now(), 0), 60_000);
+}
+
+/**
+ * Read and drop a body we are not going to use.
+ *
+ * A response whose body is never consumed holds its connection open in Node's HTTP client,
+ * and a retry loop that leaks one per attempt is a slow leak on the one path that runs often.
+ */
+async function discard(response: Response): Promise<void> {
+  try {
+    await response.arrayBuffer?.();
+  } catch {
+    // A body that cannot be read is a body already gone, which is the outcome wanted.
   }
 }

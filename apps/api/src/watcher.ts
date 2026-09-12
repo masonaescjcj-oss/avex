@@ -310,6 +310,9 @@ async function main(): Promise<void> {
       const api = new TonApi({
         apiUrl: urls[0]!,
         ...(env.TON_API_KEY === undefined ? {} : { apiKey: env.TON_API_KEY }),
+        // Said out loud: a merchant reading the log should see the endpoint pushing back
+        // before they see payments arriving late, and the remedy is one line of config.
+        warn,
       });
       blocks = api;
       adapter = new TonAdapter({ acceptedAssets: accepted, warn }, api, addressBook, nativePrice);
