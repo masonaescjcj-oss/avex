@@ -385,6 +385,26 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         }
         return route.fulfill(json({ bot: data.bot ?? null }));
       }
+      if (path.includes('/api-keys/') && method === 'PATCH') {
+        const sent = JSON.parse(route.request().postData() ?? '{}');
+        posts.push({ path, body: sent });
+        if (data.patchKeyStatus === 404) {
+          // Word for word what an older API answers: Fastify's not-found, through our handler.
+          return route.fulfill(
+            json(
+              {
+                error: 'not_found',
+                message: `No route PATCH ${path}. The routes are listed at https://avexpay.net/docs.`,
+              },
+              404,
+            ),
+          );
+        }
+        const id = path.split('/').pop();
+        const row = (data.keys.data ?? []).find((entry) => entry.id === id);
+        if (row && sent.scopes) row.scopes = sent.scopes;
+        return route.fulfill(json({ ...row, message: 'Updated. The key itself is unchanged.' }));
+      }
       if (method === 'PATCH') {
         posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
         return route.fulfill(
@@ -472,14 +492,6 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       if (path.endsWith('/payout-addresses')) return route.fulfill(json(data.payouts));
       if (path.endsWith('/webhook-endpoints')) return route.fulfill(json(data.endpoints));
       if (path.endsWith('/webhook-deliveries')) return route.fulfill(json(data.deliveries));
-      if (path.includes('/api-keys/') && method === 'PATCH') {
-        const sent = JSON.parse(route.request().postData() ?? '{}');
-        posts.push({ path, body: sent });
-        const id = path.split('/').pop();
-        const row = (data.keys.data ?? []).find((entry) => entry.id === id);
-        if (row && sent.scopes) row.scopes = sent.scopes;
-        return route.fulfill(json({ ...row, message: 'Updated. The key itself is unchanged.' }));
-      }
       if (path.endsWith('/api-keys')) {
         // The real API sends what this caller may grant beside the keys themselves.
         return route.fulfill(json({ grantable: data.grantable ?? GRANTABLE, ...data.keys }));
@@ -3196,6 +3208,27 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
     const ticked = await page.$$eval('#key-scopes input:checked', (nodes) => nodes.map((n) => n.value));
     assert.deepEqual([...ticked].sort(), ['invoice:create', 'invoice:read']);
+    await context.close();
+  });
+
+  test('a route the server does not have is reported as a stale server', async () => {
+    /**
+     * These pages redeploy in seconds; the API is updated by hand on somebody's server. So the
+     * dashboard is routinely ahead of it, and the router's own answer — "No route PATCH
+     * /v1/organizations/…" — reads as a bug in the page to everyone who sees it. It has
+     * already cost this project an afternoon of looking in the wrong place.
+     */
+    const { page, context } = await open({ patchKeyStatus: 404 });
+    await openTab(page, 'API keys');
+    await page.click('#key-table button:has-text("Permissions")');
+    await page.click('#key-editor-submit');
+    await page.waitForTimeout(400);
+
+    const said = await text(page, '#flash').catch(() => '');
+    assert.match(said, /newer API than your server/);
+    assert.match(said, /install\.sh/);
+    // And not the router's own sentence, which is what somebody would otherwise paste into chat.
+    assert.equal(/No route/.test(said), false);
     await context.close();
   });
 });

@@ -1844,7 +1844,19 @@
       throw new ApiError(
         response.status,
         body.error ?? String(response.status),
-        body.message ?? 'Request failed.',
+        /**
+         * A route the server has never heard of means this page is newer than the API.
+         *
+         * These pages redeploy in seconds and the API is updated by hand on somebody's server,
+         * so the dashboard is routinely ahead of it — and the router's own answer, "No route
+         * PATCH /v1/organizations/…", reads as a bug in the page to everyone who sees it. It
+         * has already cost this project an afternoon. Saying what it actually is turns it into
+         * one instruction.
+         */
+        response.status === 404 && /^No route /.test(body.message ?? '')
+          ? 'This part of the dashboard needs a newer API than your server is running. ' +
+            'Update it with deploy/install.sh, then reload this page.'
+          : body.message ?? 'Request failed.',
         path,
         body.requestId ?? null,
       );
