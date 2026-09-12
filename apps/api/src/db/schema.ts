@@ -1548,6 +1548,16 @@ export const checkoutSessions = pgTable(
 
     /** The merchant's own order id. Doubles as the idempotency key, as on invoices. */
     reference: text('reference'),
+
+    /**
+     * Whether this session still *holds* that order id — see `invoices.referenceActive`,
+     * which this mirrors and for the same reason.
+     *
+     * Turned off when the session expires or is cancelled, so the shop's next "pay for order
+     * #1234" produces a new link rather than the dead one. A paid session keeps it: handing a
+     * second link to an order already paid is how a customer pays twice.
+     */
+    referenceActive: boolean('reference_active').notNull().default(true),
     /** What the merchant is charging, in micro-dollars. */
     amountFiatMicros: numeric('amount_fiat_micros', { precision: 78, scale: 0 }).notNull(),
     /** Shown to the payer above the amount, so they know what they are paying for. */
@@ -1596,10 +1606,14 @@ export const checkoutSessions = pgTable(
      * A merchant retrying "checkout for order #1234" after a timeout must get the same
      * session back — two payment links for one order means a customer can be shown
      * either, and only one of them will ever be marked paid.
+     *
+     * Once the session is dead, though, that reasoning inverts: the only link is one nobody
+     * can pay, and holding the order id hostage to it means the customer can never be sent
+     * to pay again. So the index covers only sessions that still hold their reference.
      */
     uniqueIndex('checkout_sessions_org_reference_key')
       .on(table.organizationId, table.reference)
-      .where(sql`${table.reference} is not null`),
+      .where(sql`${table.reference} is not null and ${table.referenceActive}`),
   ],
 );
 

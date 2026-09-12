@@ -169,8 +169,28 @@ export class CheckoutService {
     actor: { readonly userId: string | null; readonly apiKeyId: string | null },
   ): Promise<{ readonly session: typeof checkoutSessions.$inferSelect; readonly created: boolean }> {
     if (input.reference) {
-      const existing = await this.findByReference(organizationId, input.reference);
-      if (existing) return { session: existing, created: false };
+      const found = await this.findByReference(organizationId, input.reference);
+      if (found) {
+        /**
+         * Settled first, because a session's death is lazy: nothing sweeps these rows, so a
+         * session whose deadline passed an hour ago is still `open` in the table until
+         * somebody looks at it. Looking at it here is what makes the check below true.
+         */
+        const existing = await this.settleStatus(found, new Date());
+        if (existing.status !== 'expired' && existing.status !== 'cancelled') {
+          return { session: existing, created: false };
+        }
+
+        /**
+         * Dead, so the order id is released and a new session opened for it.
+         *
+         * Returning the dead one is what a merchant hit: the customer's payment window had
+         * closed, the shop sent them back to pay, and the link they were handed was the same
+         * expired link — every time, for good. An order that cannot be paid is worse than two
+         * links for one order, which is what the reference exists to prevent.
+         */
+        await this.releaseReference(existing.id);
+      }
     }
 
     /**
@@ -258,7 +278,9 @@ export class CheckoutService {
     }
     await this.db
       .update(checkoutSessions)
-      .set({ status: 'cancelled' })
+      // The order id goes with it: a merchant who withdrew this checkout may well issue
+      // another for the same order, and nothing dead should stand in the way.
+      .set({ status: 'cancelled', referenceActive: false })
       .where(eq(checkoutSessions.id, sessionId));
   }
 
@@ -767,6 +789,7 @@ export class CheckoutService {
     );
   }
 
+  /** The session still holding a merchant's order id, dead or alive; `create` decides which. */
   private async findByReference(organizationId: string, reference: string) {
     const [row] = await this.db
       .select()
@@ -775,10 +798,19 @@ export class CheckoutService {
         and(
           eq(checkoutSessions.organizationId, organizationId),
           eq(checkoutSessions.reference, reference),
+          eq(checkoutSessions.referenceActive, true),
         ),
       )
       .limit(1);
     return row ?? null;
+  }
+
+  /** Let go of the order id, so the next checkout for it is a new one. Never taken back. */
+  private async releaseReference(sessionId: string): Promise<void> {
+    await this.db
+      .update(checkoutSessions)
+      .set({ referenceActive: false })
+      .where(eq(checkoutSessions.id, sessionId));
   }
 
   private async invoiceRow(invoiceId: string) {
@@ -989,6 +1021,25 @@ export class CheckoutService {
           .returning();
         return updated ?? session;
       }
+
+      /**
+       * A chosen session is over when its *invoice* is over.
+       *
+       * Not when the session's own clock runs out — that is the rule immediately below, and
+       * it is deliberately the other way round: the invoice carries the deadline the payer is
+       * actually watching, so a session must outlive its own expiry while money may still be
+       * arriving. But once the invoice is dead there is nothing left to pay, and a row that
+       * sits at `selected` for ever is a row still holding the merchant's order id — which is
+       * how an order became impossible to pay again after one abandoned checkout.
+       */
+      if (invoice && (invoice.status === 'expired' || invoice.expiresAt.getTime() <= now.getTime())) {
+        const [updated] = await this.db
+          .update(checkoutSessions)
+          .set({ status: 'expired', referenceActive: false })
+          .where(eq(checkoutSessions.id, session.id))
+          .returning();
+        return updated ?? session;
+      }
     }
 
     /**
@@ -1001,11 +1052,12 @@ export class CheckoutService {
     if (session.status === 'open' && session.expiresAt.getTime() <= now.getTime()) {
       const [updated] = await this.db
         .update(checkoutSessions)
-        .set({ status: 'expired' })
+        .set({ status: 'expired', referenceActive: false })
         .where(eq(checkoutSessions.id, session.id))
         .returning();
       return updated ?? session;
     }
+
 
     return session;
   }

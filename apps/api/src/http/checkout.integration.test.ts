@@ -433,6 +433,97 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     assert.equal(second.json().id, first.json().id);
   });
 
+  test('a checkout whose window closed lets the order be paid again', async () => {
+    /**
+     * The merchant's report, and the reason this changed. The customer opened the link,
+     * chose TON, wandered off, and came back after the window had closed. The shop sent them
+     * to pay again — and handed them the same dead link, which said the payment had expired.
+     * It said that on every attempt afterwards too. The order could not be paid at all.
+     */
+    const asset = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const reference = `order-${unique}-expired`;
+
+    const first = await createCheckout({ amountFiatMicros: '1000000', reference });
+    assert.equal(first.statusCode, 201);
+    // Far enough in that the payer has chosen a currency: the case the merchant was in.
+    assert.equal((await select(first.json().id, asset)).statusCode, 200);
+
+    /**
+     * Age both clocks, which is how they run in production: `select` gives the invoice what
+     * is left of the session's life, so the two die together.
+     */
+    const [chosen] = await db
+      .select({ invoiceId: schema.checkoutSessions.invoiceId })
+      .from(schema.checkoutSessions)
+      .where(eq(schema.checkoutSessions.id, first.json().id));
+    const past = new Date(Date.now() - 60_000);
+    await db
+      .update(schema.invoices)
+      .set({ expiresAt: past })
+      .where(eq(schema.invoices.id, chosen!.invoiceId!));
+    await db
+      .update(schema.checkoutSessions)
+      .set({ expiresAt: past })
+      .where(eq(schema.checkoutSessions.id, first.json().id));
+
+    const again = await createCheckout({ amountFiatMicros: '1000000', reference });
+    assert.equal(again.statusCode, 201, `a new link, not the dead one: ${again.body}`);
+    assert.notEqual(again.json().id, first.json().id);
+
+    // The new link is payable, which is the whole point.
+    const options = await optionsFor(again.json().id);
+    assert.equal(options.statusCode, 200, options.body);
+
+    // And it is now the one the order names, so a retry still converges on one link.
+    const retry = await createCheckout({ amountFiatMicros: '1000000', reference });
+    assert.equal(retry.statusCode, 200);
+    assert.equal(retry.json().id, again.json().id);
+
+    // The dead one is recorded as dead rather than left looking open forever.
+    const [settled] = await db
+      .select({ status: schema.checkoutSessions.status })
+      .from(schema.checkoutSessions)
+      .where(eq(schema.checkoutSessions.id, first.json().id));
+    assert.equal(settled!.status, 'expired');
+  });
+
+  test('a cancelled checkout releases the order; a paid one never does', async () => {
+    await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+
+    const cancelledRef = `order-${unique}-cancelled`;
+    const cancelled = await createCheckout({ amountFiatMicros: '1000000', reference: cancelledRef });
+    const removed = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${orgId}/checkouts/${cancelled.json().id as string}/cancel`,
+      headers: auth(),
+    });
+    assert.equal(removed.statusCode, 200, removed.body);
+
+    const replacement = await createCheckout({
+      amountFiatMicros: '1000000',
+      reference: cancelledRef,
+    });
+    assert.equal(replacement.statusCode, 201, 'a withdrawn checkout must not block the order');
+    assert.notEqual(replacement.json().id, cancelled.json().id);
+
+    /**
+     * A paid checkout is the opposite case and the reason none of this keys on "not open":
+     * handing out a second link for an order already paid is how a customer pays twice.
+     */
+    const paidRef = `order-${unique}-paid`;
+    const paid = await createCheckout({ amountFiatMicros: '1000000', reference: paidRef });
+    await db
+      .update(schema.checkoutSessions)
+      .set({ status: 'paid', paidAt: new Date(), expiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(schema.checkoutSessions.id, paid.json().id));
+
+    const asked = await createCheckout({ amountFiatMicros: '1000000', reference: paidRef });
+    assert.equal(asked.statusCode, 200, asked.body);
+    assert.equal(asked.json().id, paid.json().id);
+  });
+
   // ── the payer opens the link ───────────────────────────────────────────────
 
   test('the payer view carries the return addresses the merchant gave', async () => {
