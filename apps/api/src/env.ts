@@ -64,6 +64,19 @@ const schema = z.object({
   /** Public origin, used in verification links. */
   APP_URL: z.string().url().default('http://localhost:3000'),
 
+  /**
+   * Where this API answers from the public internet.
+   *
+   * Separate from `APP_URL`, which is the pages origin. Needed because Telegram has to be
+   * told a URL to deliver a bot's updates to, and only this process knows what that is —
+   * `APP_URL` would send them to the static site, where nothing would answer.
+   *
+   * Optional, and its absence is not fatal: everything except connecting a Telegram bot
+   * works without it, and a merchant who tries is told plainly that the server has not been
+   * given its own address rather than having a broken webhook registered on their behalf.
+   */
+  PUBLIC_API_URL: z.string().url().optional(),
+
   SESSION_TTL_HOURS: z.coerce.number().int().positive().default(24 * 14),
   EMAIL_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(60),
 
@@ -244,6 +257,22 @@ const schema = z.object({
    * their payment. Defaulted only so development boots; production sets it.
    */
   MEMO_SECRET: z.string().min(16).default('development-memo-secret-do-not-ship'),
+
+  /**
+   * The key that encrypts secrets we have to be able to read back.
+   *
+   * One thing uses it today: a merchant's Telegram bot token, which has to be presented to
+   * Telegram on every call and so cannot be hashed like every other credential here.
+   *
+   * Defaulted so development boots, and the default is useless on purpose — a server running
+   * on it is a server whose stored tokens are readable by anyone who reads the database.
+   * `install.sh` generates a real one and appends it to an existing `api.env` that predates
+   * this key, because the installer skips configuration entirely when the file already exists.
+   *
+   * Losing it loses the tokens: they cannot be recovered, and every merchant would have to
+   * connect their bot again. It is worth the same care as the database password.
+   */
+  TOKEN_ENCRYPTION_KEY: z.string().min(16).default('development-token-key-do-not-ship'),
 
   /**
    * Origins allowed to call the payer-facing checkout routes from a browser.

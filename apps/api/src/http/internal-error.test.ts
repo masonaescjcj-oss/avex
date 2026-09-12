@@ -62,6 +62,7 @@ function serverThatFails() {
     feePlans: stub,
     invoiceCreation: stub,
     checkouts: stub,
+    telegram: stub,
     minPriceSources: 2,
   });
 }

@@ -504,8 +504,10 @@ export const assetKindEnum = pgEnum('asset_kind', [
    *
    * Included because merchants selling inside Telegram want one set of orders and one
    * webhook stream, not two. What AVEX can honestly offer for Stars is narrower than for
-   * crypto, and the narrowness is structural rather than a gap to fill later — see
-   * `telegram_payments` below.
+   * crypto, and the narrowness is structural rather than a gap to fill later: the Stars land
+   * in the merchant's own bot balance, so AVEX is the record and never the custodian. A Stars
+   * payment is a `payments` row keyed on Telegram's charge id; `telegram_bots` below holds
+   * the bot we drive on the merchant's behalf, where they asked us to drive it.
    */
   'stars',
 ]);
@@ -1617,3 +1619,69 @@ export const checkoutSessions = pgTable(
   ],
 );
 
+/**
+ * A merchant's Telegram bot, where they have asked AVEX to run the Stars checkout for them.
+ *
+ * Optional, and the product works without it: a merchant can create the Telegram invoice from
+ * their own bot and report the payment to us, which is the integration that needs nothing
+ * stored here. This row is for the other answer — put Stars on the hosted checkout beside TON
+ * and USDT, and let us do the talking.
+ *
+ * ## One bot, one organisation
+ *
+ * Both columns are unique and both have to be. A bot has exactly one webhook: pointing a
+ * second organisation at the same bot would silently take the first one's payments away, and
+ * the first would find out when a customer paid and nothing happened.
+ */
+export const telegramBots = pgTable(
+  'telegram_bots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+
+    /** Telegram's own numeric id for the bot, as text. Stable for the bot's life. */
+    botId: text('bot_id').notNull(),
+    /** `@name`, for showing the merchant which bot is connected. Can change; not relied on. */
+    username: text('username').notNull(),
+
+    /**
+     * The bot token, encrypted — not hashed.
+     *
+     * The only credential in this database that has to survive a round trip, because it is
+     * presented to Telegram on every call. Sealed with `SecretBox` and bound to this row's
+     * id, so a ciphertext moved to another organisation's row will not open.
+     */
+    tokenSealed: text('token_sealed').notNull(),
+
+    /**
+     * What Telegram echoes back in `X-Telegram-Bot-Api-Secret-Token` on every delivery.
+     *
+     * The webhook is a public URL taking unauthenticated POSTs, so this is the whole of its
+     * authentication. Random per bot, and never shown to anyone.
+     */
+    webhookSecret: text('webhook_secret').notNull(),
+
+    /**
+     * Where to send updates that are not about payment, when the merchant gave a URL.
+     *
+     * A bot has one webhook, so connecting it here takes over every update it receives —
+     * including the messages a merchant's own shop bot needs. Forwarding is what makes that
+     * non-destructive: we answer the payment updates, which are ours, and hand the rest
+     * straight on. Null means the merchant is using a bot that does nothing else.
+     */
+    forwardUrl: text('forward_url'),
+
+    /** When `getMe` last proved the token still works. */
+    verifiedAt: timestamp('verified_at', { withTimezone: true }).notNull().defaultNow(),
+    /** When Telegram last delivered anything here, so a silent webhook is visible. */
+    lastUpdateAt: timestamp('last_update_at', { withTimezone: true }),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('telegram_bots_org_key').on(table.organizationId),
+    uniqueIndex('telegram_bots_bot_key').on(table.botId),
+  ],
+);

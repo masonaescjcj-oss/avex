@@ -90,7 +90,7 @@ app_url='' tron_rpc=''
 # never assigned. `--selftest` fills in only a couple of these and was failing on the first
 # one it had not — an unbound variable rather than a chain skipped, which is what the blank
 # answer to each prompt is supposed to mean.
-bsc_rpc='' polygon_rpc='' ethereum_rpc='' solana_rpc='' ton_api='' ton_key=''
+bsc_rpc='' polygon_rpc='' ethereum_rpc='' solana_rpc='' ton_api='' ton_key='' token_key=''
 
 # ── output ───────────────────────────────────────────────────────────────────
 
@@ -598,6 +598,7 @@ write_env_file() {
     rpc_urls="${rpc_urls:+$rpc_urls,}$entry"
   done
   memo_secret=$(openssl rand -hex 24)
+  token_key=$(openssl rand -hex 24)
 
   umask 077
   cat > "$ENV_FILE" <<ENVFILE
@@ -641,6 +642,11 @@ $(optional_line TON_API_KEY "$ton_key")
 # so a guessable one would let a stranger claim someone else's payment.
 MEMO_SECRET=$(quote_env "$memo_secret")
 
+# Generated here, once. Encrypts secrets we must read back rather than hash —
+# today a merchant Telegram bot token. Losing it loses those tokens, and every
+# merchant would have to connect their bot again.
+TOKEN_ENCRYPTION_KEY=$(quote_env "$token_key")
+
 # EVM chains: fill these in after running contracts/deploy.mjs. Both halves of a
 # chain or neither — a factory without its logic address derives addresses that
 # nothing can ever settle.
@@ -663,6 +669,7 @@ configure() {
       warn "kept the old configuration at $backup"
     else
       skip "$ENV_FILE — pass --reconfigure to change it"
+      backfill_generated_secrets
       return
     fi
   fi
@@ -671,6 +678,33 @@ configure() {
   write_env_file
   unset db_url direct_url smtp_url
   info "wrote $ENV_FILE (0600, $SERVICE_USER)"
+}
+
+# Keys this script generates itself, appended to an api.env written before they existed.
+#
+# Without this a new generated secret never reaches a server that is already running: the
+# block above returns early whenever the file exists, which is every upgrade. Nothing is
+# asked and nothing is overwritten — a key already present is left exactly as it is, because
+# regenerating one would make every value it protects unreadable.
+backfill_generated_secrets() {
+  local key value added=0
+
+  for key in TOKEN_ENCRYPTION_KEY; do
+    grep -q "^$key=" "$ENV_FILE" && continue
+
+    value=$(openssl rand -hex 24)
+    case $key in
+      TOKEN_ENCRYPTION_KEY)
+        printf '\n# Generated here, once. Encrypts secrets we must read back rather than\n# hash — today a merchant Telegram bot token. Losing it loses those tokens.\n%s=%s\n' \
+          "$key" "$(quote_env "$value")" >> "$ENV_FILE"
+        ;;
+    esac
+    added=$(( added + 1 ))
+    info "added $key to $ENV_FILE"
+  done
+
+  (( added == 0 )) && skip "no generated keys were missing"
+  return 0
 }
 
 # ── the settlement key ───────────────────────────────────────────────────────
@@ -1098,7 +1132,7 @@ selftest() {
   # Every key the API refuses to boot without, plus the two whose absence is silent.
   for check in NODE_ENV PORT HOST DATABASE_URL DIRECT_DATABASE_URL APP_URL SMTP_URL MAIL_FROM \
                OPERATOR_EMAIL CHECKOUT_ORIGINS DASHBOARD_ORIGINS EVM_RPC_URLS \
-               SOLANA_RPC_URLS TON_API_URL MEMO_SECRET; do
+               SOLANA_RPC_URLS TON_API_URL MEMO_SECRET TOKEN_ENCRYPTION_KEY; do
     if grep -q "^$check='" "$ENV_FILE"; then
       line "$check" 'present'
     else

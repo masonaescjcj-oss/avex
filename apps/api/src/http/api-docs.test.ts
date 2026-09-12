@@ -68,6 +68,23 @@ const INTERNAL = new Set([
    * the existence of a credential that gates the webhook queue. See docs/DEPLOY.md.
    */
   'POST /internal/jobs',
+  /**
+   * Telegram's own delivery endpoint. Telegram is not an audience for the API reference: it
+   * has no integration to write, and the URL is handed to it by `setWebhook` rather than
+   * being looked up. The merchant-facing half of Stars *is* documented.
+   */
+  'POST /telegram/updates/:botId',
+  /**
+   * Connecting a bot is dashboard configuration rather than an integration surface.
+   *
+   * The reference documents the two ways a merchant takes Stars — their own bot reporting a
+   * charge, and the hosted checkout — and neither asks anyone to POST a bot token by hand.
+   * Publishing routes that take one would invite exactly that.
+   */
+  'GET /v1/organizations/:orgId/telegram-bot',
+  'PUT /v1/organizations/:orgId/telegram-bot',
+  'PATCH /v1/organizations/:orgId/telegram-bot',
+  'DELETE /v1/organizations/:orgId/telegram-bot',
 ]);
 
 /** Everything below these prefixes is out of scope for a merchant-facing reference. */
@@ -126,6 +143,7 @@ async function serverRoutes(): Promise<Set<string>> {
     feePlans: stub,
     invoiceCreation: stub,
     checkouts: stub,
+    telegram: stub,
     minPriceSources: 2,
   });
   await app.ready();

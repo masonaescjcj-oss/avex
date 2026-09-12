@@ -56,6 +56,7 @@ const BASE: Env = {
   OPERATOR_EMAIL: undefined,
   SHARED_DEPOSIT_WALLETS: {},
   FEE_COLLECTORS: {},
+  TOKEN_ENCRYPTION_KEY: 'a-token-encryption-key-for-this-test',
   MEMO_SECRET: 'a-memo-secret-for-this-test',
   CHECKOUT_ORIGINS: [],
   DASHBOARD_ORIGINS: [],

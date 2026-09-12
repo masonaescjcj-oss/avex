@@ -338,6 +338,33 @@ export class MerchantService {
    * Idempotent on Telegram's own `telegram_payment_charge_id`. A bot that retries its
    * forward, or receives the same update twice, must not credit twice.
    */
+  /**
+   * One Stars invoice, as the pre-checkout answer needs to see it.
+   *
+   * Narrow on purpose. Telegram gives us ten seconds to say yes or no to a charge, and the
+   * only honest basis for that answer is our own row: whose invoice it is, whether it is
+   * still open, and what it asks for. Nothing else about the invoice is needed, so nothing
+   * else is fetched.
+   */
+  async starsInvoiceFor(organizationId: string, invoiceId: string) {
+    const [row] = await this.db
+      .select({
+        id: invoices.id,
+        status: invoices.status,
+        amountDue: invoices.amountDue,
+        assetKind: assets.kind,
+      })
+      .from(invoices)
+      .innerJoin(assets, eq(assets.id, invoices.assetId))
+      .where(and(eq(invoices.id, invoiceId), eq(invoices.organizationId, organizationId)))
+      .limit(1);
+
+    // A crypto invoice reached through a Stars payload is not a near miss to be tolerated:
+    // it is a payload that does not belong to this order.
+    if (!row || row.assetKind !== 'stars') return null;
+    return row;
+  }
+
   async recordStarsPayment(
     organizationId: string,
     invoiceId: string,

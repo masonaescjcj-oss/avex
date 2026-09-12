@@ -37,6 +37,7 @@ import { FeePlanService } from '../domain/fee-plan-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import { WebhookService } from '../domain/webhook-service.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
+import { testTelegramService } from '../domain/telegram-bot-testing.js';
 import { loadEnv } from '../env.js';
 import { ConsoleMailer } from '../mailer.js';
 import { buildServer } from './server.js';
@@ -202,6 +203,7 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
       db,
       audit,
       mailer,
+      telegram: testTelegramService(db, audit),
       minPriceSources: DEFAULT_AGGREGATION.minSources,
       payouts: new PayoutAddressService(db, audit, mailer),
       invites: new InviteService(db, audit),

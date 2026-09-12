@@ -42,6 +42,7 @@ import { InvoiceCreationService } from '../domain/invoice-creation.js';
 import { FeePlanService } from '../domain/fee-plan-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
+import { testTelegramService } from '../domain/telegram-bot-testing.js';
 import { totpCode } from '../auth/totp.js';
 import { hashToken } from '../auth/tokens.js';
 import { loadEnv } from '../env.js';
@@ -219,6 +220,7 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
 
     app = buildServer({
       ledger: new CommissionLedger(database.db),
+      telegram: testTelegramService(database.db, audit),
       walletPool: new WalletPoolService(database.db),
       walletChanges: new WalletPoolChanges(
         database.db,
@@ -886,6 +888,7 @@ describe('pricing', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =
 
     app = buildServer({
       ledger: new CommissionLedger(database.db),
+      telegram: testTelegramService(database.db, audit),
       walletPool: new WalletPoolService(database.db),
       walletChanges: new WalletPoolChanges(
         database.db,
@@ -1096,6 +1099,7 @@ describe('assets', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () =>
 
     app = buildServer({
       ledger: new CommissionLedger(database.db),
+      telegram: testTelegramService(database.db, audit),
       walletPool: new WalletPoolService(database.db),
       walletChanges: new WalletPoolChanges(
         database.db,
@@ -1408,6 +1412,7 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
 
     app = buildServer({
       ledger: new CommissionLedger(database.db),
+      telegram: testTelegramService(database.db, audit),
       walletPool: new WalletPoolService(database.db),
       walletChanges: new WalletPoolChanges(
         database.db,

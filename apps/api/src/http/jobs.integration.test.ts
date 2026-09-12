@@ -25,6 +25,7 @@ import { ReconciliationService } from '../domain/reconciliation-service.js';
 import { SettlementStore } from '../domain/settlement-store.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
 import { WebhookService } from '../domain/webhook-service.js';
+import { testTelegramService } from '../domain/telegram-bot-testing.js';
 import { loadEnv } from '../env.js';
 import { JOB_NAMES } from '../jobs.js';
 import { ConsoleMailer } from '../mailer.js';
@@ -128,6 +129,7 @@ function boot(
     audit,
     mailer,
     prices,
+    telegram: testTelegramService(db, audit),
     minPriceSources: DEFAULT_AGGREGATION.minSources,
     assets: new AssetService(db, audit, new ContractProbe(offlineCaller), ['USDT']),
     payouts: new PayoutAddressService(db, audit, mailer),

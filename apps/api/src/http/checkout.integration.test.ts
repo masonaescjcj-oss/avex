@@ -32,6 +32,7 @@ import { SettlementStore } from '../domain/settlement-store.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
 import { FeePlanService } from '../domain/fee-plan-service.js';
 import { WebhookService } from '../domain/webhook-service.js';
+import { testTelegramService } from '../domain/telegram-bot-testing.js';
 import { loadEnv } from '../env.js';
 import { ConsoleMailer } from '../mailer.js';
 import { buildServer } from './server.js';
@@ -181,6 +182,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
       audit,
       mailer,
       prices,
+      telegram: testTelegramService(db, audit),
       minPriceSources: DEFAULT_AGGREGATION.minSources,
       assets: new AssetService(db, audit, new ContractProbe(offlineCaller), ['USDT']),
       payouts: new PayoutAddressService(db, audit, mailer),

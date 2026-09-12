@@ -18,6 +18,8 @@ import { AssetService } from './domain/asset-service.js';
 import { AuditService } from './domain/audit.js';
 import { AuthService } from './domain/auth-service.js';
 import { CheckoutService } from './domain/checkout-service.js';
+import { FetchTelegramTransport, TelegramBotService } from './domain/telegram-bot-service.js';
+import { SecretBox } from './auth/secret-box.js';
 import { depositAddressConfig } from './domain/deposit-address-config.js';
 import { DepositAddressDeriver } from './domain/deposit-address.js';
 import { CommissionLedger } from './domain/commission-ledger.js';
@@ -294,6 +296,13 @@ export function compose(options: ComposeOptions): Composed {
       audit,
       ledger,
       minimums,
+    ),
+    telegram: new TelegramBotService(
+      db,
+      audit,
+      new SecretBox(env.TOKEN_ENCRYPTION_KEY),
+      new FetchTelegramTransport(),
+      env.PUBLIC_API_URL,
     ),
     webhooks,
     feePlans,

@@ -211,6 +211,13 @@
       "when": 1789194693447,
       "tag": "0029_dead_checkout_releases_reference",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1789198882342,
+      "tag": "0030_telegram_bots",
+      "breakpoints": true
     }
   ]
 }

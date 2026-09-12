@@ -49,6 +49,7 @@ import type { WebhookService } from '../domain/webhook-service.js';
 import { StaffAuthError } from '../domain/staff-auth.js';
 import { CheckoutError } from '../domain/checkout-service.js';
 import type { CheckoutService } from '../domain/checkout-service.js';
+import type { TelegramBotService } from '../domain/telegram-bot-service.js';
 import { InvoiceCreationError } from '../domain/invoice-creation.js';
 import type { InvoiceCreationService } from '../domain/invoice-creation.js';
 import type { StaffAuthService, StaffPrincipal } from '../domain/staff-auth.js';
@@ -69,6 +70,7 @@ import {
 } from './routes/admin.js';
 import { registerAssetRoutes } from './routes/assets.js';
 import { checkoutErrorResponse, registerCheckoutRoutes } from './routes/checkout.js';
+import { registerTelegramRoutes } from './routes/telegram.js';
 import { JOB_NAMES, isJobName, runAllJobs, runJob } from '../jobs.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
@@ -132,6 +134,8 @@ export interface AppContext {
   readonly walletChanges: WalletPoolChanges;
   readonly invoiceCreation: InvoiceCreationService;
   readonly checkouts: CheckoutService;
+  /** The merchant's Telegram bot, where they asked us to run the Stars checkout for them. */
+  readonly telegram: TelegramBotService;
   /** Aggregation minimum, so coverage gaps can be reported as such. */
   readonly minPriceSources: number;
 }
@@ -168,6 +172,15 @@ const PUBLIC_ROUTES = new Set([
    * "the principal middleware does not apply", never in the sense of "anybody may call it".
    */
   'POST /internal/jobs',
+  /**
+   * Telegram's updates for a merchant's connected bot.
+   *
+   * No principal, because Telegram has no account here and cannot be given one. It is not
+   * open either: every delivery must present the per-bot `secret_token` we gave Telegram at
+   * `setWebhook`, and one that does not is answered with the same empty 200 as one that does,
+   * so probing it learns nothing. See the route.
+   */
+  'POST /telegram/updates/:botId',
 ]);
 
 /**
@@ -686,6 +699,7 @@ export function buildServer(context: AppContext): FastifyInstance {
   registerDepositWalletRoutes(app, context);
   registerMerchantRoutes(app, context);
   registerCheckoutRoutes(app, context);
+  registerTelegramRoutes(app, context);
   registerAdminRoutes(app, context);
 
   return app;
