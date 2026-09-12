@@ -52,7 +52,10 @@ import type { TonApi } from './TonApi.js';
  * wallet, and counting those as native TON payments would credit a nanoton of dust against
  * an open invoice for every jetton payment received.
  *
- * An aborted transaction is skipped: it moved nothing, whatever it says it intended.
+ * An aborted transaction is *not* automatically skipped — see `landed`. On TON the credit
+ * phase runs before the compute phase, so a transfer into an account with no code deployed
+ * reports `aborted` and credits the money anyway. Reading that flag as "the transfer failed"
+ * made every payment into a fresh wallet invisible.
  */
 
 /** Where a transfer's recipient is looked up, to decide whether it is ours. */
@@ -106,9 +109,18 @@ interface TonTransaction {
     readonly source?: string | null;
     readonly destination?: string | null;
     readonly value?: string | null;
+    /** Whether the sender asked for the value back if the account could not accept it. */
+    readonly bounce?: boolean | null;
+    /** Whether this message *is* a bounce coming back — a refund, not a payment. */
+    readonly bounced?: boolean | null;
     readonly message_content?: { readonly decoded?: DecodedComment | null } | null;
   } | null;
-  readonly description?: { readonly aborted?: boolean } | null;
+  readonly description?: {
+    readonly aborted?: boolean;
+    readonly destroyed?: boolean;
+    /** What the account was actually credited, before anything was computed. */
+    readonly credit_ph?: { readonly credit?: string | null } | null;
+  } | null;
 }
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -305,46 +317,98 @@ export class TonAdapter implements ChainAdapter {
 
     const payments: IncomingPayment[] = [];
     for (const row of rows) {
-      if (row.description?.aborted === true) continue;
-      const inbound = row.in_msg;
-      if (!inbound || row.hash === undefined) continue;
-      if (inbound.value === null || inbound.value === undefined) continue;
+      const payment = this.nativePaymentFrom(row, wallet, native, to);
+      if (payment === null) continue;
+      if ((await this.addressBook.lookup(wallet)) === null) continue;
+      payments.push(payment);
+    }
 
-      const amount = BigInt(inbound.value);
-      if (amount <= 0n) continue;
+    return payments;
+  }
 
-      /**
-       * Only a wallet's own kind of message. Anything else is a contract talking to this
-       * account, and the one that matters is `jetton_notify`: it accompanies every jetton
-       * payment with one nanoton attached, and counting those as TON payments would put a
-       * speck of dust against an open invoice each time somebody paid in USDT.
-       */
-      const decoded = inbound.message_content?.decoded ?? null;
-      const kind = typeof decoded === 'object' && decoded !== null ? decoded['@type'] : undefined;
-      if (decoded !== null && (kind === undefined || !NATIVE_BODIES.has(kind))) continue;
+  /**
+   * One transaction row, as a payment into one wallet — or nothing.
+   *
+   * Extracted so that replaying a transaction by hand runs *this* code rather than a second
+   * copy of it. The rule about which transfers actually landed is subtle enough to have cost
+   * two real payments once already, and a recovery tool that re-implemented it would be a
+   * second place for the same mistake to live.
+   *
+   * Pure: no I/O, so the caller does the address-book lookup and decides what a wallet is.
+   */
+  nativePaymentFrom(
+    row: TonTransaction,
+    wallet: string,
+    native: Asset,
+    fallbackTime: number,
+  ): IncomingPayment | null {
+    const inbound = row.in_msg;
+    if (!inbound || row.hash === undefined) return null;
+    if (inbound.value === null || inbound.value === undefined) return null;
 
-      if (inbound.destination !== null && inbound.destination !== undefined) {
-        if (!sameAddress(inbound.destination, wallet)) continue;
-      }
+    const amount = BigInt(inbound.value);
+    if (amount <= 0n) return null;
+
+    if (!landed(row)) return null;
+
+    /**
+     * Only a wallet's own kind of message. Anything else is a contract talking to this
+     * account, and the one that matters is `jetton_notify`: it accompanies every jetton
+     * payment with one nanoton attached, and counting those as TON payments would put a
+     * speck of dust against an open invoice each time somebody paid in USDT.
+     */
+    const decoded = inbound.message_content?.decoded ?? null;
+    const kind = typeof decoded === 'object' && decoded !== null ? decoded['@type'] : undefined;
+    if (decoded !== null && (kind === undefined || !NATIVE_BODIES.has(kind))) return null;
+
+    if (inbound.destination !== null && inbound.destination !== undefined) {
+      if (!sameAddress(inbound.destination, wallet)) return null;
+    }
+
+    const memo = commentOf(decoded);
+    const sender = friendlyOrUndefined(inbound.source);
+
+    return {
+      chain: this.chain,
+      txHash: hashToHex(row.hash),
+      // One transaction belongs to one account on TON, so a native credit is always the
+      // first and only one at this hash.
+      transferIndex: 0,
+      to: wallet,
+      ...(sender === undefined ? {} : { from: sender }),
+      ...(memo === undefined ? {} : { memo }),
+      asset: native,
+      amount,
+      blockNumber: row.now ?? fallbackTime,
+      confirmations: 1,
+    };
+  }
+
+  /**
+   * A single transaction, fetched by its hash, as payments.
+   *
+   * For the transfer the watcher never saw — a poll that failed, a window that closed, or a
+   * rule that was wrong when it ran. The hash is whatever an explorer shows: toncenter accepts
+   * both the base64 form and hex.
+   *
+   * The destination comes from the transaction rather than from a wallet the operator names,
+   * so a replay cannot credit the wrong account by mistyping one.
+   */
+  async paymentsForHash(hash: string, native: Asset): Promise<readonly IncomingPayment[]> {
+    const body = await this.api.get<{ transactions?: TonTransaction[] }>('transactions', { hash });
+    const rows = body.transactions ?? [];
+
+    const payments: IncomingPayment[] = [];
+    for (const row of rows) {
+      const destination = row.in_msg?.destination;
+      if (destination === null || destination === undefined) continue;
+
+      const wallet = friendlyOrUndefined(destination);
+      if (wallet === undefined) continue;
       if ((await this.addressBook.lookup(wallet)) === null) continue;
 
-      const memo = commentOf(decoded);
-      const sender = friendlyOrUndefined(inbound.source);
-
-      payments.push({
-        chain: this.chain,
-        txHash: hashToHex(row.hash),
-        // One transaction belongs to one account on TON, so a native credit is always the
-        // first and only one at this hash.
-        transferIndex: 0,
-        to: wallet,
-        ...(sender === undefined ? {} : { from: sender }),
-        ...(memo === undefined ? {} : { memo }),
-        asset: native,
-        amount,
-        blockNumber: row.now ?? to,
-        confirmations: 1,
-      });
+      const payment = this.nativePaymentFrom(row, wallet, native, row.now ?? 0);
+      if (payment !== null) payments.push(payment);
     }
 
     return payments;
@@ -389,6 +453,46 @@ export class TonAdapter implements ChainAdapter {
 
     return rows;
   }
+}
+
+/**
+ * Whether the value on an inbound message actually stayed on the account.
+ *
+ * This function is the whole of a bug that cost a merchant two real payments, so it is worth
+ * being exact about. The line it replaces was `if (row.description?.aborted === true) continue`
+ * — which reads as "skip transfers that failed", and is wrong.
+ *
+ * On TON a transaction has phases, and the *credit* phase runs before the *compute* phase. An
+ * incoming transfer lands first and the contract runs afterwards. `aborted` describes the
+ * compute phase, not the money.
+ *
+ * The case that bit: a wallet that has never sent anything has no code deployed. Paying into
+ * it produces `aborted: true` with `compute_ph: { skipped: true, reason: "no_state" }` and
+ * `credit_ph: { credit: "733000000" }` — the full amount, sitting in the merchant's wallet,
+ * on a transaction this adapter threw away. Every payment to a fresh TON wallet was invisible,
+ * which is exactly the wallet a new merchant has.
+ *
+ * What genuinely does not land:
+ *
+ *   - **A bounce arriving.** `bounced: true` means this message is somebody's refund coming
+ *     back, not a payment to us.
+ *   - **A bounceable message the account could not accept.** If the sender set `bounce: true`
+ *     and the transaction aborted, the action phase returns the value, minus fees. Crediting
+ *     it would credit money the payer got back. Wallet apps send `bounce: false` to a `UQ`
+ *     address precisely so this cannot happen, which is why the checkout shows that form.
+ *   - **An account destroyed in the same transaction**, whose balance goes elsewhere.
+ */
+function landed(row: TonTransaction): boolean {
+  const inbound = row.in_msg;
+  if (!inbound) return false;
+  if (inbound.bounced === true) return false;
+
+  const description = row.description;
+  if (!description) return true;
+  if (description.destroyed === true) return false;
+
+  if (description.aborted === true && inbound.bounce === true) return false;
+  return true;
 }
 
 /** The comment on a transfer, from either kind of payload, or nothing. */

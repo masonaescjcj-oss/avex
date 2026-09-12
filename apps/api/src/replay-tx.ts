@@ -1,5 +1,8 @@
 import {
   DEFAULT_BREAKER,
+  TonAdapter,
+  TonApi,
+  rateToDecimalString,
   DEFAULT_DISPATCHER,
   NATIVE_TRANSFER_INDEX,
   FetchPoster,
@@ -78,7 +81,28 @@ interface Transaction {
 
 async function main(): Promise<void> {
   const [chainArg, txHash] = process.argv.slice(2);
-  if (!chainArg || !txHash || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+  if (!chainArg || !txHash) {
+    console.error(
+      'usage: node dist/replay-tx.js <chain> <transaction hash>\n' +
+        '       an EVM or TRON chain takes an 0x… hash; ton takes the hash an explorer shows',
+    );
+    process.exit(2);
+  }
+
+  /**
+   * TON is answered by an indexer rather than a node, so it has its own path.
+   *
+   * Split here rather than inside the RPC helper because nothing below applies: there are no
+   * receipts, no logs, no block numbers, and the transaction is fetched from toncenter by
+   * hash. What the two share is the part that matters — the same payment sink, with the same
+   * matching rules and the same idempotency.
+   */
+  if (chainArg === 'ton') {
+    await replayTon(txHash);
+    return;
+  }
+
+  if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
     console.error('usage: node dist/replay-tx.js <chain> <0x…transaction hash>');
     process.exit(2);
   }
@@ -277,3 +301,112 @@ void main().catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);
 });
+
+/**
+ * Credit one TON transaction by its hash.
+ *
+ * For the transfer the watcher never saw. There have been two: a merchant's first two TON
+ * payments, into a wallet that had never sent anything and therefore had no code deployed —
+ * which makes TON report the transaction as `aborted` even though the money lands. The adapter
+ * skipped those, and this is how the two are recovered.
+ *
+ * It deliberately reuses `TonAdapter.paymentsForHash` rather than reading the transaction
+ * itself. The rule about which transfers actually landed is subtle enough to have been wrong
+ * once; a recovery tool with its own copy of it would be a second place for the same mistake.
+ */
+async function replayTon(txHash: string): Promise<void> {
+  const env = loadEnv();
+  if (!env.TON_API_URL) {
+    console.error('no TON indexer configured (TON_API_URL)');
+    process.exit(2);
+  }
+
+  const { db, close } = createDatabase(env.DATABASE_URL, { prepare: env.DATABASE_PREPARE, max: 2 });
+  try {
+    const log = (message: string, data?: unknown): void => {
+      console.log(JSON.stringify({ at: new Date().toISOString(), message, ...(data ?? {}) }));
+    };
+    const audit = new AuditService(db);
+    const webhooks = new WebhookService(
+      db,
+      new WebhookDispatcher(new FetchPoster(DEFAULT_DISPATCHER.timeoutMs)),
+      (message) => log('webhook warning', { detail: message }),
+    );
+    const prices = new PriceService(createPriceSources(env.PRICE_SOURCES), {
+      aggregation: {
+        minSources: env.PRICE_MIN_SOURCES,
+        outlierToleranceBps: env.PRICE_OUTLIER_TOLERANCE_BPS,
+        maxDispersionBps: env.PRICE_MAX_DISPERSION_BPS,
+        maxStalenessMs: env.PRICE_MAX_STALENESS_MS,
+      },
+      breaker: DEFAULT_BREAKER,
+      cacheTtlMs: env.PRICE_CACHE_TTL_MS,
+      staleFallbackMs: env.PRICE_STALE_FALLBACK_MS,
+    });
+    const sink = new DatabasePaymentSink(
+      db,
+      audit,
+      webhooks,
+      paymentValueUsd(prices),
+      paymentValueSource(),
+      new CommissionLedger(db),
+    );
+    sink.parkUnmatchedIn(new ReconciliationService(db, audit, sink));
+
+    /**
+     * The catalogue, read the same way the watcher reads it: listed and approved only.
+     *
+     * The probe is a stub that throws — this tool never vets a contract, and passing a real
+     * one would leave a prober wired up that could make RPC calls nobody asked for.
+     */
+    const probeStub = {
+      async probe(): Promise<never> {
+        throw new Error('replay-tx does not vet contracts');
+      },
+    } as unknown as ConstructorParameters<typeof AssetService>[2];
+
+    const catalogue = await new AssetService(db, audit, probeStub, []).catalogue();
+    const accepted: Asset[] = catalogue
+      .filter((row) => row.chain === 'ton' && row.listed && row.verdict === 'approved')
+      .map((row) => ({
+        symbol: row.symbol,
+        chain: 'ton' as const,
+        decimals: row.decimals,
+        kind: row.kind as Asset['kind'],
+        ...(row.contract === null ? {} : { contract: row.contract }),
+      }));
+    const native = accepted.find((asset) => asset.kind === 'native');
+    if (!native) {
+      log('TON itself is not an accepted asset here, so a native transfer cannot be credited');
+      return;
+    }
+
+    const adapter = new TonAdapter(
+      { acceptedAssets: accepted, warn: (message) => log('ton warning', { detail: message }) },
+      new TonApi({
+        apiUrl: env.TON_API_URL,
+        ...(env.TON_API_KEY === undefined ? {} : { apiKey: env.TON_API_KEY }),
+      }),
+      new DatabaseAddressBook(db, 'ton'),
+      { nativePriceUsd: async () => Number(rateToDecimalString(await prices.requireRate('TON'), 8)) },
+    );
+
+    const payments = await adapter.paymentsForHash(txHash, native);
+    if (payments.length === 0) {
+      log('nothing in that transaction reaches a wallet we watch', { txHash });
+      return;
+    }
+
+    for (const payment of payments) {
+      const outcome = await sink.credit(payment);
+      log('replayed', {
+        outcome,
+        to: payment.to,
+        ...(payment.memo === undefined ? {} : { memo: payment.memo }),
+        amount: `${Number(payment.amount) / 10 ** native.decimals} ${native.symbol}`,
+      });
+    }
+  } finally {
+    await close();
+  }
+}

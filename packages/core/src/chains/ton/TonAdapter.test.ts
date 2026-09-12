@@ -92,17 +92,32 @@ function transaction(input: {
   readonly memo?: string;
   readonly body?: unknown;
   readonly aborted?: boolean;
+  readonly destroyed?: boolean;
+  /** What the sender asked for if the account could not accept it. */
+  readonly bounce?: boolean;
+  /** Whether this message is itself a bounce coming back. */
+  readonly bounced?: boolean;
 }): unknown {
   return {
     hash: input.hash ?? Buffer.from('b'.repeat(32)).toString('base64'),
     lt: '102304961000003',
     now: input.now ?? 1_700_000_100,
     mc_block_seqno: 91_563_667,
-    description: { aborted: input.aborted ?? false },
+    description: {
+      aborted: input.aborted ?? false,
+      destroyed: input.destroyed ?? false,
+      credit_ph: { credit: input.value },
+    },
     in_msg: {
       source: input.source ?? STRANGER_RAW,
       destination: input.destination ?? WALLET_RAW,
       value: input.value,
+      /**
+       * Non-bounceable by default, because that is what wallets send to a `UQ` address —
+       * which is the form the checkout displays, precisely so a transfer cannot come back.
+       */
+      bounce: input.bounce ?? false,
+      bounced: input.bounced ?? false,
       message_content: {
         decoded:
           input.body !== undefined
@@ -354,6 +369,98 @@ describe('watching TON', () => {
     assert.equal(calls.find((call) => call.path === 'transactions')?.params['account'], WALLET);
   });
 
+  test('a payment into a wallet with no code deployed is credited', async (t) => {
+    /**
+     * The bug that cost a merchant two real payments, reproduced from the transaction toncenter
+     * actually returned for one of them.
+     *
+     * A TON wallet that has never *sent* anything has no code deployed. Paying into it produces
+     * a transaction marked `aborted`, because the compute phase had nothing to run — and the
+     * money lands anyway, in the credit phase, which happens first. `credit_ph` says so: the
+     * full 0.733 TON.
+     *
+     * This adapter skipped every `aborted` row, so every payment into a fresh wallet was
+     * invisible. That is the wallet every new merchant has, and the invoice sat at `pending`
+     * with the money sitting in their account.
+     */
+    const { adapter, fetchMock } = adapterWith({
+      utime: 1_789_241_100,
+      assets: [TON],
+      transactions: [
+        {
+          hash: 'LuI/NPOEITFpHeuVLYkDPonBtHGOctyZKUBK1v5J3Vc=',
+          lt: '103057265000031',
+          now: 1_789_241_018,
+          description: {
+            type: 'ord',
+            aborted: true,
+            destroyed: false,
+            credit_first: true,
+            storage_ph: { storage_fees_collected: '98', status_change: 'unchanged' },
+            credit_ph: { credit: '733000000' },
+            compute_ph: { skipped: true, reason: 'no_state' },
+          },
+          in_msg: {
+            source: STRANGER_RAW,
+            destination: WALLET_RAW,
+            value: '733000000',
+            bounce: false,
+            bounced: false,
+            message_content: { decoded: comment('AVEX-74DBECA32398') },
+          },
+        },
+      ],
+    });
+    t.mock.method(global, 'fetch', fetchMock);
+
+    const result = await adapter.poll('1789241000');
+    assert.equal(result.payments.length, 1, 'aborted is about the compute phase, not the money');
+    assert.equal(result.payments[0]!.amount, 733_000_000n);
+    assert.equal(result.payments[0]!.memo, 'AVEX-74DBECA32398');
+  });
+
+  test('a bounceable transfer the account could not accept is not credited', async (t) => {
+    /**
+     * The other half, and why `aborted` cannot simply be ignored either. If the sender set
+     * `bounce: true` and the transaction aborted, the action phase sends the value back minus
+     * fees — so the payer has their money and we must not say they paid.
+     */
+    const { adapter, fetchMock } = adapterWith({
+      utime: 1_700_000_200,
+      assets: [TON],
+      transactions: [
+        transaction({ value: '5000000000', memo: 'AVEX-bounced', aborted: true, bounce: true }),
+      ],
+    });
+    t.mock.method(global, 'fetch', fetchMock);
+
+    assert.equal((await adapter.poll('1700000100')).payments.length, 0);
+  });
+
+  test('a bounce arriving is a refund, not a payment', async (t) => {
+    // Somebody else's transfer coming back through our wallet. It carries value and a source
+    // and looks like a payment in every other respect.
+    const { adapter, fetchMock } = adapterWith({
+      utime: 1_700_000_200,
+      assets: [TON],
+      transactions: [transaction({ value: '5000000000', bounced: true, body: { '@type': 'empty_cell' } })],
+    });
+    t.mock.method(global, 'fetch', fetchMock);
+
+    assert.equal((await adapter.poll('1700000100')).payments.length, 0);
+  });
+
+  test('an account destroyed in the same transaction keeps nothing', async (t) => {
+    const { adapter, fetchMock } = adapterWith({
+      utime: 1_700_000_200,
+      assets: [TON],
+      transactions: [transaction({ value: '5000000000', memo: 'AVEX-gone', destroyed: true })],
+    });
+    t.mock.method(global, 'fetch', fetchMock);
+
+    assert.equal((await adapter.poll('1700000100')).payments.length, 0);
+  });
+
   test('a jetton notification is not a nanoton of TON', async (t) => {
     /**
      * The exclusion that stops every USDT payment also crediting a speck of dust. A jetton
@@ -503,5 +610,65 @@ describe('watching TON', () => {
     assert.equal(head.number, 1_700_000_200);
     assert.equal(head.hash, 'root');
     await assert.rejects(api.blockAt(1_700_000_200), /not a block height/);
+  });
+
+  // ── recovering a transfer the watcher never saw ─────────────────────────────
+
+  test('a transaction can be credited by its hash alone', async (t) => {
+    /**
+     * How the two lost payments were recovered, and how any future one is.
+     *
+     * The destination comes from the transaction rather than from a wallet an operator names,
+     * so a replay cannot credit the wrong account by mistyping one — and the wallet still has
+     * to be in the address book, so a hash belonging to somebody else does nothing.
+     */
+    const { adapter, calls, fetchMock } = adapterWith({
+      utime: 1_789_241_100,
+      assets: [TON],
+      transactions: [
+        transaction({ value: '733000000', memo: 'AVEX-74DBECA32398', aborted: true }),
+      ],
+    });
+    t.mock.method(global, 'fetch', fetchMock);
+
+    const payments = await adapter.paymentsForHash('LuI/NPOEITFpHeuVLYkDPonBtHGOctyZKUBK1v5J3Vc=', TON);
+    assert.equal(payments.length, 1);
+    assert.equal(payments[0]!.amount, 733_000_000n);
+    assert.equal(payments[0]!.memo, 'AVEX-74DBECA32398');
+    assert.equal(payments[0]!.to, WALLET);
+    // Asked for by hash, not by account: a replay does not need to know whose wallet it was.
+    const asked = calls.find((call) => call.path === 'transactions');
+    assert.equal(asked?.params['hash'], 'LuI/NPOEITFpHeuVLYkDPonBtHGOctyZKUBK1v5J3Vc=');
+    assert.equal(asked?.params['account'], undefined);
+  });
+
+  test('a hash paying a wallet we do not watch credits nothing', async (t) => {
+    const { adapter, fetchMock } = adapterWith({
+      utime: 1_789_241_100,
+      assets: [TON],
+      watched: [],
+      transactions: [transaction({ value: '733000000', memo: 'AVEX-74DBECA32398' })],
+    });
+    t.mock.method(global, 'fetch', fetchMock);
+
+    assert.deepEqual(await adapter.paymentsForHash('whatever', TON), []);
+  });
+
+  test('replaying reuses the landing rule rather than a second copy of it', async (t) => {
+    /**
+     * A bounceable transfer that aborted went back to the sender. A recovery tool that decided
+     * for itself which transfers landed would be a second place for the mistake that cost the
+     * two payments in the first place — so it calls the same function, and this proves it.
+     */
+    const { adapter, fetchMock } = adapterWith({
+      utime: 1_789_241_100,
+      assets: [TON],
+      transactions: [
+        transaction({ value: '733000000', memo: 'AVEX-gone-back', aborted: true, bounce: true }),
+      ],
+    });
+    t.mock.method(global, 'fetch', fetchMock);
+
+    assert.deepEqual(await adapter.paymentsForHash('any-hash', TON), []);
   });
 });

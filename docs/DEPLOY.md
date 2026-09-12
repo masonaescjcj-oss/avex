@@ -175,6 +175,22 @@ chain here has: a transfer carries a text comment, and every wallet and exchange
 for it. So the invoice is identified exactly rather than inferred from its amount, and the
 amount rules are the fallback for a payer who leaves the comment out.
 
+## Crediting a transfer the watcher never saw
+
+```
+cd /opt/avex
+sudo -u avex npm run replay-tx --workspace @avex/api -- <chain> <transaction hash>
+```
+
+An EVM or TRON chain takes an `0x…` hash; `ton` takes the hash an explorer shows, in either
+the base64 or the hex form. It hands the transfer to the same payment sink the watcher uses,
+with the same matching rules and the same idempotency — replaying something already credited
+says so and changes nothing, so it is safe to run twice.
+
+It is for the transfer a poll missed: an endpoint that refused every request for an hour while
+the cursor moved past, a window that closed, or a rule that was wrong when it ran. The last of
+those has happened once, on TON — see below.
+
 ## Telegram Stars, when AVEX drives the bot
 
 A merchant can always take Stars with their own bot and report the charge over the API;
@@ -225,6 +241,23 @@ This used to be a real outage rather than a slow poll: the requests went out bac
 the second and third of every round were refused and the whole poll failed. A merchant's TON
 payment went unseen with `ton api masterchainInfo: HTTP 429` in the log. If you see a 429 now
 it is a line in the log and a slower round, not a payment nobody saw.
+
+### A TON transfer can be "aborted" and still arrive
+
+Worth knowing if you ever read a TON transaction by hand. A transaction has phases, and the
+*credit* phase runs before the *compute* phase: an incoming transfer lands first and the
+contract runs afterwards. `aborted` describes the compute phase, not the money.
+
+A wallet that has never *sent* anything has no code deployed, so paying into it produces
+`aborted: true` with `compute_ph: { skipped: true, reason: "no_state" }` — and
+`credit_ph: { credit: … }` for the full amount, which is sitting in the wallet. That is the
+state every new merchant's TON wallet is in, and this watcher used to discard those rows. Two
+real payments were lost to it.
+
+What genuinely does not arrive: a message with `bounced: true` (somebody's refund coming back),
+a *bounceable* message that aborted (the value is returned, minus fees — which is why the
+checkout shows the `UQ…` non-bounceable form), and an account destroyed in the same
+transaction.
 
 Two things about TON that were wrong before and are worth knowing if you read the old code:
 the address must be given to the index in its **friendly** form (`UQ…`/`EQ…`), because the
