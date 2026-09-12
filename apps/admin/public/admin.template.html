@@ -855,14 +855,17 @@
         'This adds the currency already approved, without probing the contract. Check the ' +
         'address against the issuer\'s own documentation before you paste it — the whole ' +
         'defence against a token calling itself USDT is knowing where the real one lives. ' +
-        'Leave the contract blank for a chain\'s native asset.',
+        'Leave the contract blank for a chain\'s native asset. ' +
+        'Telegram Stars are the one entry with no chain behind them: chain "telegram", ' +
+        'symbol XTR, kind "stars", 0 decimals, no contract. There is exactly one of them, ' +
+        'and adding it is what lets merchants enable Stars at a rate of their own.',
       permission: 'asset_list:write',
       fields: [
-        { name: 'chain', label: 'Chain (bsc, ethereum, polygon, ton, tron, solana)' },
+        { name: 'chain', label: 'Chain (bsc, ethereum, polygon, ton, tron, solana — or telegram for Stars)' },
         { name: 'symbol', label: 'Symbol', mono: true },
-        { name: 'contract', label: 'Contract or mint address (blank for native)', mono: true },
-        { name: 'decimals', label: 'Decimals', mono: true },
-        { name: 'kind', label: 'Kind (native, erc20, trc20, spl, jetton)' },
+        { name: 'contract', label: 'Contract or mint address (blank for native, and for Stars)', mono: true },
+        { name: 'decimals', label: 'Decimals (0 for Stars — there is no half a Star)', mono: true },
+        { name: 'kind', label: 'Kind (native, erc20, trc20, spl, jetton, stars)' },
         {
           name: 'note',
           label: 'Where you verified it (recorded)',
