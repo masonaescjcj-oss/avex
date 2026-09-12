@@ -16,6 +16,7 @@ import type { Database } from '../db/client.js';
 import { assets, merchantAssets } from '../db/schema.js';
 import type { AuditService } from './audit.js';
 import type { StaffRole } from './staff-rbac.js';
+import { TELEGRAM_RAIL } from './invoice-creation.js';
 
 /**
  * The asset catalogue: what exists, what has been vetted, and what each merchant
@@ -88,7 +89,7 @@ export class AssetService {
     return inserted;
   }
 
-  private async findAsset(chain: ChainId, contract: string | null) {
+  private async findAsset(chain: ChainId | typeof TELEGRAM_RAIL, contract: string | null) {
     const rows = await this.db
       .select()
       .from(assets)
@@ -519,19 +520,59 @@ export class AssetService {
    * `curated` stays false. That flag means "on the list compiled in code and verified
    * against the issuer's documentation", and marking a hand-added row as curated would
    * make the codebase's own list look longer than it is.
+   *
+   * It is also the only way Telegram Stars can enter the catalogue, and that is not an
+   * oversight being worked around. `CURATED_ASSETS` holds `Asset`s, whose `chain` is a
+   * `ChainId`, and Stars are deliberately not one — there is no adapter, no address and
+   * nothing to sweep. So the one Stars row is added here, by hand, once.
    */
   async addToCatalogue(
     actor: { readonly staffId: string; readonly role: StaffRole },
     input: {
-      readonly chain: ChainId;
+      readonly chain: ChainId | typeof TELEGRAM_RAIL;
       readonly symbol: string;
       readonly contract: string | null;
       readonly decimals: number;
-      readonly kind: 'native' | 'erc20' | 'trc20' | 'spl' | 'jetton';
+      readonly kind: 'native' | 'erc20' | 'trc20' | 'spl' | 'jetton' | 'stars';
       readonly note: string;
       readonly listed?: boolean;
     },
   ): Promise<{ readonly assetId: string }> {
+    /**
+     * The rail and the kind have to agree, in both directions.
+     *
+     * A token row on the `telegram` rail would be handed to a chain adapter that cannot
+     * exist, and a Stars row on a real chain would be put in front of the settlement queue
+     * and the gas model — which read the chain, not the kind. Neither fails at the point of
+     * the mistake: both fail later, on a merchant's invoice.
+     */
+    if (input.kind === 'stars') {
+      if (input.chain !== TELEGRAM_RAIL) {
+        throw new AssetConfigError(
+          'wrong_rail',
+          `Telegram Stars belong on the "${TELEGRAM_RAIL}" rail, not on ${input.chain}. ` +
+            'They are not a token on any chain.',
+        );
+      }
+      if (input.contract !== null) {
+        throw new AssetConfigError(
+          'wrong_rail',
+          'Telegram Stars have no contract address. Leave it empty.',
+        );
+      }
+      if (input.decimals !== 0) {
+        throw new AssetConfigError(
+          'wrong_rail',
+          'Telegram Stars are whole units: decimals must be 0. Half a Star does not exist.',
+        );
+      }
+    } else if (input.chain === TELEGRAM_RAIL) {
+      throw new AssetConfigError(
+        'wrong_rail',
+        `The "${TELEGRAM_RAIL}" rail carries Telegram Stars and nothing else.`,
+      );
+    }
+
     const existing = await this.findAsset(input.chain, input.contract);
     if (existing) {
       throw new AssetConfigError(

@@ -2914,6 +2914,17 @@ function securityView(input) {
             : 'Enter a code from your authenticator app first.',
     };
 }
+/**
+ * The rail Telegram Stars ride on, in the `chain` field the API sends.
+ *
+ * Kept here as a literal rather than imported: this file is compiled into a page that has
+ * no access to the API's modules, and the string is part of the wire format either way.
+ */
+const TELEGRAM_RAIL = 'telegram';
+/** Stars need no wallet, no payout address and no endpoint. Nothing on chain is involved. */
+function isStarsAsset(asset) {
+    return asset.kind === 'stars' || asset.chain === TELEGRAM_RAIL;
+}
 function assetStance(asset, hasPayoutAddress, now = Date.now()) {
     /**
      * Ordered by who can act, hardest first.
@@ -2969,7 +2980,15 @@ function assetStance(asset, hasPayoutAddress, now = Date.now()) {
      * Both refuse an invoice, but only one of them means the money would have nowhere to go.
      * Naming the rate first would have somebody set a rate and still be refused.
      */
-    if (!hasPayoutAddress) {
+    /**
+     * Stars skip this entirely, and the exception is structural rather than a convenience.
+     *
+     * The payer pays the merchant's own bot, so the money is already where it is going. There
+     * is no wallet to add and no payout address that would mean anything — telling a merchant
+     * selling in Telegram to "add a wallet for this chain" sends them looking for something
+     * that does not exist.
+     */
+    if (!hasPayoutAddress && !isStarsAsset(asset)) {
         return {
             state: 'needs_payout',
             label: 'Needs a wallet',
@@ -5162,15 +5181,24 @@ function matchPreview(method, url, routes = previewRoutes()) {
              * to fix the wrong thing. `offered` is null on an older API, and then nothing is
              * claimed either way.
              */
-            support.offered !== null && !support.offered.includes(group.chain)
-              ? h('span', { class: 'pill', 'data-tone': 'bad', text: 'not on this server' })
-              : hasDestination(group.chain)
-                ? h('span', { class: 'pill', 'data-tone': 'good', text: 'somewhere to land' })
-                : h('span', { class: 'pill', 'data-tone': 'warn', text: 'no wallet or payout address' }),
+            /**
+             * Telegram Stars are neither served by an endpoint nor settled to a wallet, so
+             * both of the sentences below would be false about them. The payer pays the
+             * merchant's own bot and the money is already where it is going.
+             */
+            group.chain === TELEGRAM_RAIL
+              ? h('span', { class: 'pill', 'data-tone': 'good', text: 'paid to your bot' })
+              : support.offered !== null && !support.offered.includes(group.chain)
+                ? h('span', { class: 'pill', 'data-tone': 'bad', text: 'not on this server' })
+                : hasDestination(group.chain)
+                  ? h('span', { class: 'pill', 'data-tone': 'good', text: 'somewhere to land' })
+                  : h('span', { class: 'pill', 'data-tone': 'warn', text: 'no wallet or payout address' }),
           ]),
-          support.offered !== null && !support.offered.includes(group.chain)
-            ? h('p', { class: 'note', text: 'This server has no endpoint for ' + group.chain + ', so the checkout cannot offer it and a payment on it could not be credited. Set EVM_RPC_URLS for it in api.env and restart.' })
-            : null,
+          group.chain === TELEGRAM_RAIL
+            ? h('p', { class: 'note', text: 'Stars are paid to your own Telegram bot, so there is no wallet to add and nothing for us to sweep. Set your rate, then have your bot report each payment. Every Stars invoice carries no commission.' })
+            : support.offered !== null && !support.offered.includes(group.chain)
+              ? h('p', { class: 'note', text: 'This server has no endpoint for ' + group.chain + ', so the checkout cannot offer it and a payment on it could not be credited. Set EVM_RPC_URLS for it in api.env and restart.' })
+              : null,
           ...group.assets.map((asset) => assetRow(asset)),
         ],
       ),

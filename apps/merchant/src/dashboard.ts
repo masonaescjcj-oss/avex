@@ -281,6 +281,19 @@ export interface AssetStance {
   readonly canToggle: boolean;
 }
 
+/**
+ * The rail Telegram Stars ride on, in the `chain` field the API sends.
+ *
+ * Kept here as a literal rather than imported: this file is compiled into a page that has
+ * no access to the API's modules, and the string is part of the wire format either way.
+ */
+export const TELEGRAM_RAIL = 'telegram';
+
+/** Stars need no wallet, no payout address and no endpoint. Nothing on chain is involved. */
+export function isStarsAsset(asset: { readonly kind?: string; readonly chain?: string }): boolean {
+  return asset.kind === 'stars' || asset.chain === TELEGRAM_RAIL;
+}
+
 export function assetStance(
   asset: {
     readonly verdict: string;
@@ -289,6 +302,8 @@ export function assetStance(
     readonly requiresFixedRate?: boolean;
     readonly pricingMode?: string | null;
     readonly fixedRateValidUntil?: string | null;
+    readonly kind?: string;
+    readonly chain?: string;
   },
   hasPayoutAddress: boolean,
   now: number = Date.now(),
@@ -352,7 +367,15 @@ export function assetStance(
    * Both refuse an invoice, but only one of them means the money would have nowhere to go.
    * Naming the rate first would have somebody set a rate and still be refused.
    */
-  if (!hasPayoutAddress) {
+  /**
+   * Stars skip this entirely, and the exception is structural rather than a convenience.
+   *
+   * The payer pays the merchant's own bot, so the money is already where it is going. There
+   * is no wallet to add and no payout address that would mean anything — telling a merchant
+   * selling in Telegram to "add a wallet for this chain" sends them looking for something
+   * that does not exist.
+   */
+  if (!hasPayoutAddress && !isStarsAsset(asset)) {
     return {
       state: 'needs_payout',
       label: 'Needs a wallet',

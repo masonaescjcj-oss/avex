@@ -3,6 +3,7 @@ import type { ChainId } from '@avex/core';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import { TELEGRAM_RAIL } from '../../domain/invoice-creation.js';
 import { AdminError } from '../../domain/admin-service.js';
 import { ReconciliationError } from '../../domain/reconciliation-service.js';
 import type { SettlementRow } from '../../domain/settlement-store.js';
@@ -566,7 +567,15 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
   app.post('/admin/assets', async (request, reply) => {
     const body = z
       .object({
-        chain: z.enum(SUPPORTED_CHAINS as unknown as [string, ...string[]]),
+        /**
+         * The supported chains, plus the one rail that is not a chain.
+         *
+         * `telegram` carries Telegram Stars, which have no adapter, no address and nothing
+         * to sweep — which is exactly why they cannot be in the curated list compiled in
+         * code, and why this route is the only door they have. The service refuses the rail
+         * for anything but Stars, and Stars anywhere but the rail.
+         */
+        chain: z.enum([...SUPPORTED_CHAINS, TELEGRAM_RAIL] as unknown as [string, ...string[]]),
         symbol: z.string().trim().min(1).max(20).toUpperCase(),
         /**
          * Null for a chain's native asset, and not validated by shape here.
@@ -578,7 +587,7 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
          */
         contract: z.string().trim().min(1).max(200).nullable().default(null),
         decimals: z.coerce.number().int().min(0).max(36),
-        kind: z.enum(['native', 'erc20', 'trc20', 'spl', 'jetton']),
+        kind: z.enum(['native', 'erc20', 'trc20', 'spl', 'jetton', 'stars']),
         note: z.string().trim().min(10).max(500),
         listed: z.boolean().default(true),
       })
@@ -596,7 +605,7 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
     });
 
     const created = await context.assets.addToCatalogue(staff, {
-      chain: body.chain as (typeof SUPPORTED_CHAINS)[number],
+      chain: body.chain as (typeof SUPPORTED_CHAINS)[number] | typeof TELEGRAM_RAIL,
       symbol: body.symbol,
       contract: body.contract,
       decimals: body.decimals,

@@ -2919,15 +2919,24 @@
              * to fix the wrong thing. `offered` is null on an older API, and then nothing is
              * claimed either way.
              */
-            support.offered !== null && !support.offered.includes(group.chain)
-              ? h('span', { class: 'pill', 'data-tone': 'bad', text: 'not on this server' })
-              : hasDestination(group.chain)
-                ? h('span', { class: 'pill', 'data-tone': 'good', text: 'somewhere to land' })
-                : h('span', { class: 'pill', 'data-tone': 'warn', text: 'no wallet or payout address' }),
+            /**
+             * Telegram Stars are neither served by an endpoint nor settled to a wallet, so
+             * both of the sentences below would be false about them. The payer pays the
+             * merchant's own bot and the money is already where it is going.
+             */
+            group.chain === TELEGRAM_RAIL
+              ? h('span', { class: 'pill', 'data-tone': 'good', text: 'paid to your bot' })
+              : support.offered !== null && !support.offered.includes(group.chain)
+                ? h('span', { class: 'pill', 'data-tone': 'bad', text: 'not on this server' })
+                : hasDestination(group.chain)
+                  ? h('span', { class: 'pill', 'data-tone': 'good', text: 'somewhere to land' })
+                  : h('span', { class: 'pill', 'data-tone': 'warn', text: 'no wallet or payout address' }),
           ]),
-          support.offered !== null && !support.offered.includes(group.chain)
-            ? h('p', { class: 'note', text: 'This server has no endpoint for ' + group.chain + ', so the checkout cannot offer it and a payment on it could not be credited. Set EVM_RPC_URLS for it in api.env and restart.' })
-            : null,
+          group.chain === TELEGRAM_RAIL
+            ? h('p', { class: 'note', text: 'Stars are paid to your own Telegram bot, so there is no wallet to add and nothing for us to sweep. Set your rate, then have your bot report each payment. Every Stars invoice carries no commission.' })
+            : support.offered !== null && !support.offered.includes(group.chain)
+              ? h('p', { class: 'note', text: 'This server has no endpoint for ' + group.chain + ', so the checkout cannot offer it and a payment on it could not be credited. Set EVM_RPC_URLS for it in api.env and restart.' })
+              : null,
           ...group.assets.map((asset) => assetRow(asset)),
         ],
       ),

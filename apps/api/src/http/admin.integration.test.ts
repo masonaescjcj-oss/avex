@@ -3029,6 +3029,116 @@ describe('admin panel', { skip: databaseUrl ? false : 'DATABASE_URL is not set' 
     assert.equal(added!.requiresFixedRate, true);
   });
 
+  test('Telegram Stars can be added, and it is the only way they ever enter', async () => {
+    /**
+     * The gap this closes. Every other part of the Stars path was built — the invoice, the
+     * commission guard that keeps it at zero, the bot's report, the idempotency on
+     * Telegram's charge id, the documentation telling a merchant to "enable XTR" — and none
+     * of it could ever run, because no XTR row could exist. The curated list holds `Asset`s
+     * whose chain is a `ChainId`, and Stars are deliberately not one. This route is the
+     * only door, and it was shut.
+     */
+    const [already] = await db
+      .select({ id: schema.assets.id })
+      .from(schema.assets)
+      .where(and(eq(schema.assets.chain, 'telegram'), eq(schema.assets.kind, 'stars')))
+      .limit(1);
+
+    await reauth();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/assets',
+      headers: asStaff(superadminToken),
+      payload: {
+        chain: 'telegram',
+        symbol: 'XTR',
+        contract: null,
+        decimals: 0,
+        kind: 'stars',
+        note: 'Telegram Stars. Paid to the merchant bot; AVEX is the record, not the custodian.',
+      },
+    });
+
+    if (already) {
+      // There is exactly one Stars asset in the world, so a second is a conflict.
+      assert.equal(response.statusCode, 409, response.body);
+      assert.equal(response.json().error, 'already_exists');
+      return;
+    }
+
+    assert.equal(response.statusCode, 201, response.body);
+    const [added] = await db
+      .select()
+      .from(schema.assets)
+      .where(eq(schema.assets.id, response.json().assetId));
+    assert.equal(added!.kind, 'stars');
+    assert.equal(added!.chain, 'telegram');
+    assert.equal(added!.decimals, 0);
+    assert.equal(added!.verdict, 'approved');
+    // Nothing on the market prices a Star — Telegram sells them in bundles — so the rate
+    // is the merchant's, the same as for a token they issued themselves.
+    assert.equal(added!.requiresFixedRate, true);
+  });
+
+  test('the rail and the kind have to agree, both ways round', async () => {
+    /**
+     * Neither mistake fails where it is made. A token on the `telegram` rail is handed to a
+     * chain adapter that cannot exist; a Stars row on a real chain is put in front of the
+     * settlement queue and the gas model, which read the chain and not the kind. Both
+     * surface later, on a merchant's invoice, which is the worst place to find out.
+     */
+    await reauth();
+    const starsOnAChain = await app.inject({
+      method: 'POST',
+      url: '/admin/assets',
+      headers: asStaff(superadminToken),
+      payload: {
+        chain: 'ton',
+        symbol: 'XTR',
+        contract: null,
+        decimals: 0,
+        kind: 'stars',
+        note: 'Stars pointed at a real chain, which is the mistake this refuses.',
+      },
+    });
+    assert.equal(starsOnAChain.statusCode, 400, starsOnAChain.body);
+    assert.equal(starsOnAChain.json().error, 'wrong_rail');
+
+    await reauth();
+    const tokenOnTheRail = await app.inject({
+      method: 'POST',
+      url: '/admin/assets',
+      headers: asStaff(superadminToken),
+      payload: {
+        chain: 'telegram',
+        symbol: 'USDT',
+        contract: `0x${randomBytes(20).toString('hex')}`,
+        decimals: 6,
+        kind: 'erc20',
+        note: 'A token pointed at the Stars rail, which is the other mistake.',
+      },
+    });
+    assert.equal(tokenOnTheRail.statusCode, 400, tokenOnTheRail.body);
+    assert.equal(tokenOnTheRail.json().error, 'wrong_rail');
+
+    await reauth();
+    const fractionalStar = await app.inject({
+      method: 'POST',
+      url: '/admin/assets',
+      headers: asStaff(superadminToken),
+      payload: {
+        chain: 'telegram',
+        symbol: 'XTR',
+        contract: null,
+        decimals: 2,
+        kind: 'stars',
+        note: 'Half a Star does not exist, so neither does this asset.',
+      },
+    });
+    assert.equal(fractionalStar.statusCode, 400, fractionalStar.body);
+    assert.equal(fractionalStar.json().error, 'wrong_rail');
+  });
+
   test('adding an asset that already exists is refused, not duplicated', async () => {
     /**
      * Two rows for one contract would mean two ids for one token, and a merchant could

@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 
 import {
   assetStance,
+  isStarsAsset,
   assetUrgency,
   balanceView,
   commissionLabel,
@@ -409,6 +410,31 @@ describe('what a merchant can do about a currency', () => {
     assert.equal(stance.state, 'needs_payout');
     assert.equal(stance.tone, 'warn');
     assert.match(stance.hint, /refused/);
+  });
+
+  test('Telegram Stars are never told to add a wallet', () => {
+    /**
+     * The one currency with no chain behind it. The payer pays the merchant's own bot, so
+     * the money is already where it is going — there is no wallet to add and no payout
+     * address that would mean anything. Sending a merchant selling inside Telegram to add
+     * one sends them looking for something that does not exist.
+     */
+    const stars = { ...approved, kind: 'stars', chain: 'telegram' };
+    assert.equal(assetStance(stars, false).state, 'accepting');
+
+    // And the rate still applies: nothing on the market prices a Star.
+    const unpriced = assetStance(
+      { ...stars, requiresFixedRate: true, pricingMode: null },
+      false,
+    );
+    assert.equal(unpriced.state, 'needs_rate');
+  });
+
+  test('the rail alone identifies Stars, and so does the kind alone', () => {
+    // Two spellings of the same fact reach the page from different versions of the API.
+    assert.equal(isStarsAsset({ kind: 'stars' }), true);
+    assert.equal(isStarsAsset({ chain: 'telegram' }), true);
+    assert.equal(isStarsAsset({ kind: 'jetton', chain: 'ton' }), false);
   });
 
   test('a missing payout address beats a missing rate', () => {
