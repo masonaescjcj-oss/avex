@@ -99,6 +99,35 @@ for (const page of PAGES) {
 }
 
 /**
+ * What makes the dashboard installable: a manifest, the icons a launcher draws, and the
+ * service worker.
+ *
+ * These are the only files here that are not self-contained pages, and they have to be: a
+ * browser fetches a manifest from a URL, and a launcher paints an icon without ever loading
+ * the page it belongs to, so neither can be a data URI inlined into the HTML.
+ *
+ * The worker's cache name carries the build, so a deploy cannot reuse the last one's entries.
+ * Everything else about it is deliberately timid — network first, this origin only — for
+ * reasons written at the top of the file itself.
+ */
+const site = join(repo, 'apps', 'site', 'public');
+
+/** A build identity the worker can put in its cache name. Time is enough: it only has to differ. */
+const BUILD = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+
+const worker = readFileSync(join(site, 'sw.js'), 'utf8');
+if (!worker.includes('__BUILD__')) {
+  console.error('sw.js has no __BUILD__ placeholder; its cache would never be invalidated');
+  process.exit(1);
+}
+writeFileSync(join(out, 'sw.js'), worker.replace('__BUILD__', BUILD));
+cpSync(join(site, 'app.webmanifest'), join(out, 'app.webmanifest'));
+cpSync(join(site, 'icons'), join(out, 'icons'), { recursive: true });
+console.log(`sw.js           ← apps/site/public/sw.js (cache avex-shell-${BUILD})`);
+console.log('app.webmanifest ← apps/site/public/app.webmanifest');
+console.log('icons/          ← apps/site/public/icons');
+
+/**
  * The WooCommerce plugin, as a download.
  *
  * Shipped beside the pages because the docs point at it and a plugin nobody can download is

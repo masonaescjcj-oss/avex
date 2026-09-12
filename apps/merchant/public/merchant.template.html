@@ -1,6 +1,25 @@
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- @inject:favicon -->
+<!--
+  Installable, so the dashboard can live on a home screen beside everything else a merchant
+  runs their business from.
+
+  The manifest and the icons are files on this host rather than data URIs, which is the one
+  place this page departs from being entirely self-contained — a manifest has to be fetched
+  by the browser from a URL, and an installed icon has to be a real PNG because a launcher
+  draws it without ever loading the page. `deploy/build-static.mjs` puts both beside it.
+
+  `theme-color` is the lime, which is what tints the phone's status bar once installed;
+  `apple-*` are the two lines iOS reads instead of the manifest.
+-->
+<link rel="manifest" href="/app.webmanifest">
+<meta name="theme-color" content="#c8f135">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AVEX Pay">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <!--
   Where the API is.
 
@@ -4899,6 +4918,28 @@
   // Last, so a preview has already replaced `fetch` and this goes to the stub.
   if (verification) {
     void spendVerificationToken(verification);
+  }
+
+  /**
+   * Register the service worker, which is what makes this installable.
+   *
+   * Guarded three ways, and each guard is a real case rather than defensive noise. `https:`
+   * because registration throws on an insecure origin — except on localhost, where the browser
+   * allows it and a developer would otherwise never see the install prompt. `file:` is how the
+   * page is opened in this repository's own browser tests, and a worker there is both
+   * impossible and pointless.
+   *
+   * The failure is swallowed on purpose: the dashboard works perfectly without a worker, and
+   * an error banner about one would be a merchant's first impression of a feature that is
+   * entirely optional to them.
+   */
+  const installable =
+    'serviceWorker' in navigator &&
+    (location.protocol === 'https:' || location.hostname === 'localhost');
+  if (installable) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js', { scope: '/dashboard' }).catch(() => {});
+    });
   }
 })();
 </script>

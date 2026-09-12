@@ -1,6 +1,25 @@
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2222%22%20fill%3D%22%23c8f135%22%2F%3E%3Cpath%20fill%3D%22%230f1114%22%20fill-rule%3D%22evenodd%22%20d%3D%22M47.7%2019.5L52.3%2019.5L55%2020L58.4%2021.1L61.7%2022.7L61.7%2023L64.1%2024.2L67.2%2026.7L73.3%2033.6L78.4%2042L83.1%2053L85.3%2060L85.9%2063.3L86.3%2063.4L87.5%2070.3L87.8%2070.6L88.3%2074.5L83.3%2074.5L81.6%2071.1L78%2065.9L73.1%2061.1L69.1%2058.1L62.8%2055L57.5%2053.4L53.3%2052.8L46.4%2052.8L42.2%2053.4L38.3%2054.5L33.4%2056.6L27.8%2060.2L23.1%2064.4L19.5%2068.9L16.4%2074.5L11.4%2074.5L13.1%2065L16.9%2052.3L20%2044.7L25.2%2035.5L29.8%2029.4L35.6%2024.2L41.3%2021.1L47.5%2019.5ZM49.1%2024.1L45%2024.7L40%2026.9L37%2028.9L31.9%2034.1L28.8%2038.8L28.4%2038.8L28.1%2039.8L27.3%2040.6L24.2%2046.6L21.1%2054.2L18.8%2062.5L21.9%2059.4L22.7%2056.3L25.8%2048.3L28.4%2043L28.8%2043L29.4%2041.4L32.5%2037.2L32.5%2036.7L35.8%2033L39.4%2029.8L40.8%2029.2L40.8%2028.9L43.9%2027.3L48.6%2026.3L53%2026.6L56.9%2027.8L61.6%2030.8L64.8%2033.9L68.4%2038.4L72.7%2045.6L75.3%2051.6L78%2059.5L81.1%2062.5L80%2058.3L78.8%2055.2L78.9%2054.8L75.3%2046.1L75%2046.1L74.2%2043.9L71.3%2038.8L68.6%2035L63.3%2029.4L58.6%2026.3L54.7%2024.7L49.2%2024.1ZM48.1%2030.9L45.2%2031.9L41.4%2034.1L37.2%2038.3L34.5%2041.9L32.8%2045.2L32.5%2045.2L28.4%2054.1L33.6%2051.4L37.7%2050.2L37.8%2049.8L42.2%2048.8L47.2%2048.1L54.7%2048.3L59.7%2049.2L65%2050.9L71.3%2054.1L69.5%2049.7L69.2%2049.7L69.1%2048.8L68%2046.6L67.7%2046.6L66.9%2044.5L66.6%2044.5L65.9%2043L63.4%2039.4L60.6%2036.1L57.7%2033.6L53.9%2031.6L51.6%2030.9L48.3%2030.9ZM49.4%2054.8L55%2055.2L59.2%2056.1L63.4%2057.7L67.7%2059.8L71.4%2062.5L75.5%2066.4L78.1%2070.2L78.4%2070.2L80.8%2074.5L75.6%2074.5L73.8%2071.6L70.2%2067.5L66.9%2064.8L63.9%2063.3L63.9%2063L57.2%2060.3L52.2%2059.5L44.7%2059.8L40.9%2060.8L37%2062.3L32.7%2065L30.2%2067L26.7%2070.6L24.1%2074.5L18.9%2074.5L21.1%2070.5L24.2%2066.4L27.2%2063.4L31.6%2060.2L34.8%2058.3L38.6%2056.7L40.3%2056.4L40.5%2056.1L44.7%2055.2L49.2%2054.8Z%22%2F%3E%3C%2Fsvg%3E">
+<!--
+  Installable, so the dashboard can live on a home screen beside everything else a merchant
+  runs their business from.
+
+  The manifest and the icons are files on this host rather than data URIs, which is the one
+  place this page departs from being entirely self-contained — a manifest has to be fetched
+  by the browser from a URL, and an installed icon has to be a real PNG because a launcher
+  draws it without ever loading the page. `deploy/build-static.mjs` puts both beside it.
+
+  `theme-color` is the lime, which is what tints the phone's status bar once installed;
+  `apple-*` are the two lines iOS reads instead of the manifest.
+-->
+<link rel="manifest" href="/app.webmanifest">
+<meta name="theme-color" content="#c8f135">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AVEX Pay">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <!--
   Where the API is.
 
@@ -7161,6 +7180,28 @@ function matchPreview(method, url, routes = previewRoutes()) {
   // Last, so a preview has already replaced `fetch` and this goes to the stub.
   if (verification) {
     void spendVerificationToken(verification);
+  }
+
+  /**
+   * Register the service worker, which is what makes this installable.
+   *
+   * Guarded three ways, and each guard is a real case rather than defensive noise. `https:`
+   * because registration throws on an insecure origin — except on localhost, where the browser
+   * allows it and a developer would otherwise never see the install prompt. `file:` is how the
+   * page is opened in this repository's own browser tests, and a worker there is both
+   * impossible and pointless.
+   *
+   * The failure is swallowed on purpose: the dashboard works perfectly without a worker, and
+   * an error banner about one would be a merchant's first impression of a feature that is
+   * entirely optional to them.
+   */
+  const installable =
+    'serviceWorker' in navigator &&
+    (location.protocol === 'https:' || location.hostname === 'localhost');
+  if (installable) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js', { scope: '/dashboard' }).catch(() => {});
+    });
   }
 })();
 </script>

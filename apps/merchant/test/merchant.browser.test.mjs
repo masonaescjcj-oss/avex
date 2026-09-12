@@ -222,6 +222,19 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
   async function open(overrides = {}) {
     // A desktop unless a test says otherwise; the layout tests open a phone.
     const context = await browser.newContext({
+      /**
+       * No service workers in here.
+       *
+       * The dashboard registers one, and a real one in a test context outlives the test that
+       * created it — serving the next test's page from its own cache, which is a class of
+       * flake nobody enjoys finding. Blocking it also stops the browser logging a failed
+       * script fetch of its own, which no `.catch()` in the page can suppress and which would
+       * fail every test that asserts the console stayed clean.
+       *
+       * What the worker actually does is covered by `installable.test.mjs`, against the file.
+       */
+      serviceWorkers: 'block',
+
       viewport: overrides.viewport ?? { width: 1100, height: 900 },
       colorScheme: overrides.colorScheme,
     });
@@ -235,6 +248,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     });
 
     await page.route(`${PAGE}*`, (route) => route.fulfill({ path: pageFile, contentType: 'text/html' }));
+
 
     const json = (body, status = 200) => ({
       status,
@@ -2373,7 +2387,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * checkable — the page is loaded with no route handlers at all, so anything it renders
      * came through its own fetch path.
      */
-    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 }, serviceWorkers: 'block' });
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', (error) => errors.push(String(error)));
@@ -2419,7 +2433,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * Driven end to end here, through the page's own fetch, because the preview's whole point
      * is that no code path differs from the real thing.
      */
-    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 }, serviceWorkers: 'block' });
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', (error) => errors.push(String(error)));
@@ -2461,7 +2475,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * The bug was exactly that, and no test caught it — the other verification tests stub the
      * API themselves and never enter preview mode at all.
      */
-    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 }, serviceWorkers: 'block' });
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', (error) => errors.push(String(error)));
@@ -2490,7 +2504,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * preview that showed only approved rows would show one of them, so the fixture carries
      * the lot — and this is what keeps it that way.
      */
-    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 }, serviceWorkers: 'block' });
     const page = await context.newPage();
     await page.route(`${PAGE}*`, (route) =>
       route.fulfill({ path: pageFile, contentType: 'text/html' }),
@@ -2529,7 +2543,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * The native rows carry no badge on purpose. A badge on everything is a badge nobody
      * reads, and it is the exception that carries the information.
      */
-    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 }, serviceWorkers: 'block' });
     const page = await context.newPage();
     await page.route(`${PAGE}*`, (route) =>
       route.fulfill({ path: pageFile, contentType: 'text/html' }),
@@ -2564,7 +2578,7 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
      * The one place a preview has to decide what a write does. Pretending would leave
      * somebody believing they had reconfigured an account that does not exist.
      */
-    const context = await browser.newContext({ viewport: { width: 430, height: 900 } });
+    const context = await browser.newContext({ viewport: { width: 430, height: 900 }, serviceWorkers: 'block' });
     const page = await context.newPage();
     await page.route(`${PAGE}*`, (route) =>
       route.fulfill({ path: pageFile, contentType: 'text/html' }),

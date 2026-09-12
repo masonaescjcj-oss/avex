@@ -8,35 +8,103 @@
   "redirects": [
     {
       "source": "/(.*)",
-      "has": [{ "type": "host", "value": "www.avexpay.net" }],
+      "has": [
+        {
+          "type": "host",
+          "value": "www.avexpay.net"
+        }
+      ],
       "destination": "https://avexpay.net/$1",
       "permanent": true
     }
   ],
   "rewrites": [
-    { "source": "/pay/:sessionId/receipt", "destination": "/receipt" },
-    { "source": "/pay/:sessionId", "destination": "/pay" }
+    {
+      "source": "/pay/:sessionId/receipt",
+      "destination": "/receipt"
+    },
+    {
+      "source": "/pay/:sessionId",
+      "destination": "/pay"
+    }
   ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "x-content-type-options", "value": "nosniff" },
-        { "key": "referrer-policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "strict-transport-security", "value": "max-age=31536000; includeSubDomains" },
-        { "key": "x-frame-options", "value": "DENY" }
+        {
+          "key": "x-content-type-options",
+          "value": "nosniff"
+        },
+        {
+          "key": "referrer-policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "strict-transport-security",
+          "value": "max-age=31536000; includeSubDomains"
+        },
+        {
+          "key": "x-frame-options",
+          "value": "DENY"
+        }
       ]
     },
     {
       "source": "/(dashboard|admin)(.*)",
       "headers": [
-        { "key": "cache-control", "value": "no-store" }
+        {
+          "key": "cache-control",
+          "value": "no-store"
+        }
       ]
     },
     {
       "source": "/pay/(.*)",
       "headers": [
-        { "key": "cache-control", "value": "no-store" }
+        {
+          "key": "cache-control",
+          "value": "no-store"
+        }
+      ]
+    },
+    {
+      "source": "/sw.js",
+      "headers": [
+        {
+          "key": "cache-control",
+          "value": "no-cache"
+        },
+        {
+          "key": "content-type",
+          "value": "application/javascript; charset=utf-8"
+        },
+        {
+          "key": "service-worker-allowed",
+          "value": "/"
+        }
+      ]
+    },
+    {
+      "source": "/app.webmanifest",
+      "headers": [
+        {
+          "key": "content-type",
+          "value": "application/manifest+json; charset=utf-8"
+        },
+        {
+          "key": "cache-control",
+          "value": "public, max-age=3600"
+        }
+      ]
+    },
+    {
+      "source": "/icons/(.*)",
+      "headers": [
+        {
+          "key": "cache-control",
+          "value": "public, max-age=604800, immutable"
+        }
       ]
     }
   ]
