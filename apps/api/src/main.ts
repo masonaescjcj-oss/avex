@@ -1,5 +1,6 @@
 
 import { createDatabase } from './db/client.js';
+import { schemaComplaint, schemaState } from './db/schema-version.js';
 import { DatabaseWatchStore } from './domain/watch-store.js';
 import { PriceTickWriter } from './domain/price-repository.js';
 import { loadEnv } from './env.js';
@@ -34,6 +35,26 @@ async function main(): Promise<void> {
     db,
     recordTick: (tick) => tickWriter.record(tick),
   });
+
+  /**
+   * Refuse to serve a database that is behind this code.
+   *
+   * Before anything is seeded and long before the port is opened, because the alternative is
+   * what actually happened: the server came up, `/health` was green, and one route answered
+   * `500` to every request with the cause visible only in a log the person debugging did not
+   * have. Two people spent a day on it.
+   *
+   * A hard stop rather than a warning. `install.sh` runs the migrations before it starts the
+   * service, so a correct deploy never reaches this line — and a process that knows it cannot
+   * do its job should not accept a payment to prove it.
+   */
+  const schema = await schemaState(db);
+  const complaint = schemaComplaint(schema);
+  if (complaint) {
+    console.error(`refusing to start: ${complaint}`);
+    await close();
+    process.exit(1);
+  }
 
   const seeded = await context.assets.seedCurated();
 

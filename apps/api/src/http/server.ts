@@ -4,6 +4,7 @@ import type { CommissionLedger } from '../domain/commission-ledger.js';
 import { WalletPoolChangeError } from '../domain/wallet-pool-service.js';
 import type { WalletPoolChanges, WalletPoolService } from '../domain/wallet-pool-service.js';
 import { AssetConfigError } from '../domain/asset-service.js';
+import { schemaComplaint, schemaState } from '../db/schema-version.js';
 import type { AssetService } from '../domain/asset-service.js';
 import { PayoutAddressError } from '../domain/payout-service.js';
 import type { PayoutAddressService } from '../domain/payout-service.js';
@@ -613,7 +614,26 @@ export function buildServer(context: AppContext): FastifyInstance {
    * "did my update actually take" had no answer short of `git log` over SSH.
    */
   const build = readBuildStamp(context.env.BUILD_STAMP_FILE);
-  app.get('/health', async () => (build === null ? { status: 'ok' } : { status: 'ok', build }));
+  /**
+   * The schema's state, re-read on each call rather than cached with the build.
+   *
+   * Unlike the build, it can change while the process runs — somebody applies the migration
+   * on a server that is already up — and a health check still claiming "behind" afterwards
+   * would send the next person looking for a problem that had been fixed.
+   *
+   * Present only when something is wrong. A green deployment answers exactly what it always
+   * did, so nothing that parses this has a new field to learn.
+   */
+  app.get('/health', async () => {
+    const schema = await schemaState(context.db).catch(() => null);
+    const complaint = schema === null ? null : schemaComplaint(schema);
+
+    return {
+      status: complaint === null ? 'ok' : 'degraded',
+      ...(build === null ? {} : { build }),
+      ...(complaint === null ? {} : { schema: { behind: schema!.missing, detail: complaint } }),
+    };
+  });
 
   /**
    * Run the background jobs, for a deployment that has no process to hold timers in.
