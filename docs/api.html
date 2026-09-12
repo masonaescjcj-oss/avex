@@ -941,6 +941,20 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
           instead of a 201 — so a dropped response never becomes two payment links for
           one order, only one of which will ever be marked paid.
         </p>
+        <p class="note">
+          <strong>Once it is dead, the order is free again.</strong> A checkout that expired
+          or was cancelled releases its <code>reference</code>, so asking for that order
+          again opens a <em>new</em> checkout with a new <code>url</code> and a
+          <strong>201</strong>. That is what lets your "pay again" button work after a
+          customer's window has closed. A checkout that has been <em>paid</em> never
+          releases it: asking again returns the paid one, because a second link for an
+          order already paid is how a customer pays twice.
+        </p>
+        <p class="note">
+          So treat both codes as success and always use the <code>url</code> from the
+          response you just got. Code that assumed the id could never change is the one
+          thing here worth a second look.
+        </p>
       </div>
 
       <div class="endpoint" data-route="GET /v1/organizations/:orgId/checkouts/:sessionId">
@@ -978,7 +992,7 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
           <div class="param"><code>assetId</code><span><span class="req">required</span> — from your asset list.</span></div>
           <div class="param"><code>amountFiatMicros</code><span>For <code>fiat</code> and <code>fixed_rate</code> pricing.</span></div>
           <div class="param"><code>amountToken</code><span>For <code>token</code> pricing. Exactly one of the two.</span></div>
-          <div class="param"><code>reference</code><span>Your order id, and the idempotency key.</span></div>
+          <div class="param"><code>reference</code><span>Your order id, and the idempotency key — see the note below the response.</span></div>
           <div class="param"><code>ttlMs</code><span>How long the payer has. Fifteen minutes by default.</span></div>
           <div class="param"><code>mode</code><span>Session credentials only.</span></div>
         </div>
@@ -1007,6 +1021,14 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
           address belongs to this invoice alone and can only ever pay your own wallet —
           but a different token, or the right token on the wrong chain, is not
           recoverable by us or by anyone.
+        </p>
+        <p class="note">
+          <strong>The same <code>reference</code> twice</strong> returns the first invoice
+          and a <strong>200</strong>, so a retry after a dropped response never becomes two
+          deposit addresses for one order. Once that invoice has <em>expired</em> the order
+          id is released and the next request opens a new invoice with a new address and a
+          <strong>201</strong> — otherwise an order whose payment window closed could never
+          be paid at all. A paid invoice keeps its reference for good.
         </p>
         <p class="note">
           <code>memo</code> is non-null on TON, where a transfer carries a text comment and
