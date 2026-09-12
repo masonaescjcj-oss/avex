@@ -67,6 +67,32 @@ async function loadPlaywright() {
 const playwright = await loadPlaywright();
 
 /** A merchant part-way through setup: assets on two chains, a payout address on one. */
+/**
+ * What an owner may put on a key, as the API computes it.
+ *
+ * Written out here rather than imported because this file drives a browser against a built
+ * page and has no access to the API's modules — but it is the same set, and the API suite
+ * asserts the server's own list contains `settings:read`, which is the one that was missing.
+ */
+const GRANTABLE = [
+  'org:read',
+  'org:update',
+  'member:read',
+  'member:invite',
+  'payout_address:read',
+  'asset:read',
+  'asset:write',
+  'invoice:read',
+  'invoice:create',
+  'invoice:refund',
+  'apikey:read',
+  'webhook:read',
+  'webhook:write',
+  'settings:read',
+  'settings:write',
+  'audit:read',
+];
+
 const FIXTURE = {
   /**
    * A balance with something on it.
@@ -454,7 +480,10 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         if (row && sent.scopes) row.scopes = sent.scopes;
         return route.fulfill(json({ ...row, message: 'Updated. The key itself is unchanged.' }));
       }
-      if (path.endsWith('/api-keys')) return route.fulfill(json(data.keys));
+      if (path.endsWith('/api-keys')) {
+        // The real API sends what this caller may grant beside the keys themselves.
+        return route.fulfill(json({ grantable: data.grantable ?? GRANTABLE, ...data.keys }));
+      }
       if (path.endsWith('/invoices')) return route.fulfill(json(data.invoices));
       return route.fulfill(json({}));
     });
@@ -1783,8 +1812,13 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
     // Test mode and the two scopes a shop needs are the defaults; nothing else to decide.
     assert.equal(await page.$eval('#key-mode', (node) => node.value), 'test');
+    /**
+     * Compared as a set. The boxes are drawn in the order the *server* lists the permissions
+     * it will accept, so pinning a sequence here would pin the API's own ordering through a
+     * browser test — which is neither this file's business nor stable.
+     */
     const ticked = await page.$$eval('#key-scopes input:checked', (nodes) => nodes.map((n) => n.value));
-    assert.deepEqual(ticked, ['invoice:create', 'invoice:read']);
+    assert.deepEqual([...ticked].sort(), ['invoice:create', 'invoice:read']);
 
     await page.fill('#key-name', 'My shop');
     await page.click('#key-submit');
@@ -1793,7 +1827,9 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.equal(await text(page, '#key-secret-value'), 'ak_test_shown_once_only');
     assert.match(await text(page, '#key-secret'), /shown once/);
     const created = posts.find((p) => p.path.endsWith('/api-keys'));
-    assert.deepEqual(created.body, { name: 'My shop', mode: 'test', scopes: ['invoice:create', 'invoice:read'] });
+    assert.equal(created.body.name, 'My shop');
+    assert.equal(created.body.mode, 'test');
+    assert.deepEqual([...created.body.scopes].sort(), ['invoice:create', 'invoice:read']);
     assert.equal(await page.$eval('#key-name', (node) => node.value), '', 'the form clears for the next key');
     await context.close();
   });
@@ -3092,7 +3128,9 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
             name: 'shop',
             prefix: 'ak_live_abcd',
             mode: 'live',
-            scopes: ['invoice:create', 'settings:read'],
+            // A permission this build's dictionary has no label for, which is the case being
+            // tested: it must survive an edit rather than being quietly dropped.
+            scopes: ['invoice:create', 'granted:by-hand'],
             createdAt: new Date().toISOString(),
             lastUsedAt: null,
             revoked: false,
@@ -3103,13 +3141,61 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     await openTab(page, 'API keys');
     await page.click('#key-table button:has-text("Permissions")');
 
-    assert.match(await text(page, '#key-editor-unlisted'), /settings:read/);
+    assert.match(await text(page, '#key-editor-unlisted'), /granted:by-hand/);
 
     await page.click('#key-editor-submit');
     await page.waitForFunction(() => document.getElementById('key-editor')?.hidden === true, { timeout: 5000 });
 
     const sent = posts.find((entry) => entry.path.includes('/api-keys/'));
-    assert.ok(sent.body.scopes.includes('settings:read'), `sent ${sent.body.scopes.join(', ')}`);
+    assert.ok(sent.body.scopes.includes('granted:by-hand'), `sent ${sent.body.scopes.join(', ')}`);
+    await context.close();
+  });
+
+  test('every permission the API allows has a box to tick', async () => {
+    /**
+     * The bug this closes. The page carried its own list of permissions to offer and it
+     * drifted from the API's: nine of sixteen were offered nowhere, so a merchant whose
+     * integration needed `settings:read` — to read their own balance — could not grant it, and
+     * the API answered 403 naming a scope with no checkbox anywhere in the product.
+     *
+     * The server now says what it will accept and the page draws that, so the two cannot
+     * disagree again. Asserted on both forms, because they are two places that draw it.
+     */
+    const { page, context } = await open();
+    await openTab(page, 'API keys');
+
+    const onCreate = await page.$$eval('#key-scopes input[name="scope"]', (nodes) => nodes.map((n) => n.value));
+    assert.deepEqual([...onCreate].sort(), [...GRANTABLE].sort());
+
+    await page.click('#key-table button:has-text("Permissions")');
+    const onEdit = await page.$$eval('#key-editor-scopes input[name="scope"]', (nodes) => nodes.map((n) => n.value));
+    assert.deepEqual([...onEdit].sort(), [...GRANTABLE].sort());
+    await context.close();
+  });
+
+  test('a permission with no label is drawn under its own name, not dropped', async () => {
+    /**
+     * A permission added to the API and not to this page's dictionary should appear looking
+     * slightly raw, which somebody will notice and fix. The alternative — quietly omitting it
+     * — is exactly the failure that produced this whole change, and it is invisible.
+     */
+    const { page, context } = await open({ grantable: ['invoice:create', 'something:new'] });
+    await openTab(page, 'API keys');
+
+    const offered = await page.$$eval('#key-scopes input[name="scope"]', (nodes) => nodes.map((n) => n.value));
+    assert.deepEqual([...offered].sort(), ['invoice:create', 'something:new']);
+    assert.match(await text(page, '#key-scopes'), /something:new/);
+    await context.close();
+  });
+
+  test('a new key starts ticked for what an integration actually needs', async () => {
+    // Creating an invoice and reading it back: the two the WooCommerce plugin uses, and the
+    // pair almost every integration starts from.
+    const { page, context } = await open();
+    await openTab(page, 'API keys');
+
+    const ticked = await page.$$eval('#key-scopes input:checked', (nodes) => nodes.map((n) => n.value));
+    assert.deepEqual([...ticked].sort(), ['invoice:create', 'invoice:read']);
     await context.close();
   });
 });

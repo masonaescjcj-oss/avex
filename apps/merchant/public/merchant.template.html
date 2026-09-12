@@ -3736,26 +3736,71 @@
    * is not offered. The first two are ticked by default because they are what the
    * WooCommerce plugin and every API integration need: make an invoice, read it back.
    */
-  const KEY_SCOPES = [
-    ['invoice:create', 'Create invoices', 'what a shop needs to take a payment', true],
-    ['invoice:read', 'Read invoices', 'check whether one was paid', true],
-    ['invoice:refund', 'Refund invoices', '', false],
-    ['webhook:read', 'Read webhook endpoints', '', false],
-    ['webhook:write', 'Add and remove webhook endpoints', '', false],
-    ['asset:read', 'Read currencies', 'which coins and networks are enabled', false],
-    ['org:read', 'Read organisation details', '', false],
-  ];
+  const KEY_SCOPES = {
+    'invoice:create': ['Create invoices', 'what a shop needs to take a payment'],
+    'invoice:read': ['Read invoices', 'check whether one was paid'],
+    'invoice:refund': ['Refund invoices', ''],
+    'webhook:read': ['Read webhook endpoints', ''],
+    'webhook:write': ['Add and remove webhook endpoints', ''],
+    'asset:read': ['Read currencies', 'which coins and networks are enabled'],
+    'asset:write': ['Submit a token for review', ''],
+    'org:read': ['Read organisation details', ''],
+    'org:update': ['Change organisation details', ''],
+    'settings:read': ['Read settings and balance', 'your fee plan and what you owe'],
+    'settings:write': ['Change settings', 'rates, tolerances, who pays the commission'],
+    'payout_address:read': ['Read payout addresses', 'where settled funds are sent'],
+    'member:read': ['Read the team', ''],
+    'member:invite': ['Invite people', ''],
+    'apikey:read': ['List API keys', 'names and prefixes; never the keys themselves'],
+    'audit:read': ['Read the audit log', ''],
+  };
+
+  /** Ticked on a new key: what the WooCommerce plugin and every API integration need. */
+  const KEY_SCOPE_DEFAULTS = ['invoice:create', 'invoice:read'];
+
+  /**
+   * What a key may be given, as the API says rather than as this page believes.
+   *
+   * It used to be a list written out here, and it drifted: nine of the sixteen permissions a
+   * key could hold were offered nowhere, so a merchant whose integration needed one could not
+   * tick it and got a 403 naming a scope with no checkbox. The server computes the ceiling
+   * from the signed-in role and sends it; this page draws whatever arrives.
+   *
+   * An unknown scope is drawn under its own name rather than dropped. A permission added to
+   * the API and not to the dictionary above then appears immediately, looking slightly raw —
+   * which is the failure worth having, against one that is invisible.
+   */
+  function grantableScopes() {
+    const fromApi = (cache.keyGrantable || []).filter((scope) => typeof scope === 'string');
+    // An older API sends no list at all; the dictionary is the fallback, not the authority.
+    return fromApi.length > 0 ? fromApi : Object.keys(KEY_SCOPES);
+  }
+
+  function scopeLabel(scope) {
+    const known = KEY_SCOPES[scope];
+    return known ? known[0] : scope;
+  }
+
+  function scopeDetail(scope) {
+    const known = KEY_SCOPES[scope];
+    return known && known[1] ? known[1] : '';
+  }
+
+  /** One checkbox per grantable scope, ticked by whatever the caller says. */
+  function scopeBoxes(isChecked) {
+    return grantableScopes().map((scope) =>
+      h('label', {}, [
+        h('input', { type: 'checkbox', name: 'scope', value: scope, checked: isChecked(scope) ? '' : null }),
+        h('span', {}, [
+          scopeLabel(scope),
+          scopeDetail(scope) ? h('small', { text: ' — ' + scopeDetail(scope) }) : null,
+        ]),
+      ]),
+    );
+  }
 
   function renderKeyScopes() {
-    fill(
-      el('key-scopes'),
-      KEY_SCOPES.map(([scope, label, detail, checked]) =>
-        h('label', {}, [
-          h('input', { type: 'checkbox', name: 'scope', value: scope, checked: checked ? '' : null }),
-          h('span', {}, [label, detail ? h('small', { text: ' — ' + detail }) : null]),
-        ]),
-      ),
-    );
+    fill(el('key-scopes'), scopeBoxes((scope) => KEY_SCOPE_DEFAULTS.includes(scope)));
   }
 
   renderKeyScopes();
@@ -3773,15 +3818,7 @@
     const panel = el('key-editor');
     el('key-editor-name').textContent = key.name + ' (' + (key.prefix || '') + '…)';
 
-    fill(
-      el('key-editor-scopes'),
-      KEY_SCOPES.map(([scope, label, detail]) =>
-        h('label', {}, [
-          h('input', { type: 'checkbox', name: 'scope', value: scope, checked: current.has(scope) ? '' : null }),
-          h('span', {}, [label, detail ? h('small', { text: ' — ' + detail }) : null]),
-        ]),
-      ),
-    );
+    fill(el('key-editor-scopes'), scopeBoxes((scope) => current.has(scope)));
 
     /**
      * Anything the key holds that this page does not offer is shown and kept.
@@ -3791,7 +3828,8 @@
      * the boxes alone would silently drop those — a narrowing nobody asked for, discovered
      * when an integration starts failing.
      */
-    const unlisted = [...current].filter((scope) => !KEY_SCOPES.some(([known]) => known === scope));
+    const offered = new Set(grantableScopes());
+    const unlisted = [...current].filter((scope) => !offered.has(scope));
     el('key-editor-unlisted').textContent = unlisted.length
       ? 'Also keeps: ' + unlisted.join(', ')
       : '';
@@ -3812,9 +3850,8 @@
     const picked = Array.from(panel.querySelectorAll('#key-editor-scopes input:checked')).map((input) => input.value);
     const keyId = panel.dataset.keyId;
     const key = (cache.keys || []).find((row) => row.id === keyId);
-    const kept = ((key && key.scopes) || []).filter(
-      (scope) => !KEY_SCOPES.some(([known]) => known === scope),
-    );
+    const offered = new Set(grantableScopes());
+    const kept = ((key && key.scopes) || []).filter((scope) => !offered.has(scope));
     const scopes = [...new Set([...picked, ...kept])];
 
     if (scopes.length === 0) {
@@ -4715,6 +4752,16 @@
       } else if (view === 'keys') {
         const keys = await api(base + '/api-keys');
         cache.keys = keys.data || [];
+        /**
+         * The permissions this signed-in person may grant, from the server.
+         *
+         * Held rather than read per render because both the create form and the editor draw
+         * from it, and an empty array from an older API has to fall back rather than render
+         * nothing — see `grantableScopes`.
+         */
+        cache.keyGrantable = Array.isArray(keys.grantable) ? keys.grantable : [];
+        // The create form is drawn once at boot, before this list has ever been fetched.
+        renderKeyScopes();
         renderKeys();
       } else if (view === 'team') {
         const [members, invites] = await Promise.all([

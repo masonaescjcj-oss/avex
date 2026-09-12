@@ -765,6 +765,68 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     assert.ok(!JSON.stringify(listed.json()).includes(apiKey.slice(12)));
   });
 
+  test('the key list says what this person may grant', async () => {
+    /**
+     * The gap that made this necessary. The dashboard used to carry its own list of
+     * permissions to offer, and it drifted: nine of the sixteen a key could hold were offered
+     * nowhere. A merchant whose integration wanted `settings:read` — to read their own balance
+     * — could not tick it, and the API refused with a message naming a scope that had no
+     * checkbox. Two correct components and an unusable product.
+     *
+     * So the server says what it will accept, and the page draws that.
+     */
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${organizationId}/api-keys`,
+      headers: asOwner(),
+    });
+    assert.equal(listed.statusCode, 200);
+
+    const grantable = listed.json().grantable as string[];
+    assert.ok(Array.isArray(grantable) && grantable.length > 0);
+
+    // The one the merchant actually hit, named so a regression says why it matters.
+    assert.ok(grantable.includes('settings:read'), 'the balance route is reachable by a key');
+
+    /**
+     * And nothing elevation-gated, ever. Elevation means proving possession of an
+     * authenticator, which a headless key can never do, so offering one would be offering a
+     * credential that walks around the requirement.
+     */
+    for (const forbidden of ['payout_address:write', 'apikey:write', 'member:role_change', 'org:delete']) {
+      assert.equal(grantable.includes(forbidden), false, `${forbidden} must never be grantable`);
+    }
+  });
+
+  test('every scope the list offers is one the create route accepts', async () => {
+    /**
+     * The two halves have to agree, or the offer is a trap: a checkbox that produces a 403 is
+     * worse than no checkbox, because the merchant has no way to tell whether they did
+     * something wrong.
+     */
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${organizationId}/api-keys`,
+      headers: asOwner(),
+    });
+    const grantable = listed.json().grantable as string[];
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${organizationId}/api-keys`,
+      headers: asOwner(),
+      payload: { name: 'everything offered', mode: 'test', scopes: grantable },
+    });
+    assert.equal(created.statusCode, 201, created.body);
+    assert.deepEqual([...(created.json().scopes as string[])].sort(), [...grantable].sort());
+
+    await app.inject({
+      method: 'DELETE',
+      url: `/v1/organizations/${organizationId}/api-keys/${created.json().id as string}`,
+      headers: asOwner(),
+    });
+  });
+
   test('a key cannot be granted a scope its creator could not exercise headlessly', async () => {
     // payout_address:write requires proving an authenticator, which a headless key
     // can never do — so it must not be grantable at all.
@@ -1788,7 +1850,14 @@ describe('payout addresses', { skip: databaseUrl ? false : 'DATABASE_URL not set
      * plain collections, a named key where a response carries two lists.
      */
     const expected: readonly [string, readonly string[]][] = [
-      ['api-keys', ['data']],
+      /**
+       * `grantable` beside the keys: what this caller may put on one.
+       *
+       * Sent because the page used to decide that for itself from a list written into it, and
+       * the list drifted — nine permissions offered nowhere, including the one a merchant
+       * needed to read their own balance.
+       */
+      ['api-keys', ['data', 'grantable']],
       // `chains` says which networks this server can take money on; the page reads both.
       ['assets', ['chains', 'data']],
       ['members', ['data']],

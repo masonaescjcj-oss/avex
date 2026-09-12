@@ -414,6 +414,19 @@ export function registerOrganizationRoutes(app: FastifyInstance, context: AppCon
         lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
         revoked: row.revokedAt !== null,
       })),
+      /**
+       * What this caller may grant, sent so the dashboard does not have to guess.
+       *
+       * It used to guess, from a list written out in the page, and the list drifted: nine of
+       * the sixteen permissions a key could hold were simply not offered anywhere. A merchant
+       * whose integration wanted `settings:read` — to read their own balance — could not tick
+       * it, and the API refused the request with a message naming a scope the dashboard had no
+       * way to grant. Two correct components, one unusable product.
+       *
+       * Computed per caller rather than fixed, because the ceiling is the caller's own role:
+       * an admin sees fewer of these than an owner, and should.
+       */
+      grantable: grantableScopes(access.role),
     });
   });
 
