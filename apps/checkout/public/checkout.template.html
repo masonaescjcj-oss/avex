@@ -353,6 +353,21 @@
   }
   .amount-fiat span { font-family: var(--mono); color: var(--ink); }
   /* The instruction, when the figure is the exact one to send. */
+  /* Telegram Stars: one button where the address block would be. */
+  .stars-to {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-2);
+    padding: var(--sp-4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface-2);
+  }
+  .stars-link { text-align: center; text-decoration: none; }
+  .stars-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink-2); text-align: center; }
+  .stars-error { margin: 0; font-size: 13px; color: var(--danger); text-align: center; }
+
   .amount-exact {
     margin: 0;
     font-size: var(--s-1);
@@ -1176,7 +1191,24 @@
             <button class="link-btn" type="button" id="back-to-network">Change</button>
           </div>
 
-          <div class="send-to">
+          <!--
+            Telegram Stars. No address, no QR, no exact amount: Telegram charges the figure it
+            was given, so there is nothing for the payer to copy and nothing for them to get
+            wrong. The whole screen is one button, and it replaces the block below rather than
+            sitting above it — two ways to pay one invoice is how somebody pays twice.
+          -->
+          <div class="stars-to" id="stars-block" hidden>
+            <a class="primary stars-link" id="stars-link" href="#" target="_blank" rel="noopener">
+              Pay with Telegram Stars →
+            </a>
+            <p class="stars-note" id="stars-note">
+              Opens Telegram and asks you to confirm. Come back here afterwards — this page
+              notices on its own.
+            </p>
+            <p class="stars-error" id="stars-error" hidden></p>
+          </div>
+
+          <div class="send-to" id="send-to">
             <div class="qr-frame" id="qr" aria-label="QR code of the deposit address"></div>
 
             <div class="fields">
@@ -1852,8 +1884,15 @@
     // which nobody sends; once money has been seen, or the rate has lapsed, "send exactly
     // this" is an instruction to do the wrong thing.
     const awaitingPayment = screen === 'pay' && state === 'awaiting';
-    el('amount-exact').hidden = !awaitingPayment;
-    el('copy-amount').hidden = !awaitingPayment;
+    /**
+     * Except on Stars, where "send exactly this amount" is an instruction with nothing to
+     * carry it out on. Telegram charges the figure it was given; the payer has no transfer
+     * to compose and no amount to copy, and telling them to match one invites them to go
+     * looking for a field that does not exist.
+     */
+    const payingInStars = Boolean(selected && (selected.payLink || selected.payLinkError));
+    el('amount-exact').hidden = !awaitingPayment || payingInStars;
+    el('copy-amount').hidden = !awaitingPayment || payingInStars;
   }
 
   el('to-pay').addEventListener('click', async () => {
@@ -1976,6 +2015,11 @@
       el('chosen-net').textContent = '—';
       el('chosen-time').textContent = '';
       el('qr').textContent = '';
+      // Same reasoning as the address above: a stale pay link is a link to somebody else's
+      // charge, and it must not survive a change of currency.
+      el('stars-block').hidden = true;
+      el('send-to').hidden = false;
+      el('stars-link').href = '#';
       return;
     }
 
@@ -2018,13 +2062,32 @@
         });
     el('summary-rate').textContent = rate === null ? '—' : '1 ' + selected.asset + ' = $' + rate;
 
+    /**
+     * Stars, or an address. Never both.
+     *
+     * The link is the whole of a Star payment: Telegram takes the amount it was given, so
+     * there is no address to copy, no memo to attach and no exact figure to match. Showing
+     * the address block as well would offer two ways to pay one invoice, and the second one
+     * leads to a wallet nobody is watching.
+     */
+    const stars = Boolean(selected.payLink || selected.payLinkError);
+    el('stars-block').hidden = !stars;
+    el('send-to').hidden = stars;
+    if (stars) {
+      el('stars-link').href = selected.payLink || '#';
+      el('stars-link').hidden = !selected.payLink;
+      el('stars-note').hidden = !selected.payLink;
+      el('stars-error').hidden = !selected.payLinkError;
+      el('stars-error').textContent = selected.payLinkError || '';
+    }
+
     el('memo-block').hidden = !selected.memo;
     el('memo').textContent = selected.memoValue ?? MEMO;
 
     // On a shared-address chain the memo is what identifies the invoice, so it
     // belongs in the QR too rather than only in the copyable field.
     // No address means no invoice yet, and a QR of nothing would scan to nothing.
-    if (selected.address) {
+    if (selected.address && !stars) {
       const memo = selected.memoValue ?? MEMO;
       renderQr(selected.memo ? selected.address + '?memo=' + memo : selected.address);
     } else {
@@ -2059,6 +2122,9 @@
       networkFeeBps: payment.networkFeeBps ?? 0,
       invoiceId: payment.invoiceId,
       toleranceBps: payment.toleranceBps,
+      // Null on every currency but Stars, which is how the two pay screens are told apart.
+      payLink: payment.payLink ?? null,
+      payLinkError: payment.payLinkError ?? null,
     };
     setLiveExpiry(payment.expiresAt);
     renderSelection();

@@ -270,6 +270,18 @@ export function compose(options: ComposeOptions): Composed {
    */
   paymentSink.parkUnmatchedIn(reconciliation);
 
+  /**
+   * Built before the context because two members need it: the routes a merchant connects a
+   * bot through, and the checkout, which asks it for a pay link when a payer picks Stars.
+   */
+  const telegram = new TelegramBotService(
+    db,
+    audit,
+    new SecretBox(env.TOKEN_ENCRYPTION_KEY),
+    new FetchTelegramTransport(),
+    env.PUBLIC_API_URL,
+  );
+
   const context: AppContext = {
     env,
     db,
@@ -296,14 +308,9 @@ export function compose(options: ComposeOptions): Composed {
       audit,
       ledger,
       minimums,
+      telegram,
     ),
-    telegram: new TelegramBotService(
-      db,
-      audit,
-      new SecretBox(env.TOKEN_ENCRYPTION_KEY),
-      new FetchTelegramTransport(),
-      env.PUBLIC_API_URL,
-    ),
+    telegram,
     webhooks,
     feePlans,
     ledger,

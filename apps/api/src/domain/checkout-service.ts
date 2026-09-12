@@ -62,6 +62,25 @@ export class CheckoutError extends Error {
   }
 }
 
+/**
+ * The part of the Telegram bot service this needs, and no more.
+ *
+ * An interface rather than the class, so the checkout does not depend on how a bot is stored
+ * or on Telegram's HTTP surface — and so a test can hand it two functions.
+ */
+export interface TelegramBotLink {
+  connected(organizationId: string): Promise<{ readonly username: string } | null>;
+  payLink(
+    organizationId: string,
+    invoice: {
+      readonly title: string;
+      readonly description: string;
+      readonly payload: string;
+      readonly stars: bigint;
+    },
+  ): Promise<string>;
+}
+
 /** One thing a payer can choose: an asset on a chain, with what it would cost them. */
 export interface CheckoutOption {
   readonly assetId: string;
@@ -143,6 +162,14 @@ export class CheckoutService {
      * means every network is offered — which is what happened before this existed.
      */
     private readonly minimums?: ChainMinimums | undefined,
+    /**
+     * The merchant's Telegram bot, where they asked us to run the Stars checkout.
+     *
+     * Optional, like the two above, and absent means Stars are simply not offered on this
+     * page — which is the correct answer, not a degraded one: without a bot there is nothing
+     * to ask for a pay link, so an option here would be one a payer could tap and not pay.
+     */
+    private readonly telegram?: TelegramBotLink | undefined,
   ) {}
 
   // ── merchant side ───────────────────────────────────────────────────────────
@@ -780,12 +807,26 @@ export class CheckoutService {
     const where = await this.destinations(organizationId);
     const supported = new Set(this.deriver.supportedChains());
     const forwarders = new Set(this.deriver.forwarderChains());
-    return rows.filter(
-      (row) =>
-        supported.has(row.chain) &&
-        (where.wallets.has(row.chain) ||
-          this.deriver.isPooled(row.chain) ||
-          (where.payouts.has(row.chain) && forwarders.has(row.chain))),
+
+    /**
+     * Telegram Stars, and the one destination that is not an address.
+     *
+     * A connected bot is what makes Stars payable from this page, and it is the same kind of
+     * fact as a wallet on a chain: somewhere the money can land that we can then point a payer
+     * at. Without one the merchant can still take Stars — their own bot creates the Telegram
+     * invoice and reports the charge — but not *here*, because this page has no bot to ask.
+     */
+    const bot = rows.some((row) => row.kind === 'stars')
+      ? await this.telegram?.connected(organizationId)
+      : null;
+
+    return rows.filter((row) =>
+      row.kind === 'stars'
+        ? bot != null
+        : supported.has(row.chain) &&
+          (where.wallets.has(row.chain) ||
+            this.deriver.isPooled(row.chain) ||
+            (where.payouts.has(row.chain) && forwarders.has(row.chain))),
     );
   }
 
@@ -821,12 +862,45 @@ export class CheckoutService {
   /** The invoice as a payer may see it: how to pay, and how it is going. */
   private async publicInvoice(invoiceId: string) {
     const [row] = await this.db
-      .select({ invoice: invoices, symbol: assets.symbol, decimals: assets.decimals })
+      .select({
+        invoice: invoices,
+        symbol: assets.symbol,
+        decimals: assets.decimals,
+        kind: assets.kind,
+      })
       .from(invoices)
       .innerJoin(assets, eq(assets.id, invoices.assetId))
       .where(eq(invoices.id, invoiceId))
       .limit(1);
     if (!row) return null;
+
+    /**
+     * A Stars invoice is paid through Telegram, so the payer gets a link instead of an address.
+     *
+     * Asked for on every read rather than stored, and that is deliberate. Telegram's links are
+     * short-lived and ours to re-create at will; a stale one saved in a column would send a
+     * payer to a page that no longer works, with nothing on our side saying why. Asking again
+     * costs one call on a screen the payer is already waiting on.
+     *
+     * A failure here is not fatal: the rest of the invoice is returned and the page says the
+     * link could not be fetched, which is recoverable by reloading. Throwing would turn a bad
+     * minute at Telegram into a checkout that cannot be opened at all.
+     */
+    let payLink: string | null = null;
+    let payLinkError: string | null = null;
+    if (row.kind === 'stars') {
+      try {
+        payLink = (await this.telegram?.payLink(row.invoice.organizationId, {
+          title: 'Payment',
+          description: `Order ${row.invoice.reference ?? row.invoice.id.slice(0, 8)}`,
+          payload: row.invoice.depositAddress,
+          stars: BigInt(row.invoice.amountDue),
+        })) ?? null;
+        if (payLink === null) payLinkError = 'This shop is not set up to take Stars here.';
+      } catch {
+        payLinkError = 'Telegram could not be reached just now. Reload to try again.';
+      }
+    }
 
     /**
      * Computed from the columns rather than from a live fee lookup.
@@ -850,6 +924,15 @@ export class CheckoutService {
       amountPaid: row.invoice.amountPaid,
       depositAddress: row.invoice.depositAddress,
       memo: row.invoice.memo,
+      /**
+       * How a Star payment is made: a link into Telegram, where an address would otherwise be.
+       *
+       * Null on every other currency, and the page reads it as the switch between the two
+       * screens — there is no address to copy, no QR code, and no exact amount to match,
+       * because Telegram charges the figure it was given.
+       */
+      payLink,
+      payLinkError,
       status: row.invoice.status,
       toleranceBps: row.invoice.toleranceBps,
       /**

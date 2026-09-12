@@ -32,7 +32,7 @@ import { SettlementStore } from '../domain/settlement-store.js';
 import { StaffAuthService } from '../domain/staff-auth.js';
 import { FeePlanService } from '../domain/fee-plan-service.js';
 import { WebhookService } from '../domain/webhook-service.js';
-import { testTelegramService } from '../domain/telegram-bot-testing.js';
+import { FakeTelegramTransport, testTelegramService } from '../domain/telegram-bot-testing.js';
 import { loadEnv } from '../env.js';
 import { ConsoleMailer } from '../mailer.js';
 import { buildServer } from './server.js';
@@ -86,6 +86,8 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
   let walletPool: WalletPoolService;
   let close: () => Promise<void>;
   let db: ReturnType<typeof createDatabase>['db'];
+  let telegram: ReturnType<typeof testTelegramService>;
+  let telegramCalls: FakeTelegramTransport;
   let feePlans: FeePlanService;
   let prices: PriceService;
   let token: string;
@@ -166,6 +168,21 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
       walletPool,
     );
 
+    /**
+     * Telegram, answered by a fake.
+     *
+     * `getMe` and `setWebhook` are what connecting a bot costs, and `createInvoiceLink` is
+     * what a payer picking Stars costs. The link it returns is the real shape — Telegram
+     * hands back a `t.me/$…` string — because the page and the tests both read it as one.
+     */
+    telegramCalls = new FakeTelegramTransport({
+      getMe: { id: 8123456789, username: 'shop_test_bot', is_bot: true },
+      setWebhook: true,
+      deleteWebhook: true,
+      createInvoiceLink: 'https://t.me/$FakeStarsInvoiceLink',
+    });
+    telegram = testTelegramService(db, audit, telegramCalls);
+
     const settlements = new SettlementStore(db);
     const reconciliation = new ReconciliationService(db, audit, {
       async recompute() {
@@ -182,7 +199,7 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
       audit,
       mailer,
       prices,
-      telegram: testTelegramService(db, audit),
+      telegram,
       minPriceSources: DEFAULT_AGGREGATION.minSources,
       assets: new AssetService(db, audit, new ContractProbe(offlineCaller), ['USDT']),
       payouts: new PayoutAddressService(db, audit, mailer),
@@ -207,6 +224,8 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
         rates,
         audit,
         ledger,
+        undefined,
+        telegram,
       ),
       webhooks: new WebhookService(
         db,
@@ -524,6 +543,183 @@ describe('hosted checkout', { skip: databaseUrl ? false : 'DATABASE_URL is not s
     const asked = await createCheckout({ amountFiatMicros: '1000000', reference: paidRef });
     assert.equal(asked.statusCode, 200, asked.body);
     assert.equal(asked.json().id, paid.json().id);
+  });
+
+  // ── Telegram Stars ─────────────────────────────────────────────────────────
+  //
+  // The other way to take Stars — the merchant's own bot creating the Telegram invoice and
+  // reporting the charge — needs none of this and is covered with invoice creation. These are
+  // about the hosted checkout: Stars beside TON and USDT on one page, which is only possible
+  // because the merchant handed us a bot to ask.
+
+  /** The one Stars asset, enabled for this merchant at a rate they set. */
+  async function enableStars(rateScaled = '15000000000000000'): Promise<string> {
+    const [existing] = await db
+      .select({ id: schema.assets.id })
+      .from(schema.assets)
+      .where(and(eq(schema.assets.chain, 'telegram'), eq(schema.assets.kind, 'stars')))
+      .limit(1);
+
+    const assetId =
+      existing?.id ??
+      (
+        await db
+          .insert(schema.assets)
+          .values({
+            chain: 'telegram',
+            symbol: 'XTR',
+            contract: null,
+            // Whole units: a fraction of a Star does not exist.
+            decimals: 0,
+            kind: 'stars',
+            verdict: 'approved',
+            requiresFixedRate: true,
+            probedAt: new Date(),
+          })
+          .returning({ id: schema.assets.id })
+      )[0]!.id;
+
+    await db
+      .insert(schema.merchantAssets)
+      .values({
+        organizationId: orgId,
+        assetId,
+        enabled: true,
+        // Nothing on the market prices a Star, so the rate is always the merchant's own.
+        pricingMode: 'fixed_rate',
+        fixedRateScaled: rateScaled,
+        fixedRateValidUntil: null,
+      })
+      .onConflictDoUpdate({
+        target: [schema.merchantAssets.organizationId, schema.merchantAssets.assetId],
+        set: { enabled: true, pricingMode: 'fixed_rate', fixedRateScaled: rateScaled },
+      });
+
+    return assetId;
+  }
+
+  const connectBot = () =>
+    app.inject({
+      method: 'PUT',
+      url: `/v1/organizations/${orgId}/telegram-bot`,
+      headers: auth(),
+      payload: { token: '8123456789:AAHtestTokenOfTheRightShapeXXXXXXXXX' },
+    });
+
+  const disconnectBot = () =>
+    app.inject({
+      method: 'DELETE',
+      url: `/v1/organizations/${orgId}/telegram-bot`,
+      headers: auth(),
+    });
+
+  test('Stars are not offered until a bot is connected', async () => {
+    /**
+     * The destination rule, in the one case where the destination is not an address. A
+     * merchant can enable XTR and set a rate and still have nowhere for this page to send a
+     * payer, because the page has no bot to ask for a link. Offering it anyway would be an
+     * option a payer could tap and not pay.
+     */
+    await enableStars();
+    await ensurePayout('bsc');
+    const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+
+    const before = await optionsFor(session.id);
+    assert.equal(before.statusCode, 200, before.body);
+    assert.equal(
+      (before.json().options as { symbol: string }[]).some((option) => option.symbol === 'XTR'),
+      false,
+      'no bot, no Stars',
+    );
+
+    const connected = await connectBot();
+    assert.equal(connected.statusCode, 200, connected.body);
+
+    const after = await optionsFor((await createCheckout({ amountFiatMicros: '1000000' })).json().id);
+    const stars = (after.json().options as { symbol: string; available: boolean }[]).find(
+      (option) => option.symbol === 'XTR',
+    );
+    assert.ok(stars, 'with a bot, Stars are on the page');
+    assert.equal(stars.available, true);
+
+    await disconnectBot();
+  });
+
+  test('picking Stars opens an invoice and a Telegram link, not an address', async () => {
+    await enableStars();
+    await ensurePayout('bsc');
+    await connectBot();
+    try {
+      const assetId = await enableStars();
+      const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+
+      const chosen = await select(session.id, assetId);
+      assert.equal(chosen.statusCode, 200, chosen.body);
+      assert.ok(chosen.json().payment, `no invoice came back: ${chosen.body}`);
+      const invoice = chosen.json().payment as {
+        payLink: string | null;
+        depositAddress: string;
+        amountDue: string;
+        symbol: string;
+      };
+
+      assert.equal(invoice.symbol, 'XTR');
+      assert.equal(invoice.payLink, 'https://t.me/$FakeStarsInvoiceLink');
+      /**
+       * At $0.015 a Star, a one-dollar order is 67 Stars — rounded up, because a payer must
+       * never be asked for less than the merchant priced.
+       */
+      assert.equal(invoice.amountDue, '67');
+
+      /**
+       * The payload we gave Telegram is the invoice's own deposit column, and that is the
+       * whole mechanism: it comes back on the pre-checkout question and on the payment, and
+       * is how a delivery names the invoice it belongs to.
+       */
+      const asked = telegramCalls.lastCall('createInvoiceLink');
+      assert.equal(asked?.currency, 'XTR');
+      assert.equal(asked?.payload, invoice.depositAddress);
+      assert.match(String(asked?.payload), /^telegram:[0-9a-f-]{36}$/);
+      assert.deepEqual((asked?.prices as { amount: number }[])[0]?.amount, 67);
+    } finally {
+      await disconnectBot();
+    }
+  });
+
+  test('a Telegram that will not answer leaves the invoice readable', async () => {
+    /**
+     * The link is asked for on every read rather than stored, because Telegram's links are
+     * short-lived. That makes a bad minute at Telegram a thing the page has to survive:
+     * throwing would turn it into a checkout that cannot be opened at all, when reloading in
+     * ten seconds would have worked.
+     */
+    const assetId = await enableStars();
+    await ensurePayout('bsc');
+    await connectBot();
+    try {
+      const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+      await select(session.id, assetId);
+
+      telegramCalls.failNext('createInvoiceLink');
+      const view = await state(session.id);
+      assert.equal(view.statusCode, 200, view.body);
+      const invoice = view.json().payment as { payLink: string | null; payLinkError: string | null };
+      assert.equal(invoice.payLink, null);
+      assert.match(invoice.payLinkError ?? '', /Telegram/);
+    } finally {
+      await disconnectBot();
+    }
+  });
+
+  test('every other currency carries no Telegram link at all', async () => {
+    // The page reads `payLink` as the switch between two screens, so a stray one on a USDT
+    // invoice would replace the address a payer has to send to with a button.
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await ensurePayout('bsc');
+    const session = (await createCheckout({ amountFiatMicros: '1000000' })).json();
+
+    const chosen = await select(session.id, assetId);
+    assert.equal((chosen.json().payment as { payLink: string | null }).payLink, null);
   });
 
   // ── the payer opens the link ───────────────────────────────────────────────

@@ -98,6 +98,28 @@ const OPTIONS = [
   },
 ];
 
+/**
+ * Telegram Stars, kept out of `OPTIONS` on purpose.
+ *
+ * Every other test in this file asserts the order and contents of the currency list, so an
+ * extra row in the shared fixture would fail them for a reason that has nothing to do with
+ * what they test. Added by `open({ stars: true })` where it is the subject.
+ */
+const STARS_OPTION = {
+    assetId: '44444444-4444-4444-8444-444444444444',
+    symbol: 'XTR',
+    name: 'Telegram Stars',
+    chain: 'telegram',
+    decimals: 0,
+    amount: '1340',
+    rateUsd: '15000000000000000',
+    feeIncluded: '0',
+    feeBps: 0,
+    available: true,
+    unavailableReason: null,
+  };
+
+
 describe('checkout, live', { skip: playwright ? false : 'playwright is not installed' }, () => {
   let browser;
 
@@ -159,7 +181,7 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
 
     await page.route(`**/pay/${SESSION}/options`, (route) => {
       requests.push('options');
-      const options = behaviour.options ?? OPTIONS;
+      const options = behaviour.options ?? (behaviour.stars ? [...OPTIONS, STARS_OPTION] : OPTIONS);
       return route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({ options }),
@@ -180,6 +202,35 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
         });
       }
       const ton = sent.assetId === OPTIONS[1].assetId;
+      const stars = sent.assetId === STARS_OPTION.assetId;
+      if (stars) {
+        return route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            changed: true,
+            payment: {
+              invoiceId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+              chain: 'telegram',
+              symbol: 'XTR',
+              decimals: 0,
+              amountDue: '1340',
+              amountPaid: '0',
+              // The payload, not an address. Telegram echoes it back on the payment.
+              depositAddress: 'telegram:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+              memo: null,
+              payLink: behaviour.payLink === null ? null : behaviour.payLink ?? 'https://t.me/$StarsPayLink',
+              payLinkError: behaviour.payLinkError ?? null,
+              status: 'pending',
+              toleranceBps: 0,
+              feeIncluded: '0',
+              feeBps: 0,
+              networkFeeIncluded: '0',
+              networkFeeBps: 0,
+              expiresAt: new Date(Date.now() + 900_000).toISOString(),
+            },
+          }),
+        });
+      }
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
@@ -221,6 +272,23 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
 
     return { page, context, errors, requests };
   }
+
+  /**
+   * Pick Stars and land on the pay screen.
+   *
+   * Two clicks like every other currency: Stars are one row in the currency list and the rail
+   * is its only "network". The page is not told anywhere that Stars are special — it works it
+   * out from the payment having a link and no address, which is the property worth testing.
+   */
+  const pickStars = async (page) => {
+    await page.click('#currencies .coin:has-text("XTR")');
+    await page.click('#networks .net-row');
+    await page.click('#to-pay');
+    await page.waitForFunction(
+      () => document.getElementById('screen-pay')?.hidden === false,
+      { timeout: 5000 },
+    );
+  };
 
   const shown = (page, selector) =>
     page.$eval(selector, (node) => node.getBoundingClientRect().height > 0).catch(() => false);
@@ -813,5 +881,76 @@ describe('checkout, live', { skip: playwright ? false : 'playwright is not insta
     const { context, errors } = await open();
     assert.deepEqual(errors, []);
     await context.close();
+  });
+
+  // ── Telegram Stars ──────────────────────────────────────────────────────────
+  //
+  // The one currency with no address. Telegram charges the amount it was given, so there is
+  // nothing to copy, nothing to scan and no exact figure to match — and every instruction
+  // built for the other screen is wrong here.
+
+  test('picking Stars shows a button, and no address to send to', async () => {
+    const { page, context, errors } = await open({ stars: true });
+    await pickStars(page);
+
+    assert.equal(await shown(page, '#stars-block'), true, 'the Stars block is shown');
+    assert.equal(await shown(page, '#send-to'), false, 'the address block is not');
+    assert.equal(
+      await page.$eval('#stars-link', (node) => node.getAttribute('href')),
+      'https://t.me/$StarsPayLink',
+    );
+    // Opening Telegram must leave this page where it is, so the payer comes back to it.
+    assert.equal(await page.$eval('#stars-link', (node) => node.getAttribute('target')), '_blank');
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('there is no "send exactly this amount" on a Stars invoice', async () => {
+    /**
+     * The instruction has nothing to carry it out on: the payer composes no transfer and
+     * types no figure. Leaving it up would send them looking for a field that does not exist.
+     */
+    const { page, context } = await open({ stars: true });
+    await pickStars(page);
+
+    assert.equal(await shown(page, '#amount-exact'), false);
+    assert.equal(await shown(page, '#copy-amount'), false);
+    // The amount is still shown — it is what Telegram will charge — in whole Stars.
+    assert.equal(await text(page, '#amount'), '1340');
+    assert.equal(await text(page, '#amount-unit'), 'XTR');
+    await context.close();
+  });
+
+  test('a link Telegram would not give is said out loud, not left blank', async () => {
+    const { page, context, errors } = await open({
+      stars: true,
+      payLink: null,
+      payLinkError: 'Telegram could not be reached just now. Reload to try again.',
+    });
+    await pickStars(page);
+
+    assert.equal(await shown(page, '#stars-block'), true);
+    assert.equal(await shown(page, '#stars-link'), false, 'no button to a link we do not have');
+    assert.match(await text(page, '#stars-error'), /Telegram could not be reached/);
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('changing from Stars back to a chain restores the address screen', async () => {
+    /**
+     * The two screens are mutually exclusive, and the stale one is the dangerous one: a pay
+     * link left behind after a change of currency is a link to a charge for the other
+     * invoice, and an address left behind after picking Stars is a wallet nobody is watching.
+     */
+    const { page, context, errors } = await open({ stars: true });
+    await pickStars(page);
+    assert.equal(await shown(page, '#stars-block'), true);
+
+    await page.click('#back-to-network');
+    await page.click(`#currencies .coin[data-currency="USDT"]`).catch(() => {});
+    await page.waitForTimeout(150);
+    assert.equal(await shown(page, '#stars-block'), false, 'the Stars button did not survive');
+    await context.close();
+    assert.deepEqual(errors, []);
   });
 });

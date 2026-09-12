@@ -17,11 +17,16 @@ import { TelegramBotError, TelegramBotService, type TelegramTransport } from './
 /** Records what would have been sent, and answers whatever the test lines up. */
 export class FakeTelegramTransport implements TelegramTransport {
   readonly calls: { token: string; method: string; body: Record<string, unknown> }[] = [];
+  private readonly failing = new Set<string>();
 
   constructor(private readonly answers: Record<string, unknown | (() => unknown)> = {}) {}
 
   async call<T>(token: string, method: string, body: Record<string, unknown>): Promise<T> {
     this.calls.push({ token, method, body });
+
+    if (this.failing.delete(method)) {
+      throw new TelegramBotError('unreachable', `this fake was told to fail ${method} once`);
+    }
 
     const answer = this.answers[method];
     if (answer === undefined) {
@@ -30,6 +35,11 @@ export class FakeTelegramTransport implements TelegramTransport {
     const value = typeof answer === 'function' ? (answer as () => unknown)() : answer;
     if (value instanceof Error) throw value;
     return value as T;
+  }
+
+  /** Make the next call to one method fail, for the bad-minute-at-Telegram case. */
+  failNext(method: string): void {
+    this.failing.add(method);
   }
 
   /** The last body sent to a method, for a test that cares what we asked Telegram to do. */
