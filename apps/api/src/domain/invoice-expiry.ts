@@ -62,7 +62,12 @@ export async function expireInvoices(
    */
   const closed = await db
     .update(invoices)
-    .set({ status: 'expired' })
+    /**
+     * The reference is released in the same statement, so the merchant's next invoice for
+     * that order is a new invoice rather than this one handed back. It is never re-held: see
+     * `referenceActive` in the schema for why that matters to a late payment.
+     */
+    .set({ status: 'expired', referenceActive: false })
     .where(
       and(
         sql`${invoices.id} in ${due.map((row) => row.id)}`,

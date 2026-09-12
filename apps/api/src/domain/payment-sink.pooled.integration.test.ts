@@ -620,6 +620,13 @@ describe('closing invoices whose time has run out', { skip: !databaseUrl }, () =
   }
   const statusOf = async (id: string) =>
     (await db().select({ status: invoices.status }).from(invoices).where(eq(invoices.id, id)))[0]!.status;
+  const referenceActiveOf = async (id: string) =>
+    (
+      await db()
+        .select({ active: invoices.referenceActive })
+        .from(invoices)
+        .where(eq(invoices.id, id))
+    )[0]!.active;
 
   test('a pending invoice past its deadline is expired; one still inside it is not', async () => {
     const past = await invoiceWith('pending', new Date(Date.now() - 60_000));
@@ -629,6 +636,26 @@ describe('closing invoices whose time has run out', { skip: !databaseUrl }, () =
     assert.ok(expired >= 1);
     assert.equal(await statusOf(past), 'expired');
     assert.equal(await statusOf(live), 'pending');
+  });
+
+  test('expiry releases the merchant’s reference, and never takes it back', async () => {
+    /**
+     * The order can be invoiced again once its invoice has died — which is what lets a shop
+     * send a customer back to pay after their window closed. The flag is separate from the
+     * status because it must not come back on: an expired invoice can still be credited by a
+     * late payment, and a `paid` row re-claiming a reference a newer invoice already holds is
+     * a unique-index collision on the path that records somebody's money.
+     */
+    const past = await invoiceWith('pending', new Date(Date.now() - 60_000));
+    const live = await invoiceWith('pending', new Date(Date.now() + 3_600_000));
+
+    await expireInvoices(db(), webhooks);
+    assert.equal(await referenceActiveOf(past), false);
+    assert.equal(await referenceActiveOf(live), true, 'a live invoice keeps its reference');
+
+    // The late credit, as the sink writes it.
+    await db().update(invoices).set({ status: 'paid' }).where(eq(invoices.id, past));
+    assert.equal(await referenceActiveOf(past), false, 'being paid does not re-claim it');
   });
 
   test('a confirming invoice is given a day past its deadline before it is given up on', async () => {

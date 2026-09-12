@@ -20,6 +20,7 @@ import { AuthService } from '../domain/auth-service.js';
 import { CheckoutService } from '../domain/checkout-service.js';
 import { DatabasePaymentSink } from '../domain/payment-sink.js';
 import { DepositAddressDeriver } from '../domain/deposit-address.js';
+import { expireInvoices } from '../domain/invoice-expiry.js';
 import { InvoiceCreationService } from '../domain/invoice-creation.js';
 import { MerchantService } from '../domain/merchant-service.js';
 import { PayoutAddressService } from '../domain/payout-service.js';
@@ -792,6 +793,84 @@ describe('opening an invoice', { skip: databaseUrl ? false : 'DATABASE_URL is no
     const ids = new Set(responses.map((response) => response.json().id));
     assert.equal(ids.size, 1, 'four concurrent retries must produce one invoice');
     assert.equal(responses.filter((r) => r.statusCode === 201).length, 1, 'exactly one create');
+  });
+
+  test('an expired invoice does not hold the order’s reference', async () => {
+    /**
+     * The bug a merchant hit, and the reason any of this changed. A shop sends a customer to
+     * pay for order #1234; the customer wanders off and the payment window closes; they come
+     * back and click pay again. The shop asks for the same order, and until now got the dead
+     * invoice back — so the checkout said the payment had expired, and it said so again on
+     * every attempt afterwards. The order became impossible to pay.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+    const reference = `order-${unique}-expired`;
+
+    const first = await open({ assetId, amountFiatMicros: '1000000', reference });
+    assert.equal(first.statusCode, 201);
+
+    // Age it past its deadline and run the real expiry pass, so the release is the job's.
+    await db
+      .update(schema.invoices)
+      .set({ expiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(schema.invoices.id, first.json().id));
+    await expireInvoices(db, webhooks);
+
+    const again = await open({ assetId, amountFiatMicros: '1000000', reference });
+    assert.equal(again.statusCode, 201, `a fresh invoice, not the dead one: ${again.body}`);
+    assert.notEqual(again.json().id, first.json().id);
+    assert.notEqual(again.json().depositAddress, first.json().depositAddress);
+
+    // And the replacement is now the one the reference names, so retries still converge.
+    const retry = await open({ assetId, amountFiatMicros: '1000000', reference });
+    assert.equal(retry.statusCode, 200);
+    assert.equal(retry.json().id, again.json().id);
+  });
+
+  test('a late payment can still revive the expired invoice the reference moved on from', async () => {
+    /**
+     * Why the release is a column of its own rather than a reading of `status`.
+     *
+     * An invoice keeps its amount reserved for a day after it expires, so a payer who was slow
+     * is not a payer who lost money: the sink credits the expired invoice and recomputes it to
+     * `paid`. If the unique index were predicated on the status, that update would collide with
+     * the replacement invoice this test creates — and the collision would surface as a payment
+     * that could not be recorded. Real money, refused by a constraint.
+     */
+    const assetId = await enableAsset({ symbol: 'USDT' });
+    await addPayoutAddress('bsc');
+    const reference = `order-${unique}-revived`;
+
+    const first = await open({ assetId, amountFiatMicros: '1000000', reference });
+    await db
+      .update(schema.invoices)
+      .set({ expiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(schema.invoices.id, first.json().id));
+    await expireInvoices(db, webhooks);
+
+    const replacement = await open({ assetId, amountFiatMicros: '1000000', reference });
+    assert.equal(replacement.statusCode, 201);
+
+    // Exactly what `DatabasePaymentSink.recompute` writes when the late transfer is credited.
+    await db
+      .update(schema.invoices)
+      .set({ status: 'paid', amountPaid: first.json().amountDue, paidAt: new Date() })
+      .where(eq(schema.invoices.id, first.json().id));
+
+    const [revived] = await db
+      .select({ status: schema.invoices.status })
+      .from(schema.invoices)
+      .where(eq(schema.invoices.id, first.json().id));
+    assert.equal(revived!.status, 'paid');
+
+    /**
+     * And with one paid invoice and one still pending on the same reference, asking again
+     * returns the paid one — the customer has already paid for this order once.
+     */
+    const asked = await open({ assetId, amountFiatMicros: '1000000', reference });
+    assert.equal(asked.statusCode, 200);
+    assert.equal(asked.json().id, first.json().id);
   });
 
   test('two invoices without a reference are two invoices', async () => {

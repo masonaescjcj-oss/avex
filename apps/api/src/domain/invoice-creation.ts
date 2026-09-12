@@ -1,5 +1,5 @@
 import { applyFeePayer, ceilToGrid, createQuote, DEFAULT_MAX_ROUNDING_BPS, DEFAULT_QUOTE_TTL_MS, fiatToTokenAmount, QuoteInputError, RATE_SCALE, tokenAmountToFiat, type Asset, type ChainId, type FeePayer, type FeeSplit, type PriceSymbol, type PricingMode, type Rate } from '@avex/core';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, ne, sql } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
 import { assets, invoices, merchantAssets, payoutAddresses, quotes } from '../db/schema.js';
@@ -664,11 +664,35 @@ export class InvoiceCreationService {
     return { invoice: created, created: true };
   }
 
+  /**
+   * The live invoice for a merchant's reference, if there is one.
+   *
+   * Expired invoices are skipped, and that is the whole point of the method. A shop that
+   * re-sends the customer to pay for the same order — which is what every "try again" button
+   * in every cart does — must get a payable invoice, not the one whose window closed while the
+   * customer was away. Returning the dead one made the order impossible to pay: the checkout
+   * said the payment had expired, and asking again produced the same expired invoice forever.
+   *
+   * Among the invoices that are still live, one carrying money outranks a bare `pending` one.
+   * That ordering only matters in a narrow case — a late payment revived an old invoice after
+   * a new one had been issued for the same order — and in that case handing back the one that
+   * has been paid is what stops the customer being asked to pay twice.
+   */
   private async findByReference(organizationId: string, reference: string) {
     const [row] = await this.db
       .select()
       .from(invoices)
-      .where(and(eq(invoices.organizationId, organizationId), eq(invoices.reference, reference)))
+      .where(
+        and(
+          eq(invoices.organizationId, organizationId),
+          eq(invoices.reference, reference),
+          ne(invoices.status, 'expired'),
+        ),
+      )
+      .orderBy(
+        sql`case when ${invoices.status} = 'pending' then 1 else 0 end`,
+        desc(invoices.createdAt),
+      )
       .limit(1);
     return row ?? null;
   }

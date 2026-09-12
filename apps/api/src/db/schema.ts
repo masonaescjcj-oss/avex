@@ -794,6 +794,20 @@ export const invoices = pgTable(
     /** Merchant's own reference, for reconciliation on their side. */
     reference: text('reference'),
 
+    /**
+     * Whether this invoice still *holds* its reference — that is, whether asking for
+     * "order #1234" again should hand this one back.
+     *
+     * True at creation and only ever turned off, when the invoice expires. It exists as a
+     * column rather than being read off `status` because the two must be able to disagree:
+     * a payer who was slow can still credit an expired invoice for a day afterwards, which
+     * moves it back to `paid` — and if the unique index below were predicated on the status,
+     * that credit would collide with whatever new invoice the merchant had meanwhile issued
+     * for the same order, and the payment would fail to land. A flag that never goes back up
+     * cannot do that.
+     */
+    referenceActive: boolean('reference_active').notNull().default(true),
+
     amountDue: numeric('amount_due', { precision: 78, scale: 0 }).notNull(),
     /** Recomputed from credited payments, never incremented blindly. */
     amountPaid: numeric('amount_paid', { precision: 78, scale: 0 }).notNull().default('0'),
@@ -969,12 +983,15 @@ export const invoices = pgTable(
      * nothing and both insert. This index is what turns the second insert into a
      * conflict the service can resolve by returning the first one.
      *
-     * Partial, because a reference is optional and many rows without one must not
-     * collide with each other.
+     * Partial twice over: a reference is optional, and many rows without one must not
+     * collide with each other; and an invoice that has *expired* no longer holds its
+     * reference, so the merchant can issue a fresh invoice for the same order. Without that
+     * second condition a customer whose payment window ran out was handed the dead invoice
+     * back every time they tried again, and the order could never be paid.
      */
     uniqueIndex('invoices_org_reference_key')
       .on(table.organizationId, table.reference)
-      .where(sql`${table.reference} is not null`),
+      .where(sql`${table.reference} is not null and ${table.referenceActive}`),
 
     /**
      * The fee invariants, enforced here rather than only in application code.
