@@ -85,7 +85,7 @@ API_PORT=3000
 # to return eight strings, and because none of them may be passed as arguments — an argument is
 # visible in `ps` to every user on the host.
 db_url='' direct_url='' smtp_url='' mail_from='' operator_email=''
-app_url='' tron_rpc=''
+app_url='' public_api_url='' tron_rpc=''
 # Every endpoint, declared empty, because `set -u` is on and a chain left off is a variable
 # never assigned. `--selftest` fills in only a couple of these and was failing on the first
 # one it had not — an unbound variable rather than a chain skipped, which is what the blank
@@ -599,6 +599,8 @@ write_env_file() {
   done
   memo_secret=$(openssl rand -hex 24)
   token_key=$(openssl rand -hex 24)
+  # api.<the pages domain>, which is what setup_tls offers as the API hostname too.
+  public_api_url="https://api.${app_url#http*://}"
 
   umask 077
   cat > "$ENV_FILE" <<ENVFILE
@@ -619,6 +621,11 @@ DIRECT_DATABASE_URL=$(quote_env "$direct_url")
 # payer's link is APP_URL/pay/<id>. Pointing this at the API host produces mail
 # whose links 404.
 APP_URL=$(quote_env "$app_url")
+
+# Where this API answers publicly, which is not the pages origin above. Telegram is
+# told this URL when a merchant connects a bot; without it that is refused rather
+# than pointed at the static site. Change it if the API lives somewhere else.
+PUBLIC_API_URL=$(quote_env "$public_api_url")
 
 SMTP_URL=$(quote_env "$smtp_url")
 MAIL_FROM=$(quote_env "$mail_from")
@@ -689,13 +696,24 @@ configure() {
 backfill_generated_secrets() {
   local key value added=0
 
-  for key in TOKEN_ENCRYPTION_KEY; do
+  for key in TOKEN_ENCRYPTION_KEY PUBLIC_API_URL; do
     grep -q "^$key=" "$ENV_FILE" && continue
 
-    value=$(openssl rand -hex 24)
     case $key in
       TOKEN_ENCRYPTION_KEY)
+        value=$(openssl rand -hex 24)
         printf '\n# Generated here, once. Encrypts secrets we must read back rather than\n# hash — today a merchant Telegram bot token. Losing it loses those tokens.\n%s=%s\n' \
+          "$key" "$(quote_env "$value")" >> "$ENV_FILE"
+        ;;
+      PUBLIC_API_URL)
+        # Derived from the pages origin already in the file, the same way a fresh install
+        # derives it. Wrong is possible — an API on another host — and harmless: it is read
+        # only when a merchant connects a Telegram bot, and it is one line to correct.
+        local domain
+        domain=$( grep -oP "(?<=^APP_URL=').*(?=')" "$ENV_FILE" 2>/dev/null | sed 's|https\?://||' )
+        [[ $domain ]] || continue
+        value="https://api.$domain"
+        printf '\n# Where this API answers publicly, which is not APP_URL above. Telegram is told\n# this when a merchant connects a bot. Correct it if the API lives elsewhere.\n%s=%s\n' \
           "$key" "$(quote_env "$value")" >> "$ENV_FILE"
         ;;
     esac
@@ -1132,7 +1150,7 @@ selftest() {
   # Every key the API refuses to boot without, plus the two whose absence is silent.
   for check in NODE_ENV PORT HOST DATABASE_URL DIRECT_DATABASE_URL APP_URL SMTP_URL MAIL_FROM \
                OPERATOR_EMAIL CHECKOUT_ORIGINS DASHBOARD_ORIGINS EVM_RPC_URLS \
-               SOLANA_RPC_URLS TON_API_URL MEMO_SECRET TOKEN_ENCRYPTION_KEY; do
+               SOLANA_RPC_URLS TON_API_URL MEMO_SECRET TOKEN_ENCRYPTION_KEY PUBLIC_API_URL; do
     if grep -q "^$check='" "$ENV_FILE"; then
       line "$check" 'present'
     else

@@ -326,6 +326,25 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         );
       }
 
+      if (path.endsWith('/telegram-bot')) {
+        if (route.request().method() === 'DELETE') {
+          data.bot = null;
+          return route.fulfill(json({ webhookRemoved: true, message: 'Disconnected, and the bot no longer sends its updates here.' }));
+        }
+        if (route.request().method() === 'PUT') {
+          const sent = JSON.parse(route.request().postData() ?? '{}');
+          data.bot = {
+            botId: '8123456789',
+            username: 'shop_test_bot',
+            forwardUrl: sent.forwardUrl ?? null,
+            verifiedAt: new Date().toISOString(),
+            lastUpdateAt: null,
+            webhookUrl: 'https://api.test/telegram/updates/8123456789',
+          };
+          return route.fulfill(json({ bot: data.bot, message: '@shop_test_bot will now send its updates to AVEX.' }));
+        }
+        return route.fulfill(json({ bot: data.bot ?? null }));
+      }
       if (method === 'PATCH') {
         posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
         return route.fulfill(
@@ -2890,6 +2909,86 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       await openTab(page, label);
       await page.waitForTimeout(120);
     }
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  // ── Telegram Stars ──────────────────────────────────────────────────────────
+
+  test('connecting a bot shows which one, and clears the token from the page', async () => {
+    /**
+     * The token is a credential that can send messages and take payments as that bot. It is
+     * stored encrypted and no route returns it, and leaving it sitting in an input on a
+     * shared screen would undo both of those.
+     */
+    const { page, context, errors } = await open();
+    await openTab(page, 'Currencies');
+
+    assert.equal(await text(page, '#bot-state'), 'not connected');
+    await page.fill('#bot-token', '8123456789:AAHtestTokenOfTheRightShapeXXXXXXXXX');
+    await page.click('#bot-connect');
+    await page.waitForFunction(
+      () => document.getElementById('bot-state')?.textContent.includes('@'),
+      { timeout: 5000 },
+    );
+
+    assert.equal(await text(page, '#bot-state'), '@shop_test_bot');
+    assert.equal(await page.$eval('#bot-token', (node) => node.value), '', 'the token is gone');
+    assert.equal(await shown(page, '#bot-row'), true);
+    assert.match(await text(page, '#bot-result'), /shop_test_bot/);
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('a bot that has never heard from Telegram says so plainly', async () => {
+    /**
+     * The one fact that tells a merchant whether this is working. A bot connected and silent
+     * looks exactly like one that is fine — until a customer pays and nothing happens.
+     */
+    const { page, context } = await open();
+    await openTab(page, 'Currencies');
+    await page.fill('#bot-token', '8123456789:AAHtestTokenOfTheRightShapeXXXXXXXXX');
+    await page.click('#bot-connect');
+    await page.waitForFunction(
+      () => document.getElementById('bot-row')?.hidden === false,
+      { timeout: 5000 },
+    );
+
+    assert.match(await text(page, '#bot-row'), /has not sent anything yet/);
+    // And that nothing is being forwarded, which is a choice with consequences.
+    assert.match(await text(page, '#bot-row'), /Other updates are discarded/);
+    await context.close();
+  });
+
+  test('disconnecting puts the panel back', async () => {
+    const { page, context, errors } = await open();
+    await openTab(page, 'Currencies');
+    await page.fill('#bot-token', '8123456789:AAHtestTokenOfTheRightShapeXXXXXXXXX');
+    await page.click('#bot-connect');
+    await page.waitForFunction(
+      () => document.getElementById('bot-row')?.hidden === false,
+      { timeout: 5000 },
+    );
+
+    await page.click('#bot-row button:has-text("Disconnect")');
+    await page.waitForFunction(
+      () => document.getElementById('bot-state')?.textContent === 'not connected',
+      { timeout: 5000 },
+    );
+    assert.equal(await shown(page, '#bot-row'), false);
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('an API with no Telegram route leaves the rest of the page working', async () => {
+    /**
+     * A dashboard that broke its currency list over a 404 from one optional panel would take
+     * away the page the merchant came here for.
+     */
+    const { page, context, errors } = await open({ bot: undefined });
+    await openTab(page, 'Currencies');
+    assert.equal(await shown(page, '#asset-groups'), true);
+    assert.equal(await text(page, '#bot-state'), 'not connected');
     assert.deepEqual(errors, []);
     await context.close();
   });

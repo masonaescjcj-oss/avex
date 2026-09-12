@@ -1084,7 +1084,31 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
         small to express in them is refused rather than rounded up.
       </p>
 
-      <h3>Taking a payment</h3>
+      <h3>Two ways to take them</h3>
+      <p>
+        They differ in who talks to Telegram, and nothing else. Same invoice, same dashboard,
+        same webhook — and the same rule that the Stars land in your bot's balance either way.
+      </p>
+      <p class="note">
+        <strong>Your bot does it.</strong> You call <code>createInvoiceLink</code> yourself and
+        report the charge back to us with the route below. Nothing of yours is stored here, and
+        your bot keeps its own webhook. This is the rest of this section, and the right choice
+        if you already have a bot your customers talk to.
+      </p>
+      <p class="note">
+        <strong>We do it.</strong> Connect your bot in the dashboard, under Currencies, and
+        Stars appear on your hosted payment page beside your other currencies — the payer taps
+        a button that opens Telegram, and we answer the payment. Nothing below is needed: no
+        <code>createInvoiceLink</code>, no reporting call.
+      </p>
+      <p class="note">
+        <strong>Connecting a bot takes over its webhook.</strong> Telegram allows one per bot,
+        so every update that bot receives comes to us. We answer the two payment updates and
+        forward the rest to a URL you give — set one if that bot does anything else, or use a
+        bot that does not. Your token is stored encrypted and no route ever returns it.
+      </p>
+
+      <h3>Taking a payment with your own bot</h3>
       <div class="endpoint" data-route="POST /v1/organizations/:orgId/invoices">
         <div class="route"><span class="verb" data-verb="POST">POST</span><span class="path">/v1/organizations/<em>:orgId</em>/invoices</span></div>
         <p>

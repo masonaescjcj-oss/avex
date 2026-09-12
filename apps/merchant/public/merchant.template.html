@@ -1215,6 +1215,40 @@
         </div>
       </div>
 
+      <!--
+        Telegram Stars. Only useful once XTR is on, and placed here rather than on Payouts
+        because a bot is not a payout address — the Stars never leave the merchant's own bot
+        balance, so there is nothing for us to settle and nothing to point anywhere.
+      -->
+      <div class="panel" id="telegram-panel">
+        <div class="panel-head"><h2>Telegram Stars</h2><span class="note" id="bot-state">not connected</span></div>
+        <div class="panel-body">
+          <p class="note">
+            Two ways to take Stars. Your own bot can create the Telegram invoice and report the
+            payment to us through the API — nothing here is needed for that. Or connect the bot
+            below and Stars appear on your payment page beside your other currencies, and we do
+            the talking.
+          </p>
+          <p class="warn-note">
+            A bot has one webhook, so connecting it here takes over <em>every</em> update that
+            bot receives. We answer the two payment updates and forward the rest to the URL you
+            give — leave it empty only if this bot does nothing else. The Stars land in the
+            bot's own Telegram balance either way: we are the record, never the custodian.
+          </p>
+
+          <div class="rows" id="bot-row" hidden></div>
+
+          <form id="bot-form">
+            <div class="row">
+              <label>Bot token<input class="mono" id="bot-token" placeholder="123456789:AA… from @BotFather" autocomplete="off" required></label>
+              <label>Forward other updates to<input class="mono" id="bot-forward" placeholder="https://your-shop.example/telegram (optional)"></label>
+              <button class="primary" type="submit" id="bot-connect">Connect</button>
+            </div>
+          </form>
+          <div class="banner" id="bot-result" data-kind="warn" hidden></div>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-head"><h2>Your own token</h2></div>
         <div class="panel-body">
@@ -3150,7 +3184,121 @@
     cache.payouts = payoutLists(payouts);
     cache.wallets = wallets;
     renderAssets();
+    await reloadBot();
   }
+
+  // ── Telegram Stars ────────────────────────────────────────────────────────
+
+  /**
+   * The connected bot, or none.
+   *
+   * Its own request rather than part of the assets call, and failing quietly: an older API
+   * has no such route, and a dashboard that broke its currency list over a 404 would take
+   * away the page a merchant came here for.
+   */
+  async function reloadBot() {
+    try {
+      const body = await api('/v1/organizations/' + orgId + '/telegram-bot');
+      cache.bot = body.bot ?? null;
+    } catch {
+      cache.bot = null;
+    }
+    renderBot();
+  }
+
+  function renderBot() {
+    const bot = cache.bot;
+    el('bot-state').textContent = bot ? '@' + bot.username : 'not connected';
+    el('bot-row').hidden = bot === null;
+    el('bot-connect').textContent = bot ? 'Replace' : 'Connect';
+    el('bot-token').required = bot === null;
+    if (!bot) {
+      fill(el('bot-row'), []);
+      return;
+    }
+
+    fill(el('bot-row'), [
+      h('div', { class: 'row-item' }, [
+        h('div', {}, [
+          h('div', { class: 'mono', text: '@' + bot.username }),
+          h('div', {
+            class: 'note',
+            /**
+             * When Telegram last delivered anything, which is the one fact that says whether
+             * this is working. A bot connected and silent looks identical to one that is fine
+             * until a customer pays and nothing happens.
+             */
+            text: bot.lastUpdateAt
+              ? 'Telegram last reached us ' + formatAgo(bot.lastUpdateAt)
+              : 'Telegram has not sent anything yet — that is normal until somebody pays.',
+          }),
+          h('div', {
+            class: 'note',
+            text: bot.forwardUrl
+              ? 'Other updates go to ' + bot.forwardUrl
+              : 'Other updates are discarded. Set a forwarding URL if this bot does anything else.',
+          }),
+        ]),
+        h('button', {
+          class: 'link-btn',
+          type: 'button',
+          text: 'Disconnect',
+          onclick: async () => {
+            const body = await api('/v1/organizations/' + orgId + '/telegram-bot', { method: 'DELETE' });
+            banner('bot-result', body.message, 'warn');
+            await reloadBot();
+          },
+        }),
+      ]),
+    ]);
+  }
+
+  /** One place to say something back, so every outcome lands where the merchant is looking. */
+  function banner(id, message, kind) {
+    el(id).textContent = message;
+    el(id).dataset.kind = kind;
+    el(id).hidden = false;
+  }
+
+  el('bot-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = el('bot-connect');
+    button.disabled = true;
+    el('bot-result').hidden = true;
+
+    const token = el('bot-token').value.trim();
+    const forward = el('bot-forward').value.trim();
+
+    try {
+      if (!token && cache.bot) {
+        // Changing only where the other updates go, without re-pasting a token nobody kept.
+        await api('/v1/organizations/' + orgId + '/telegram-bot', {
+          method: 'PATCH',
+          body: JSON.stringify({ forwardUrl: forward || null }),
+        });
+        banner('bot-result', 'Forwarding updated.', 'warn');
+      } else {
+        const body = await api('/v1/organizations/' + orgId + '/telegram-bot', {
+          method: 'PUT',
+          body: JSON.stringify({ token, forwardUrl: forward || null }),
+        });
+        banner('bot-result', body.message, 'warn');
+      }
+      /**
+       * Cleared the moment it has been sent, and never read back from the server.
+       *
+       * The token is a credential that can send messages and take payments as that bot. It is
+       * stored encrypted and there is no route that returns it; leaving it sitting in an
+       * input on a shared screen would undo both of those.
+       */
+      el('bot-token').value = '';
+      await reloadBot();
+    } catch (error) {
+      banner('bot-result', error.message || 'That did not work.', 'error');
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   el('submit-form').addEventListener('submit', async (event) => {
     event.preventDefault();
