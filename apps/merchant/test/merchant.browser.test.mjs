@@ -432,6 +432,14 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
       if (path.endsWith('/payout-addresses')) return route.fulfill(json(data.payouts));
       if (path.endsWith('/webhook-endpoints')) return route.fulfill(json(data.endpoints));
       if (path.endsWith('/webhook-deliveries')) return route.fulfill(json(data.deliveries));
+      if (path.includes('/api-keys/') && method === 'PATCH') {
+        const sent = JSON.parse(route.request().postData() ?? '{}');
+        posts.push({ path, body: sent });
+        const id = path.split('/').pop();
+        const row = (data.keys.data ?? []).find((entry) => entry.id === id);
+        if (row && sent.scopes) row.scopes = sent.scopes;
+        return route.fulfill(json({ ...row, message: 'Updated. The key itself is unchanged.' }));
+      }
       if (path.endsWith('/api-keys')) return route.fulfill(json(data.keys));
       if (path.endsWith('/invoices')) return route.fulfill(json(data.invoices));
       return route.fulfill(json({}));
@@ -2990,6 +2998,104 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.equal(await shown(page, '#asset-groups'), true);
     assert.equal(await text(page, '#bot-state'), 'not connected');
     assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  // ── editing a key's permissions ─────────────────────────────────────────────
+
+  test('a key\u2019s permissions can be changed from the row', async () => {
+    /**
+     * The alternative was revoke-and-reissue, which means editing every deployment holding
+     * the key — so a key that had been given too much kept it. The page says the key string
+     * does not change, because without that a merchant narrows a key and then goes looking
+     * for what else they have to update.
+     */
+    const { page, context, errors, posts } = await open({
+      keys: {
+        data: [
+          {
+            id: 'k1',
+            name: 'shop',
+            prefix: 'ak_live_abcd',
+            mode: 'live',
+            scopes: ['invoice:create', 'invoice:read'],
+            createdAt: new Date().toISOString(),
+            lastUsedAt: null,
+            revoked: false,
+          },
+        ],
+      },
+    });
+    await openTab(page, 'API keys');
+
+    await page.click('#key-table button:has-text("Permissions")');
+    assert.equal(await shown(page, '#key-editor'), true);
+
+    // The boxes start as the key's own permissions, not as the create form's defaults.
+    const ticked = await page.$$eval('#key-editor-scopes input:checked', (nodes) => nodes.map((n) => n.value));
+    assert.deepEqual([...ticked].sort(), ['invoice:create', 'invoice:read']);
+
+    await page.uncheck('#key-editor-scopes input[value="invoice:create"]');
+    await page.click('#key-editor-submit');
+    await page.waitForFunction(() => document.getElementById('key-editor')?.hidden === true, { timeout: 5000 });
+
+    const sent = posts.find((entry) => entry.path.includes('/api-keys/'));
+    assert.ok(sent, 'the edit was sent');
+    assert.deepEqual(sent.body.scopes, ['invoice:read'], 'narrowed to what is still ticked');
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('a key cannot be left able to do nothing', async () => {
+    /**
+     * Unticking everything is not a narrowing, it is a revocation with the key still live in
+     * somebody's shop — and the API would refuse it anyway. Saying so here means the merchant
+     * finds out before a round trip, and is pointed at the thing they actually meant.
+     */
+    const { page, context, posts } = await open();
+    await openTab(page, 'API keys');
+    await page.click('#key-table button:has-text("Permissions")');
+    await page.uncheck('#key-editor-scopes input[value="invoice:create"]');
+    await page.click('#key-editor-submit');
+    await page.waitForTimeout(300);
+
+    assert.equal(await shown(page, '#key-editor'), true, 'the editor stays open');
+    assert.equal(posts.some((entry) => entry.path.includes('/api-keys/')), false, 'nothing was sent');
+    await context.close();
+  });
+
+  test('a permission the page does not offer is kept, not silently dropped', async () => {
+    /**
+     * A key may carry a scope granted by an older build or straight through the API. Rebuilding
+     * its permissions from the checkboxes alone would quietly remove those — a narrowing nobody
+     * asked for, found later when an integration starts failing.
+     */
+    const { page, context, posts } = await open({
+      keys: {
+        data: [
+          {
+            id: 'key-1',
+            name: 'shop',
+            prefix: 'ak_live_abcd',
+            mode: 'live',
+            scopes: ['invoice:create', 'settings:read'],
+            createdAt: new Date().toISOString(),
+            lastUsedAt: null,
+            revoked: false,
+          },
+        ],
+      },
+    });
+    await openTab(page, 'API keys');
+    await page.click('#key-table button:has-text("Permissions")');
+
+    assert.match(await text(page, '#key-editor-unlisted'), /settings:read/);
+
+    await page.click('#key-editor-submit');
+    await page.waitForFunction(() => document.getElementById('key-editor')?.hidden === true, { timeout: 5000 });
+
+    const sent = posts.find((entry) => entry.path.includes('/api-keys/'));
+    assert.ok(sent.body.scopes.includes('settings:read'), `sent ${sent.body.scopes.join(', ')}`);
     await context.close();
   });
 });

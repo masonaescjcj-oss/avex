@@ -59,6 +59,14 @@ const INTERNAL = new Set([
   // Asset configuration is a dashboard task; the reference documents reading the list.
   'POST /v1/organizations/:orgId/assets',
   'PUT /v1/organizations/:orgId/assets/:assetId',
+  /**
+   * Editing a key's permissions is dashboard work, like creating one.
+   *
+   * The reference documents what a key *does* — the routes an integration calls with it. How
+   * its permissions are administered is a screen, and the elevation it needs (a fresh
+   * authenticator code) is something only a browser session can satisfy.
+   */
+  'PATCH /v1/organizations/:orgId/api-keys/:keyId',
   'DELETE /v1/organizations/:orgId/payout-addresses/pending/:changeId',
   // Price coverage is an operational read.
   'GET /v1/prices/coverage',

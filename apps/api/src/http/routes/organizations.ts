@@ -21,6 +21,26 @@ const createKeyBody = z.object({
   scopes: z.array(z.enum(PERMISSIONS)).min(1),
 });
 
+/**
+ * What may be changed on a key that already exists, and what may not.
+ *
+ * `mode` is absent on purpose. Test or live is baked into the token itself — `ak_test_…`
+ * against `ak_live_…` — and `apiKeyMode` reads it from the presented string without trusting
+ * the database, precisely so a tampered row cannot turn a rehearsal key into one that takes
+ * real money. Editing the column would make the two disagree, and the column would lose.
+ *
+ * Both fields are optional and at least one must be sent: a PATCH that changes nothing is
+ * almost always a client bug, and answering 200 to it hides that.
+ */
+const editKeyBody = z
+  .object({
+    name: z.string().trim().min(1).max(80).optional(),
+    scopes: z.array(z.enum(PERMISSIONS)).min(1).optional(),
+  })
+  .refine((body) => body.name !== undefined || body.scopes !== undefined, {
+    message: 'send a name, scopes, or both',
+  });
+
 const inviteBody = z.object({
   email: z.string().email().max(320),
   role: z.enum(ROLES),
@@ -450,6 +470,106 @@ export function registerOrganizationRoutes(app: FastifyInstance, context: AppCon
       prefix: key.displayPrefix,
       mode: key.mode,
       scopes: body.scopes,
+    });
+  });
+
+  /**
+   * Change what a key may do, without reissuing it.
+   *
+   * Until this existed the only way to narrow a key that had been given too much was to revoke
+   * it and issue another — which means editing every deployment that holds it, so in practice
+   * the over-wide key stayed. A permission model nobody can correct is a permission model
+   * nobody uses.
+   *
+   * Elevated, because `apikey:write` is: widening a key is exactly as dangerous as minting a
+   * wider one, and a stolen session must not be enough for either. The ceiling is the editor's
+   * own role, the same rule creation applies — nobody may leave a key able to do more than
+   * they can.
+   */
+  app.patch('/v1/organizations/:orgId/api-keys/:keyId', async (request, reply) => {
+    const { orgId, keyId } = orgParams.extend({ keyId: z.string().uuid() }).parse(request.params);
+    const body = editKeyBody.parse(request.body);
+    const principal = request.principal;
+    if (!principal) throw new UnauthenticatedError();
+
+    const access = await requireOrganizationAccess(context.db, principal, orgId);
+    requirePermission(access, 'apikey:write');
+
+    if (body.scopes) {
+      const grantable = grantableScopes(access.role);
+      const excessive = body.scopes.filter((scope) => !grantable.includes(scope));
+      if (excessive.length > 0) {
+        return reply.status(403).send({
+          error: 'scope_exceeds_role',
+          message: `Your role cannot grant: ${excessive.join(', ')}.`,
+        });
+      }
+    }
+
+    /**
+     * Read before written, because the audit row is the point.
+     *
+     * "Scopes changed" without saying from what is a line nobody can act on a year later, and
+     * this is the record that answers "who gave that key the ability to do this".
+     */
+    const [before] = await context.db
+      .select({ name: apiKeys.name, scopes: apiKeys.scopes })
+      .from(apiKeys)
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.organizationId, orgId), isNull(apiKeys.revokedAt)))
+      .limit(1);
+
+    if (!before) {
+      /**
+       * A revoked key reads as absent, exactly as it does for revocation.
+       *
+       * Editing a dead credential cannot have an effect, and answering 200 to it would leave
+       * somebody believing they had narrowed a key that is not in use and has not been
+       * narrowed. Scoped by organisation too, so a key id from another tenant cannot be
+       * probed by guessing.
+       */
+      return reply.status(404).send({ error: 'not_found', message: 'No active key with that id.' });
+    }
+
+    const [updated] = await context.db
+      .update(apiKeys)
+      .set({
+        ...(body.name === undefined ? {} : { name: body.name }),
+        ...(body.scopes === undefined ? {} : { scopes: [...body.scopes] }),
+      })
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.organizationId, orgId), isNull(apiKeys.revokedAt)))
+      .returning({
+        id: apiKeys.id,
+        name: apiKeys.name,
+        mode: apiKeys.mode,
+        prefix: apiKeys.displayPrefix,
+        scopes: apiKeys.scopes,
+      });
+
+    await context.audit.record({
+      organizationId: orgId,
+      userId: principal.kind === 'session' ? principal.session.userId : null,
+      apiKeyId: principal.kind === 'api_key' ? principal.apiKeyId : null,
+      ip: request.ip,
+      userAgent: request.headers['user-agent'] ?? null,
+      action: 'api_key.updated',
+      targetType: 'api_key',
+      targetId: keyId,
+      metadata: {
+        name: { from: before.name, to: updated!.name },
+        // Both lists in full. A diff would be shorter and would need the reader to
+        // reconstruct the result, which is the thing they actually want to know.
+        scopes: { from: before.scopes, to: updated!.scopes },
+      },
+    });
+
+    return reply.send({
+      ...updated!,
+      /**
+       * Said out loud, because it is the one thing a merchant is likely to get wrong here:
+       * the key string does not change. Nothing holding it needs redeploying, and a narrowing
+       * takes effect on the next request that key makes.
+       */
+      message: 'Updated. The key itself is unchanged — nothing holding it needs to be redeployed.',
     });
   });
 

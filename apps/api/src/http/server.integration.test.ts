@@ -18,7 +18,7 @@ import {
 import type { Asset, IncomingPayment } from '@avex/core';
 import type { PriceSource, PriceSymbol } from '@avex/core';
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 import { createDatabase, schema } from '../db/client.js';
 import { CommissionLedger } from '../domain/commission-ledger.js';
@@ -718,6 +718,26 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
 
   let apiKey: string;
 
+  /**
+   * A key by the name it was created with.
+   *
+   * Not "the first one that is not revoked": these tests create keys of their own, so
+   * position in the list is not identity, and a test that revoked the wrong key would fail
+   * somewhere else entirely.
+   */
+  const keyNamed = async (name: string): Promise<string> => {
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${organizationId}/api-keys`,
+      headers: asOwner(),
+    });
+    const row = listed
+      .json()
+      .data.find((entry: { name: string; revoked: boolean }) => entry.name === name && !entry.revoked);
+    assert.ok(row, `no active key named ${name}`);
+    return row.id as string;
+  };
+
   test('an api key is returned exactly once and never again', async () => {
     const created = await app.inject({
       method: 'POST',
@@ -779,6 +799,166 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     });
     assert.equal(members.statusCode, 403);
     assert.equal(members.json().error, 'scope_missing');
+  });
+
+  test('a key\u2019s permissions can be changed without reissuing it', async () => {
+    /**
+     * The whole point, and the reason revoke-and-reissue was not good enough: the key string
+     * is unchanged, so a merchant narrowing a key that had been given too much does not have
+     * to go and edit every deployment holding it. Before this, in practice, the over-wide key
+     * simply stayed.
+     */
+    const headers = { authorization: `Bearer ${apiKey}` };
+    const keyId = await keyNamed('server key');
+
+    // It can read invoices today.
+    const before = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${organizationId}/invoices`,
+      headers,
+    });
+    assert.equal(before.statusCode, 200);
+
+    const edited = await app.inject({
+      method: 'PATCH',
+      url: `/v1/organizations/${organizationId}/api-keys/${keyId}`,
+      headers: asOwner(),
+      payload: { scopes: ['invoice:create'] },
+    });
+    assert.equal(edited.statusCode, 200, edited.body);
+    assert.deepEqual(edited.json().scopes, ['invoice:create']);
+
+    // The same key string, now refused for the scope it just lost — on its next request,
+    // with nothing redeployed.
+    const after = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${organizationId}/invoices`,
+      headers,
+    });
+    assert.equal(after.statusCode, 403);
+    assert.equal(after.json().error, 'scope_missing');
+
+    // Put it back, because the tests after this one hold the same key.
+    const restored = await app.inject({
+      method: 'PATCH',
+      url: `/v1/organizations/${organizationId}/api-keys/${keyId}`,
+      headers: asOwner(),
+      payload: { scopes: ['invoice:read', 'invoice:create'] },
+    });
+    assert.equal(restored.statusCode, 200);
+  });
+
+  test('an edit cannot grant what creation could not', async () => {
+    /**
+     * The ceiling has to be the same in both directions, or editing becomes the way around
+     * it: mint a narrow key, then widen it to something nobody was allowed to create.
+     */
+    const keyId = await keyNamed('server key');
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/organizations/${organizationId}/api-keys/${keyId}`,
+      headers: asOwner(),
+      payload: { scopes: ['payout_address:write'] },
+    });
+    assert.equal(response.statusCode, 403);
+    assert.equal(response.json().error, 'scope_exceeds_role');
+
+    // And nothing was written on the way to refusing.
+    const after = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${organizationId}/api-keys`,
+      headers: asOwner(),
+    });
+    const unchanged = after.json().data.find((row: { id: string }) => row.id === keyId);
+    assert.deepEqual([...unchanged.scopes].sort(), ['invoice:create', 'invoice:read']);
+  });
+
+  test('an edit that changes nothing is a bad request, not a quiet success', async () => {
+    const keyId = await keyNamed('server key');
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/organizations/${organizationId}/api-keys/${keyId}`,
+      headers: asOwner(),
+      payload: {},
+    });
+    assert.equal(response.statusCode, 400, response.body);
+  });
+
+  test('a revoked key cannot be edited', async () => {
+    /**
+     * Editing a dead credential cannot have an effect, so answering 200 would leave somebody
+     * believing they had narrowed a key that is neither in use nor narrowed.
+     */
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${organizationId}/api-keys`,
+      headers: asOwner(),
+      payload: { name: 'short-lived', mode: 'test', scopes: ['invoice:read'] },
+    });
+    const keyId = created.json().id;
+
+    await app.inject({
+      method: 'DELETE',
+      url: `/v1/organizations/${organizationId}/api-keys/${keyId}`,
+      headers: asOwner(),
+    });
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/organizations/${organizationId}/api-keys/${keyId}`,
+      headers: asOwner(),
+      payload: { scopes: ['invoice:create'] },
+    });
+    assert.equal(response.statusCode, 404);
+    assert.equal(response.json().error, 'not_found');
+  });
+
+  test('the change is audited with what it was before', async () => {
+    /**
+     * "Scopes changed" without saying from what is a line nobody can act on a year later.
+     * This is the record that answers "who gave that key the ability to do this".
+     */
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${organizationId}/api-keys`,
+      headers: asOwner(),
+      payload: { name: 'audited', mode: 'test', scopes: ['invoice:read'] },
+    });
+    const keyId = created.json().id;
+
+    await app.inject({
+      method: 'PATCH',
+      url: `/v1/organizations/${organizationId}/api-keys/${keyId}`,
+      headers: asOwner(),
+      payload: { name: 'audited, renamed', scopes: ['invoice:read', 'invoice:create'] },
+    });
+
+    const [entry] = await db
+      .select()
+      .from(schema.auditLog)
+      .where(
+        and(eq(schema.auditLog.action, 'api_key.updated'), eq(schema.auditLog.targetId, keyId)),
+      )
+      .limit(1);
+
+    assert.ok(entry, 'the edit was recorded');
+    const metadata = entry!.metadata as {
+      name: { from: string; to: string };
+      scopes: { from: string[]; to: string[] };
+    };
+    assert.deepEqual(metadata.scopes.from, ['invoice:read']);
+    assert.deepEqual([...metadata.scopes.to].sort(), ['invoice:create', 'invoice:read']);
+    assert.equal(metadata.name.from, 'audited');
+    assert.equal(metadata.name.to, 'audited, renamed');
+
+    // Left revoked, so the test below finds the key it is actually about.
+    await app.inject({
+      method: 'DELETE',
+      url: `/v1/organizations/${organizationId}/api-keys/${keyId}`,
+      headers: asOwner(),
+    });
   });
 
   test('a revoked key stops working immediately', async () => {

@@ -1521,6 +1521,30 @@
         <div class="panel-head"><h2>Your keys</h2></div>
         <div class="panel-body">
           <div class="scroll"><table id="key-table"></table></div>
+
+          <!--
+            Editing an existing key's permissions. Hidden until a row's "Permissions" button
+            opens it, because it is about one key and a form with no key attached is a form
+            that will eventually be submitted against the wrong one.
+          -->
+          <div class="panel" id="key-editor" hidden>
+            <div class="panel-head"><h2>Permissions</h2><span class="note mono" id="key-editor-name"></span></div>
+            <div class="panel-body">
+              <p class="note">
+                The key itself does not change — nothing holding it needs redeploying, and a
+                change takes effect on its next request.
+              </p>
+              <form id="key-editor-form">
+                <fieldset class="scopes" id="key-editor-scopes"></fieldset>
+                <p class="note" id="key-editor-unlisted" hidden></p>
+                <div class="row">
+                  <button class="primary" type="submit" id="key-editor-submit">Save permissions</button>
+                  <button class="ghost" type="button" id="key-editor-cancel">Cancel</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
           <form id="key-form">
             <div class="row">
               <label>Name<input id="key-name" type="text" maxlength="80" autocomplete="off" placeholder="My shop" required></label>
@@ -5979,6 +6003,85 @@ function matchPreview(method, url, routes = previewRoutes()) {
 
   renderKeyScopes();
 
+  /**
+   * Change what an existing key may do, in place.
+   *
+   * The alternative was revoke-and-reissue, which means editing every deployment holding the
+   * key — so in practice a key that had been given too much kept it. The key string does not
+   * change here and nothing needs redeploying, which is the fact worth putting on the screen:
+   * without it a merchant narrows a key and then goes looking for what else they must update.
+   */
+  function editKeyScopes(key) {
+    const current = new Set(key.scopes || []);
+    const panel = el('key-editor');
+    el('key-editor-name').textContent = key.name + ' (' + (key.prefix || '') + '…)';
+
+    fill(
+      el('key-editor-scopes'),
+      KEY_SCOPES.map(([scope, label, detail]) =>
+        h('label', {}, [
+          h('input', { type: 'checkbox', name: 'scope', value: scope, checked: current.has(scope) ? '' : null }),
+          h('span', {}, [label, detail ? h('small', { text: ' — ' + detail }) : null]),
+        ]),
+      ),
+    );
+
+    /**
+     * Anything the key holds that this page does not offer is shown and kept.
+     *
+     * The checkbox list is the set a person would normally pick from; a key may carry a scope
+     * granted by an older build or by the API directly. Rebuilding the key's permissions from
+     * the boxes alone would silently drop those — a narrowing nobody asked for, discovered
+     * when an integration starts failing.
+     */
+    const unlisted = [...current].filter((scope) => !KEY_SCOPES.some(([known]) => known === scope));
+    el('key-editor-unlisted').textContent = unlisted.length
+      ? 'Also keeps: ' + unlisted.join(', ')
+      : '';
+    el('key-editor-unlisted').hidden = unlisted.length === 0;
+
+    panel.hidden = false;
+    panel.dataset.keyId = key.id;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  el('key-editor-cancel').addEventListener('click', () => {
+    el('key-editor').hidden = true;
+  });
+
+  el('key-editor-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const panel = el('key-editor');
+    const picked = Array.from(panel.querySelectorAll('#key-editor-scopes input:checked')).map((input) => input.value);
+    const keyId = panel.dataset.keyId;
+    const key = (cache.keys || []).find((row) => row.id === keyId);
+    const kept = ((key && key.scopes) || []).filter(
+      (scope) => !KEY_SCOPES.some(([known]) => known === scope),
+    );
+    const scopes = [...new Set([...picked, ...kept])];
+
+    if (scopes.length === 0) {
+      flash('A key has to be able to do something. Revoke it instead.', 'error');
+      return;
+    }
+
+    const button = el('key-editor-submit');
+    button.disabled = true;
+    try {
+      const body = await api('/v1/organizations/' + orgId + '/api-keys/' + keyId, {
+        method: 'PATCH',
+        body: JSON.stringify({ scopes }),
+      });
+      panel.hidden = true;
+      flash(body.message || 'Permissions updated.', 'ok');
+      await refresh('keys');
+    } catch (problem) {
+      reportProblem(problem);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
   el('key-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const scopes = Array.from(el('key-scopes').querySelectorAll('input:checked')).map((input) => input.value);
@@ -6023,6 +6126,14 @@ function matchPreview(method, url, routes = previewRoutes()) {
             h('td', { text: (key.scopes || []).join(', ') }),
             h('td', { text: key.revoked ? 'revoked' : formatAgo(key.createdAt) + (key.lastUsedAt ? ' · used ' + formatAgo(key.lastUsedAt) : '') }),
             h('td', {}, [
+              key.revoked
+                ? null
+                : h('button', {
+                    class: 'ghost',
+                    type: 'button',
+                    text: 'Permissions',
+                    onclick: () => editKeyScopes(key),
+                  }),
               key.revoked
                 ? null
                 : h('button', {
