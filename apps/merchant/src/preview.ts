@@ -360,13 +360,44 @@ export function previewRoutes(): ReadonlyMap<string, PreviewRoute> {
     ],
     [
       'GET /v1/organizations',
-      // With a role, because the team page draws differently for a viewer than an owner and
-      // a preview that showed the read-only version would be previewing the wrong product.
+      /**
+       * Two of them, with a role each.
+       *
+       * The role because the team page draws differently for a viewer than for an owner, and
+       * a preview showing the read-only version would be previewing the wrong product. Two
+       * rather than one because the organisation picker does not exist for an account with a
+       * single organisation — a control that cannot do anything is not drawn — so a
+       * one-organisation fixture would preview a dashboard with no way to switch, which is
+       * precisely the dashboard this project had to stop shipping.
+       */
       ok({
         organizations: [
           { id: 'preview-org', name: 'Kian Digital', slug: 'kian-digital', role: 'owner' },
+          { id: 'preview-org-2', name: 'Kian Wholesale', slug: 'kian-wholesale', role: 'admin' },
         ],
       }),
+    ],
+
+    /**
+     * Opening one. Answered as the API answers it, message included: the sentence about the
+     * new organisation starting empty is the part a merchant most needs to read, and a
+     * preview that swallowed it would be demonstrating the button without its consequence.
+     */
+    [
+      'POST /v1/organizations',
+      {
+        status: 201,
+        body: {
+          id: 'preview-org-3',
+          name: 'A new organisation',
+          slug: 'a-new-organisation',
+          role: 'owner',
+          message:
+            'Opened. It starts empty — its own currencies, its own wallets, its own API keys ' +
+            'and webhooks, and its own commission balance. Nothing is shared with your other ' +
+            'organisations, including the wallets payments land in.',
+        },
+      },
     ],
 
     /**

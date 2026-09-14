@@ -379,6 +379,51 @@ export function registerOrganizationRoutes(app: FastifyInstance, context: AppCon
     }
   });
 
+  /**
+   * Open another organisation.
+   *
+   * A session only, never an API key. A key is issued *by* an organisation and scoped to it;
+   * letting one mint a sibling would let a credential that was given "create invoices" quietly
+   * create a whole second account with its own wallets and its own books.
+   *
+   * No elevation. Creating one takes nothing and risks nothing — it is empty, it has no
+   * wallets, and nobody can pay into it until somebody adds one. The dangerous actions are
+   * still the dangerous actions, in whichever organisation they happen.
+   */
+  app.post('/v1/organizations', async (request, reply) => {
+    const body = z.object({ name: z.string().trim().min(1).max(120) }).parse(request.body);
+    const principal = request.principal;
+    if (!principal) throw new UnauthenticatedError();
+
+    if (principal.kind !== 'session') {
+      return reply.status(403).send({
+        error: 'session_required',
+        message: 'Only a signed-in person can open an organisation, not an API key.',
+      });
+    }
+
+    const created = await context.auth.createOrganization(principal.session.userId, body.name, {
+      ip: request.ip,
+      userAgent: request.headers['user-agent'] ?? null,
+    });
+
+    return reply.status(201).send({
+      id: created.organizationId,
+      name: body.name,
+      slug: created.slug,
+      role: 'owner',
+      /**
+       * Said plainly, because the empty state is the surprising part: nothing carries over.
+       * A merchant who expects their wallets to be there will point a shop at an organisation
+       * that refuses every invoice, and the refusal names an asset rather than the cause.
+       */
+      message:
+        'Opened. It starts empty — its own currencies, its own wallets, its own API keys and ' +
+        'webhooks, and its own commission balance. Nothing is shared with your other ' +
+        'organisations, including the wallets payments land in.',
+    });
+  });
+
   app.get('/v1/organizations/:orgId/api-keys', async (request, reply) => {
     const { orgId } = orgParams.parse(request.params);
     const principal = request.principal;

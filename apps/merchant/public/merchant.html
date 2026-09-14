@@ -338,6 +338,18 @@
   }
   .whoami button.ghost { grid-column: 1 / 3; margin-top: var(--sp-3); width: 100%; min-height: var(--control-sm); }
 
+  /*
+    The organisation picker, under the account block and across both its columns.
+
+    It is a plain `<select>` on purpose: on a phone that is the operating system's own
+    wheel, on a desktop it is one keystroke, and neither needs a line of script to open,
+    close, trap focus or survive a click outside it.
+  */
+  .org-switch:empty { display: none; }
+  .org-switch { grid-column: 1 / 3; margin-top: var(--sp-3); }
+  .org-switch label { display: block; font-size: var(--s-2); color: var(--faint); margin-bottom: 0.25rem; }
+  .org-switch select { width: 100%; min-height: var(--control-sm); font-size: var(--s-1); }
+
   .main { min-width: 0; padding: var(--sp-8) var(--sp-8) var(--sp-16); }
   .main > * { max-width: var(--content-max); margin-left: auto; margin-right: auto; }
 
@@ -963,6 +975,12 @@
     .whoami { grid-template-columns: 1fr; padding: var(--sp-3) 0 0; justify-items: center; }
     .whoami::before { grid-row: auto; }
     .whoami > span, .whoami code { display: none; }
+    /*
+      And neither has the picker, which cannot show an organisation's name in a rail this
+      wide. Switching is still one tap away on the Team tab, which has room to say what it
+      is switching between.
+    */
+    .whoami .org-switch { display: none; }
     .whoami button.ghost { grid-column: 1; font-size: var(--s-2); padding: 0 var(--sp-2); }
     .main { padding: var(--sp-6) var(--sp-6) var(--sp-16); }
   }
@@ -1195,6 +1213,12 @@
     <div class="whoami" id="whoami" data-initial="" hidden>
       <span id="whoami-org"></span>
       <code id="whoami-mode"></code>
+      <!--
+        Which organisation this is, and the way to another one. Filled by the script, and
+        empty — so invisible — for an account that belongs to only one, where a picker with
+        a single entry would be a control that does nothing.
+      -->
+      <div class="org-switch" id="org-switch"></div>
     </div>
   </aside>
   <div class="backdrop" id="tabs-backdrop" hidden></div>
@@ -1597,9 +1621,43 @@
       <header class="page-head">
         <div>
           <h1 class="page-title">Team</h1>
-          <p class="page-desc">Who can get in, what each of them can do, and who has been invited.</p>
+          <p class="page-desc">Which organisation you are in, who else can get in, and what each of them can do.</p>
         </div>
       </header>
+
+      <!--
+        Organisations first, because every other panel on this page — and on every other
+        page — is about one of them, and which one is the question the rest of the screen
+        assumes you have already answered.
+      -->
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Organisations</h2>
+          <span class="note" id="org-count"></span>
+        </div>
+        <div class="panel-body">
+          <div class="scroll"><table id="org-table"></table></div>
+          <form id="org-form">
+            <div class="row">
+              <label>Name<input type="text" id="org-new-name" autocomplete="off" maxlength="120" placeholder="Second shop" required></label>
+            </div>
+            <div class="row"><button class="primary" type="submit" id="org-submit">Open an organisation</button></div>
+          </form>
+          <!--
+            The consequence, before the button rather than after it. A merchant expecting
+            their wallets to come along will point a second shop at an organisation that
+            refuses every invoice, and the refusal names a missing currency rather than the
+            reason for it.
+          -->
+          <p class="note" id="org-consequence">
+            A second organisation is a second set of books: its own currencies, its own
+            wallets, its own API keys and webhooks, its own invoices and its own commission
+            balance. Nothing is shared with this one — including the wallets payments land
+            in — which is the point of having it. You will be its owner.
+          </p>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-head"><h2>Who can get in</h2></div>
         <div class="panel-body">
@@ -3748,13 +3806,42 @@ function previewRoutes() {
         ],
         [
             'GET /v1/organizations',
-            // With a role, because the team page draws differently for a viewer than an owner and
-            // a preview that showed the read-only version would be previewing the wrong product.
+            /**
+             * Two of them, with a role each.
+             *
+             * The role because the team page draws differently for a viewer than for an owner, and
+             * a preview showing the read-only version would be previewing the wrong product. Two
+             * rather than one because the organisation picker does not exist for an account with a
+             * single organisation — a control that cannot do anything is not drawn — so a
+             * one-organisation fixture would preview a dashboard with no way to switch, which is
+             * precisely the dashboard this project had to stop shipping.
+             */
             ok({
                 organizations: [
                     { id: 'preview-org', name: 'Kian Digital', slug: 'kian-digital', role: 'owner' },
+                    { id: 'preview-org-2', name: 'Kian Wholesale', slug: 'kian-wholesale', role: 'admin' },
                 ],
             }),
+        ],
+        /**
+         * Opening one. Answered as the API answers it, message included: the sentence about the
+         * new organisation starting empty is the part a merchant most needs to read, and a
+         * preview that swallowed it would be demonstrating the button without its consequence.
+         */
+        [
+            'POST /v1/organizations',
+            {
+                status: 201,
+                body: {
+                    id: 'preview-org-3',
+                    name: 'A new organisation',
+                    slug: 'a-new-organisation',
+                    role: 'owner',
+                    message: 'Opened. It starts empty — its own currencies, its own wallets, its own API keys ' +
+                        'and webhooks, and its own commission balance. Nothing is shared with your other ' +
+                        'organisations, including the wallets payments land in.',
+                },
+            },
         ],
         /**
          * A team part-way through being assembled: two people in, one invitation waiting and one
@@ -4056,6 +4143,41 @@ function matchPreview(method, url, routes = previewRoutes()) {
   }
   let orgId = null;
   let orgName = '';
+  /**
+   * Every organisation this account belongs to, and which of them is open.
+   *
+   * One account can hold several, and they share nothing: separate currencies, separate
+   * wallets, separate keys, separate webhooks, separate commission. That is the whole point
+   * of having a second one — two shops whose money and whose reports never mix — and it is
+   * also why the page has to say which one is on screen at all times. A dashboard that
+   * silently opened the first organisation in the list is how a merchant ends up pointing
+   * two projects at one set of books.
+   */
+  let orgs = [];
+
+  /**
+   * Which organisation was open last time, kept between visits.
+   *
+   * Not a security boundary and not trusted as one: the id is checked against the list the
+   * server just sent, and an id that is not in it is ignored. Its only job is that somebody
+   * who works in the second organisation does not land in the first one every morning.
+   */
+  const ORG_KEY = 'avex-org';
+  function rememberOrg(value) {
+    try {
+      localStorage.setItem(ORG_KEY, value);
+    } catch {
+      // Storage off. The choice then lasts for this visit, which is the important part.
+    }
+  }
+  function rememberedOrg() {
+    try {
+      const stored = localStorage.getItem(ORG_KEY);
+      return typeof stored === 'string' && stored.length > 0 ? stored : null;
+    } catch {
+      return null;
+    }
+  }
   /**
    * The caller's own role, from the organisation list.
    *
@@ -4613,6 +4735,130 @@ function matchPreview(method, url, routes = previewRoutes()) {
 
   let current = 'overview';
 
+  // ── which organisation is open ────────────────────────────────────────────
+
+  /**
+   * The picker, as a label and a select, built fresh wherever it is mounted.
+   *
+   * A plain `<select>`, deliberately. On a phone it is the operating system's own wheel,
+   * on a desktop it is one keystroke, and it needs no script to open, close, trap focus or
+   * survive a click somewhere else — a hand-built menu would be a hundred lines to end up
+   * slightly worse than the one the browser already has.
+   *
+   * `null` for an account with one organisation: a picker with a single entry is a control
+   * that cannot do anything, and its container collapses when it is left empty.
+   */
+  function orgPickerParts(id) {
+    if (orgs.length < 2) return null;
+    const select = h('select', { id, 'aria-label': 'Organisation' },
+      orgs.map((org) =>
+        h('option', {
+          value: org.id,
+          // Said on the option itself, because a suspended organisation answers almost
+          // every call with a refusal and "why is everything failing" should not be a
+          // puzzle solved by reading error messages.
+          text: org.suspended ? org.name + ' — suspended' : org.name,
+        }),
+      ),
+    );
+    // Set after the options exist; an option cannot be selected before it is in the list.
+    select.value = orgId;
+    select.addEventListener('change', () => openOrganization(select.value));
+    return [h('label', { for: id, text: 'Organisation' }), select];
+  }
+
+  /** Make one of them the open one. Used at boot; switching afterwards reloads instead. */
+  function activate(org) {
+    orgId = org.id;
+    orgName = org.name || '';
+    myRole = org.role || null;
+    rememberOrg(orgId);
+    renderWhoami();
+  }
+
+  /** Where the organisation's name and initial are shown, all of them, from one place. */
+  function renderWhoami() {
+    el('org-id-value').textContent = orgId;
+    el('whoami-org').textContent = orgName;
+    el('whoami').dataset.initial = (orgName.trim().charAt(0) || '?').toUpperCase();
+    el('whoami-mode').textContent = myEmail;
+    fill(el('org-switch'), orgPickerParts('org-picker') ?? []);
+  }
+
+  /**
+   * Switch to another organisation, by reloading the page into it.
+   *
+   * A reload rather than a re-render, and deliberately. Everything on screen belongs to the
+   * organisation it was fetched for — invoices, wallets, keys, the fee plan, the checklist —
+   * and clearing the cache is not the same as clearing the screen: the drawn rows survive
+   * until something redraws them, so a slow answer would leave one shop's invoices sitting
+   * under the other shop's name for as long as it took to arrive. That is the single worst
+   * thing this page could do, and the alternative fix — a list of every container to empty —
+   * is a list that rots the first time somebody adds a panel and forgets it.
+   *
+   * The choice goes in the URL as well as in storage, so the address bar names the
+   * organisation it is showing and a link to it can be sent to a colleague. The section is
+   * carried over: somebody comparing two shops' invoices wants the invoices tab in both, not
+   * the overview every time.
+   */
+  function openOrganization(id) {
+    const chosen = orgs.find((org) => org.id === id);
+    if (!chosen || chosen.id === orgId) return;
+    rememberOrg(chosen.id);
+    const next = new URLSearchParams();
+    next.set('org', chosen.id);
+    next.set('tab', current);
+    /**
+     * Carried over, and nothing else is. `preview=1` is what the visitor is looking at and
+     * dropping it would land them on a sign-in form they have no account for; a verification
+     * token or an invitation is spent the moment it is used, and replaying one is how a
+     * refusal gets reported as a broken link.
+     */
+    if (entry.get('preview') === '1') next.set('preview', '1');
+    location.search = next.toString();
+  }
+
+  /**
+   * Fetch the list, and open one.
+   *
+   * Used at boot and again after an organisation is opened, so the new one is on the list
+   * before anything tries to switch to it.
+   */
+  async function loadOrganizations(prefer) {
+    const body = await api('/v1/organizations');
+    const list = body.data || body.organizations || body;
+    orgs = (Array.isArray(list) ? list : [])
+      .map((org) => ({
+        id: org.id || org.organizationId,
+        name: org.name || '',
+        role: org.role || null,
+        suspended: org.suspended === true,
+      }))
+      .filter((org) => typeof org.id === 'string' && org.id.length > 0)
+      // Alphabetical, so the list does not reorder itself between visits. The server sends
+      // them in whatever order the join produced, which is not an order at all.
+      .sort((left, right) => left.name.localeCompare(right.name));
+
+    /**
+     * The asked-for one, then the remembered one, then the first.
+     *
+     * In that order, and the order is the whole point: searching the list for "any id that is
+     * wanted" answers with whichever comes first alphabetically, so opening a new
+     * organisation would hand back the one that was already open and the merchant would be
+     * told their new organisation had been made while looking at the old one.
+     *
+     * Each is checked against the list rather than used as given: a stored id survives
+     * leaving an organisation, and a page that trusted it would ask the server for something
+     * this account cannot see and report the refusal as though the dashboard were broken.
+     */
+    for (const wanted of [prefer, rememberedOrg()]) {
+      if (typeof wanted !== 'string' || wanted.length === 0) continue;
+      const found = orgs.find((org) => org.id === wanted);
+      if (found) return found;
+    }
+    return orgs[0] ?? null;
+  }
+
   /**
    * The bottom bar has room for a word, not a phrase.
    *
@@ -4652,6 +4898,12 @@ function matchPreview(method, url, routes = previewRoutes()) {
             h('div', { class: 'tab-acct-org', text: orgName || 'Your account' }),
             myEmail ? h('div', { class: 'tab-acct-mail', text: myEmail }) : null,
           ]),
+          /**
+           * And the picker, because the sidebar that holds the other copy is not on a phone
+           * at all. Its own id: two selects with one id would be one bug waiting for the
+           * first person to open the sheet on a tablet.
+           */
+          h('div', { class: 'org-switch' }, orgPickerParts('org-picker-sheet') ?? []),
         ]),
         h('span', { class: 'tab-extra-label', text: 'Appearance' }),
         h('div', { class: 'seg', role: 'group', 'aria-label': 'Appearance' },
@@ -6377,6 +6629,90 @@ function matchPreview(method, url, routes = previewRoutes()) {
     });
   }
 
+  /**
+   * Every organisation this account is in, and which one the rest of the page is about.
+   *
+   * Drawn from `orgs` rather than from a response, because the list is fetched once at boot
+   * and again after one is opened — and a table that refetched it on every visit to this tab
+   * would be able to disagree with the picker in the sidebar, which does not.
+   */
+  function renderOrganizations() {
+    el('org-count').textContent =
+      orgs.length === 1 ? 'One' : String(orgs.length) + ' — nothing is shared between them';
+
+    fill(el('org-table'), [
+      h('thead', {}, [
+        h('tr', {}, ['Organisation', 'Your role', ''].map((label) => h('th', { text: label }))),
+      ]),
+      h('tbody', {}, orgs.map((org) => {
+        const open = org.id === orgId;
+        return h('tr', {}, [
+          h('td', {}, [
+            h('span', { text: org.name }),
+            // Not a footnote: a suspended organisation refuses almost everything it is
+            // asked, and somebody reading a wall of errors deserves the reason here.
+            org.suspended ? h('span', { class: 'pill', 'data-tone': 'warn', text: 'suspended' }) : null,
+          ]),
+          h('td', { text: org.role || '—' }),
+          h('td', {}, [
+            open
+              ? h('span', { class: 'pill', 'data-tone': 'good', text: 'open' })
+              : h('button', {
+                  class: 'ghost',
+                  type: 'button',
+                  text: 'Open',
+                  onclick: () => openOrganization(org.id),
+                }),
+          ]),
+        ]);
+      })),
+    ]);
+  }
+
+  el('org-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = el('org-submit');
+    const field = el('org-new-name');
+    const name = field.value.trim();
+    if (name.length === 0) return;
+
+    button.disabled = true;
+    try {
+      const created = await api('/v1/organizations', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      });
+      field.value = '';
+      /**
+       * Fetched again rather than appended. The server decides the slug and the role, and a
+       * list the page assembled itself is a list that can be wrong in exactly the way nobody
+       * checks — it agrees with the server until the day it does not.
+       */
+      await loadOrganizations();
+      renderOrganizations();
+      renderWhoami();
+      renderTabs();
+      /**
+       * And not switched into, on purpose.
+       *
+       * Switching means a reload, and a reload takes this message away with it — the one
+       * sentence a merchant most needs to read, about an organisation that has none of their
+       * currencies and none of their wallets. So the new one appears in the list with its own
+       * "Open" beside it, and they go there having read what they are going to find.
+       */
+      flash(
+        (created?.message ||
+          'Opened. It starts empty — its own currencies, wallets, keys, webhooks and balance.') +
+          ' Open it from the list when you are ready.',
+        'ok',
+      );
+    } catch (problem) {
+      reportProblem(problem);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
   function renderTeam() {
     const members = cache.members || [];
     const invites = cache.invites || [];
@@ -7038,6 +7374,14 @@ function matchPreview(method, url, routes = previewRoutes()) {
         renderKeyScopes();
         renderKeys();
       } else if (view === 'team') {
+        /**
+         * Before the requests, and outside the failure they can produce.
+         *
+         * The member list needs `member:read`, which a viewer does not have — and this panel
+         * is how a viewer moves to the organisation where they *are* an admin. Drawn after
+         * the `await`, one 403 would take away the only way out of it.
+         */
+        renderOrganizations();
         const [members, invites] = await Promise.all([
           api(base + '/members'),
           api(base + '/invites'),
@@ -7128,25 +7472,22 @@ function matchPreview(method, url, routes = previewRoutes()) {
   async function start() {
     const me = await api('/v1/auth/me');
     await acceptPendingInvite();
-    const organizations = await api('/v1/organizations');
-    const list = organizations.organizations || organizations.data || organizations;
-    const first = Array.isArray(list) ? list[0] : null;
-    if (!first) {
+    const chosen = await loadOrganizations(entry.get('org'));
+    if (!chosen) {
       flash('This account belongs to no organisation yet.', 'error');
       return;
     }
 
-    orgId = first.id || first.organizationId;
-    orgName = first.name || '';
-    myRole = first.role || null;
-    el('org-id-value').textContent = orgId;
-    el('whoami-org').textContent = orgName;
-    el('whoami').dataset.initial = (orgName.trim().charAt(0) || '?').toUpperCase();
     // Kept, not refetched: the overview and the security tab both ask what this session
     // is, and it is the same answer the door already gave.
     cache.me = me;
     myEmail = me.email || '';
-    el('whoami-mode').textContent = myEmail;
+    /**
+     * After `myEmail`, because `activate` draws the account block and the address is part
+     * of it. Before `show`, because every request the first view makes is addressed to the
+     * organisation this line picks.
+     */
+    activate(chosen);
     el('whoami').hidden = false;
     el('auth-panel').hidden = true;
     el('app').hidden = false;

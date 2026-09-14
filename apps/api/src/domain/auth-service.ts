@@ -180,6 +180,63 @@ export class AuthService {
     return { ...result, emailVerificationToken: verification.token };
   }
 
+  /**
+   * A second organisation, for somebody who already has one.
+   *
+   * The model has always allowed it — `memberships` is a join table and the listing endpoint
+   * returns a list — but signup was the only thing that ever created one, so in practice a
+   * user had exactly one and no way to get another. A merchant running two products found out
+   * the way you would expect: two API keys, one set of books.
+   *
+   * Deliberately the same transaction as `signup`'s second half rather than a variation on it.
+   * The fee plan is the reason: an organisation without one cannot be quoted a rate, so it
+   * cannot be given a deposit address, so it cannot take a payment — and it would look
+   * perfectly fine until the first invoice. Signup learned that once already.
+   */
+  async createOrganization(
+    userId: string,
+    name: string,
+    context: RequestContext = {},
+  ): Promise<{ readonly organizationId: string; readonly slug: string }> {
+    const trimmed = name.trim();
+    if (trimmed.length === 0) throw new Error('an organisation needs a name');
+
+    const created = await this.db.transaction(async (tx) => {
+      const [organization] = await tx
+        .insert(organizations)
+        .values({ name: trimmed, slug: await uniqueSlug(tx, trimmed) })
+        .returning({ id: organizations.id, slug: organizations.slug });
+
+      /**
+       * Owner, because they opened it.
+       *
+       * Not a copy of their role elsewhere: the two organisations are unrelated, and somebody
+       * who is a developer in one has every right to own another.
+       */
+      await tx.insert(memberships).values({
+        organizationId: organization!.id,
+        userId,
+        role: 'owner' satisfies Role,
+      });
+
+      await this.onOrganizationCreated(tx, organization!.id);
+
+      return { organizationId: organization!.id, slug: organization!.slug };
+    });
+
+    await this.audit.record({
+      ...context,
+      organizationId: created.organizationId,
+      userId,
+      action: 'organization.created',
+      targetType: 'organization',
+      targetId: created.organizationId,
+      metadata: { name: trimmed, slug: created.slug },
+    });
+
+    return created;
+  }
+
   async verifyEmail(token: string, context: RequestContext = {}): Promise<boolean> {
     const [row] = await this.db
       .select()

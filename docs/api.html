@@ -576,6 +576,18 @@ curl https://api.avexpay.net/v1/organizations/<em>ORG_ID</em>/invoices \
 { <span class="k">"data"</span>: [{ <span class="k">"id"</span>: <span class="s">"7b2c1e40-…"</span>, <span class="k">"name"</span>: <span class="s">"Your Store"</span>, <span class="k">"slug"</span>: <span class="s">"your-store"</span> }] }</pre>
       </div>
       <p class="note">
+        <strong>Two projects are two organisations, not two keys.</strong> A key belongs to
+        one organisation and so does everything that organisation holds: its currencies, its
+        wallets, its webhooks, its invoices and its commission balance. Two keys made in one
+        organisation are two credentials over one set of books — the invoices mix, the
+        reports add up together, and both shops are paid into the same wallets. If the two
+        are meant to be separate, open a second organisation from
+        <strong>Team → Organisations</strong> in the dashboard and make that project's key
+        there; the picker in the sidebar moves between them. If they are not meant to be
+        separate, one key is enough, and <code>metadata</code> on each invoice is how you tell
+        the two apart in one set of reports.
+      </p>
+      <p class="note">
         Keys are shown once, at creation, and stored only as a hash — we cannot recover
         one for you. Each key carries a list of permissions, chosen when it is created, and
         a call it lacks the permission for fails with <code>403 scope_missing</code> naming

@@ -89,6 +89,11 @@ const INTERNAL = new Set([
    * charge, and the hosted checkout — and neither asks anyone to POST a bot token by hand.
    * Publishing routes that take one would invite exactly that.
    */
+  /**
+   * Opening another organisation is a dashboard action: it is refused to an API key on
+   * purpose, so there is no integration to document.
+   */
+  'POST /v1/organizations',
   'GET /v1/organizations/:orgId/telegram-bot',
   'PUT /v1/organizations/:orgId/telegram-bot',
   'PATCH /v1/organizations/:orgId/telegram-bot',

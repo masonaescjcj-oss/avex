@@ -765,6 +765,111 @@ describe('api', { skip: databaseUrl ? false : 'DATABASE_URL not set' }, () => {
     assert.ok(!JSON.stringify(listed.json()).includes(apiKey.slice(12)));
   });
 
+  test('a second organisation can be opened, and starts empty', async () => {
+    /**
+     * A merchant running two products had two API keys and one set of books, because signup
+     * was the only thing that ever created an organisation. The model always allowed more —
+     * memberships is a join table — but there was no door.
+     */
+    const opened = await app.inject({
+      method: 'POST',
+      url: '/v1/organizations',
+      headers: asOwner(),
+      payload: { name: 'Second Product' },
+    });
+    assert.equal(opened.statusCode, 201, opened.body);
+    const secondOrg = opened.json().id as string;
+    assert.notEqual(secondOrg, organizationId);
+    assert.equal(opened.json().role, 'owner', 'whoever opens it owns it');
+    assert.match(opened.json().message, /own commission balance|nothing is shared/i);
+
+    // It is listed beside the first, which is what a switcher reads.
+    const listed = await app.inject({ method: 'GET', url: '/v1/organizations', headers: asOwner() });
+    const ids = (listed.json().data as { id: string }[]).map((row) => row.id);
+    assert.ok(ids.includes(organizationId) && ids.includes(secondOrg), ids.join(', '));
+
+    /**
+     * And nothing came with it. This is the assertion that matters: a merchant expecting
+     * their wallets to be there would point a shop at an organisation that refuses every
+     * invoice, and the refusal names an asset rather than the cause.
+     */
+    const keys = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${secondOrg}/api-keys`,
+      headers: asOwner(),
+    });
+    assert.deepEqual(keys.json().data, []);
+
+    const payouts = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${secondOrg}/payout-addresses`,
+      headers: asOwner(),
+    });
+    assert.deepEqual(payouts.json().active, []);
+  });
+
+  test('a new organisation can be quoted, which means it got a fee plan', async () => {
+    /**
+     * The one thing that must happen inside the same transaction. Without a fee plan an
+     * organisation cannot be quoted a rate, so it cannot be given a deposit address, so it
+     * cannot take a payment — and it looks perfectly fine until the first invoice. Signup
+     * learned that once; this is the same lesson, not a second copy of the code.
+     */
+    const opened = await app.inject({
+      method: 'POST',
+      url: '/v1/organizations',
+      headers: asOwner(),
+      payload: { name: 'Needs A Plan' },
+    });
+    const orgId = opened.json().id as string;
+
+    const commission = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${orgId}/commission`,
+      headers: asOwner(),
+    });
+    assert.equal(commission.statusCode, 200, commission.body);
+    // The plan itself, not the derived rate: its presence is the thing the transaction had to
+    // guarantee, and reading the summary instead would pass on a merchant who has none.
+    assert.equal(commission.json().plan?.organizationId, orgId, commission.body);
+    assert.ok(typeof commission.json().plan?.feeBps === 'number', commission.body);
+  });
+
+  test('an API key cannot open an organisation', async () => {
+    /**
+     * A key is issued *by* an organisation and scoped to it. Letting one mint a sibling would
+     * let a credential granted "create invoices" quietly create a whole second account, with
+     * its own wallets and its own books, outside anything the merchant is watching.
+     */
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/organizations',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { name: 'Minted By A Key' },
+    });
+    assert.equal(response.statusCode, 403, response.body);
+    assert.equal(response.json().error, 'session_required');
+  });
+
+  test('two organisations do not see each other\u2019s invoices', async () => {
+    // The separation the whole feature is for, asserted rather than assumed.
+    const opened = await app.inject({
+      method: 'POST',
+      url: '/v1/organizations',
+      headers: asOwner(),
+      payload: { name: 'Separate Books' },
+    });
+    const secondOrg = opened.json().id as string;
+
+    const theirs = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${secondOrg}/invoices`,
+      headers: asOwner(),
+    });
+    assert.equal(theirs.statusCode, 200);
+    assert.deepEqual(theirs.json().invoices, [], 'a fresh organisation has no orders');
+  });
+
   test('the key list says what this person may grant', async () => {
     /**
      * The gap that made this necessary. The dashboard used to carry its own list of

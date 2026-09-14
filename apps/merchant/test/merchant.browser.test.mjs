@@ -20,6 +20,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const PAGE = 'https://dash.test/merchant.html';
 const pageFile = join(here, '..', 'public', 'merchant.html');
 const ORG = '7b2c1e40-1111-4222-8333-444444444444';
+/**
+ * A second organisation on the same account, for the switcher.
+ *
+ * Its own id rather than a variation on the first, because the assertions that matter are
+ * about which id the page puts in a URL — and two ids a careless eye reads as the same one
+ * would let the bug those tests exist for pass.
+ */
+const ORG2 = '9d4f3a21-2222-4333-8444-555555555555';
 
 /**
  * A real secret and a real `otpauth://` URI.
@@ -284,6 +292,17 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
 
     const data = { ...FIXTURE, ...overrides };
 
+    /**
+     * The organisations this account is in, held across the requests of one `open()`.
+     *
+     * A copy, and mutable: opening one appends to it, and the listing is read from the same
+     * array — so the refetch the page does after a creation sees what the creation made,
+     * exactly as it would against a database.
+     */
+    const organizations = [
+      ...(overrides.organizations ?? [{ id: ORG, name: 'Example Store', role: overrides.role ?? 'owner' }]),
+    ];
+
     await page.route('**/v1/**', async (route) => {
       const url = new URL(route.request().url());
       const path = url.pathname;
@@ -348,16 +367,35 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
         posts.push({ path, body: null });
         return route.fulfill(overrides.revoke ?? { status: 204, body: '' });
       }
+      if (method === 'POST' && path.endsWith('/v1/organizations')) {
+        /**
+         * Before the listing branch, which is not gated on a method — a POST falling through
+         * to it would be answered with the list and the page would look like it worked.
+         */
+        const sent = JSON.parse(route.request().postData() ?? '{}');
+        posts.push({ path, body: sent });
+        if (overrides.openOrgFails) return route.fulfill(json(overrides.openOrgFails, 403));
+        const created = { id: 'org-new-1111-4222-8333-444444444444', name: sent.name, role: 'owner' };
+        // Pushed onto the same array the listing reads, so the refetch that follows a
+        // creation finds it — which is the whole behaviour under test.
+        organizations.push(created);
+        return route.fulfill(
+          json(
+            {
+              ...created,
+              slug: 'new-one',
+              message:
+                'Opened. It starts empty — its own currencies, its own wallets, its own API ' +
+                'keys and webhooks, and its own commission balance.',
+            },
+            201,
+          ),
+        );
+      }
       if (path.endsWith('/v1/organizations')) {
         // With a role: the team page draws differently for a viewer than for an owner, so a
         // fixture without one would exercise only the read-only half.
-        return route.fulfill(
-          json({
-            organizations: [
-              { id: ORG, name: 'Example Store', role: overrides.role ?? 'owner' },
-            ],
-          }),
-        );
+        return route.fulfill(json({ organizations }));
       }
       if (method === 'POST' && path.endsWith('/v1/invites/accept')) {
         posts.push({ path, body: JSON.parse(route.request().postData() ?? '{}') });
@@ -3229,6 +3267,268 @@ describe('merchant dashboard', { skip: playwright ? false : 'playwright is not i
     assert.match(said, /install\.sh/);
     // And not the router's own sentence, which is what somebody would otherwise paste into chat.
     assert.equal(/No route/.test(said), false);
+    await context.close();
+  });
+
+  // ── more than one organisation ────────────────────────────────────────────
+
+  /**
+   * The failure this section exists for.
+   *
+   * A merchant with two projects made two API keys, and both of them turned out to belong to
+   * one organisation — one set of wallets, one commission balance, one set of books for two
+   * shops. The dashboard was part of the reason: it opened the first organisation in the list
+   * and offered no way to reach another, so a second one was invisible even to somebody who
+   * had been told to make it.
+   */
+
+  const TWO = [
+    { id: ORG, name: 'Example Store', role: 'owner' },
+    { id: ORG2, name: 'Wholesale Arm', role: 'admin' },
+  ];
+
+  /** Switching reloads the page into the other organisation, so wait for the new one. */
+  async function settled(page) {
+    await page.waitForFunction(
+      () => document.getElementById('app')?.hidden === false,
+      { timeout: 5000 },
+    );
+    await page.waitForTimeout(300);
+  }
+
+  test('one organisation gets no picker, because there is nowhere to switch to', async () => {
+    // A select with a single option is a control that cannot do anything, and a dashboard
+    // full of those teaches people to stop reading them.
+    const { page, context } = await open();
+    assert.equal(await page.$('#org-picker'), null);
+    // And the account block still says which organisation it is.
+    assert.equal(await text(page, '#whoami-org'), 'Example Store');
+    await context.close();
+  });
+
+  test('two organisations get a picker, listing both', async () => {
+    const { page, context } = await open({ organizations: TWO });
+    const options = await page.$$eval('#org-picker option', (nodes) =>
+      nodes.map((node) => node.textContent.trim()),
+    );
+    // Alphabetical, so the list does not reorder itself between visits.
+    assert.deepEqual(options, ['Example Store', 'Wholesale Arm']);
+    assert.equal(await page.$eval('#org-picker', (node) => node.value), ORG);
+    await context.close();
+  });
+
+  test('switching asks the other organisation for its own invoices', async () => {
+    /**
+     * The assertion that matters in the whole file. Switching that changed the name in the
+     * sidebar and went on requesting the first organisation's data would be worse than no
+     * switcher at all: one shop's figures under the other shop's name.
+     */
+    const { page, context, seen } = await open({ organizations: TWO });
+    await openTab(page, 'Invoices');
+    await page.waitForTimeout(200);
+
+    const before = seen.length;
+    await page.selectOption('#org-picker', ORG2);
+    await settled(page);
+
+    const after = seen.slice(before);
+    assert.ok(
+      after.some((call) => call.startsWith('GET /v1/organizations/' + ORG2 + '/invoices')),
+      'the second organisation\'s invoices were fetched: ' + after.join(', '),
+    );
+    assert.equal(
+      after.some((call) => call.includes(ORG + '/invoices')),
+      false,
+      'and the first one\'s were not: ' + after.join(', '),
+    );
+    // Still on the same tab: somebody comparing two shops' invoices wants the invoices tab
+    // in both, not the overview every time.
+    assert.equal(await page.$eval('#view-invoices', (node) => node.hidden), false);
+    assert.equal(await text(page, '#whoami-org'), 'Wholesale Arm');
+    await context.close();
+  });
+
+  test('switching does not leave the last organisation\'s figures on screen', async () => {
+    /**
+     * The cache is fetched per organisation, so carrying it across a switch would draw one
+     * account's invoices under another's name for as long as the new answers take to arrive
+     * — which on a slow connection is exactly as long as somebody needs to read them.
+     */
+    const { page, context } = await open({ organizations: TWO });
+    await openTab(page, 'Invoices');
+    await page.waitForTimeout(200);
+    const first = await text(page, '#invoice-list');
+    assert.ok(first.length > 0, 'the first organisation has invoices on screen');
+
+    // The second organisation's answer never arrives, so what is on screen afterwards is
+    // whatever the page kept — which must be nothing.
+    await page.route('**/invoices*', (route) => route.abort());
+    await page.selectOption('#org-picker', ORG2);
+    await settled(page);
+
+    const after = await text(page, '#invoice-list');
+    assert.equal(after.includes(first.slice(0, 40)), false, 'kept on screen: ' + after);
+    await context.close();
+  });
+
+  test('the organisation you were last in is the one that opens', async () => {
+    const { page, context } = await open({ organizations: TWO });
+    await page.selectOption('#org-picker', ORG2);
+    await settled(page);
+
+    // The same browser and the same storage, but no `?org=` this time: the remembered choice
+    // is the only thing that can carry it.
+    await page.goto(PAGE);
+    await settled(page);
+
+    assert.equal(await text(page, '#whoami-org'), 'Wholesale Arm');
+    assert.equal(await page.$eval('#org-picker', (node) => node.value), ORG2);
+    await context.close();
+  });
+
+  test('an organisation you are no longer in is not opened, and does not break the page', async () => {
+    /**
+     * A remembered id survives leaving an organisation. A page that trusted it would address
+     * every request to something this account cannot see and report the refusals as though
+     * the dashboard itself were broken.
+     */
+    const { page, context } = await open({ organizations: TWO });
+    await page.selectOption('#org-picker', ORG2);
+    await settled(page);
+
+    // Back to one, as though the membership had been revoked between visits. The id stays
+    // in storage, which is exactly the situation being tested.
+    await page.unroute('**/v1/**');
+    await page.route('**/v1/**', async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      const body = path.endsWith('/v1/organizations')
+        ? { organizations: [{ id: ORG, name: 'Example Store', role: 'owner' }] }
+        : path.endsWith('/v1/auth/me')
+          ? { email: 'owner@example.test', emailVerified: true, totpEnabled: true, mfaComplete: true }
+          : {};
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+
+    await page.goto(PAGE);
+    await settled(page);
+
+    assert.equal(await text(page, '#whoami-org'), 'Example Store');
+    await context.close();
+  });
+
+  test('the team tab lists every organisation, and marks the open one', async () => {
+    const { page, context } = await open({ organizations: TWO });
+    await openTab(page, 'Team');
+    await page.waitForTimeout(300);
+
+    const rows = await all(page, '#org-table tbody tr');
+    assert.equal(rows.length, 2);
+    assert.match(rows.join(' | '), /Example Store/);
+    assert.match(rows.join(' | '), /Wholesale Arm/);
+    // The role, so somebody reading the list knows which of them they can actually change.
+    assert.match(rows.join(' | '), /admin/);
+    assert.match(await text(page, '#org-table'), /open/);
+    await context.close();
+  });
+
+  test('the team tab can open another organisation', async () => {
+    const { page, context, seen } = await open({ organizations: TWO });
+    await openTab(page, 'Team');
+    await page.waitForTimeout(300);
+
+    const before = seen.length;
+    await page.click('#org-table button:has-text("Open")');
+    await settled(page);
+
+    assert.equal(await text(page, '#whoami-org'), 'Wholesale Arm');
+    // On the same tab it was opened from, asking the other organisation for its own team.
+    assert.ok(
+      seen.slice(before).some((call) => call.includes(ORG2 + '/members')),
+      seen.slice(before).join(', '),
+    );
+    await context.close();
+  });
+
+  test('the organisations panel survives a team tab this account may not read', async () => {
+    /**
+     * A viewer has no `member:read`, and this panel is how a viewer reaches the organisation
+     * where they *are* an admin. Drawn after the member request, one 403 would take away the
+     * only way out.
+     */
+    const { page, context } = await open({ organizations: TWO, members: null });
+    await page.route('**/members', (route) =>
+      route.fulfill({
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'scope_missing', message: 'Not allowed to read members.' }),
+      }),
+    );
+    await openTab(page, 'Team');
+    await page.waitForTimeout(400);
+
+    assert.equal((await all(page, '#org-table tbody tr')).length, 2);
+    await context.close();
+  });
+
+  test('opening an organisation says it starts empty, and lists it', async () => {
+    /**
+     * The sentence is the part that matters. A merchant expecting their wallets to come along
+     * will point a second shop at an organisation that refuses every invoice, and the refusal
+     * names a missing currency rather than the reason for it.
+     *
+     * Which is also why the new organisation is not opened straight away: opening one reloads
+     * the page, and a reload would take that sentence off the screen before it was read.
+     */
+    const { page, context, posts } = await open();
+    await openTab(page, 'Team');
+    await page.waitForTimeout(300);
+
+    await page.fill('#org-new-name', 'Wholesale Arm');
+    await page.click('#org-submit');
+    await page.waitForTimeout(600);
+
+    const sent = posts.find((entry) => entry.path.endsWith('/v1/organizations'));
+    assert.deepEqual(sent?.body, { name: 'Wholesale Arm' });
+    assert.match(await text(page, '#flash'), /starts empty/);
+    assert.equal(await text(page, '#whoami-org'), 'Example Store');
+    // In the list, with its own way in — and now there are two, so there is a picker.
+    assert.equal((await all(page, '#org-table tbody tr')).length, 2);
+    assert.match(await text(page, '#org-table'), /Wholesale Arm/);
+    assert.notEqual(await page.$('#org-picker'), null);
+    await context.close();
+  });
+
+  test('the consequence is on the page before the button, not only in the flash', async () => {
+    const { page, context } = await open();
+    await openTab(page, 'Team');
+    await page.waitForTimeout(300);
+
+    // Whitespace collapsed: the sentence is wrapped in the source, and a regular expression
+    // that cared where the line broke would be testing the indentation.
+    const said = (await text(page, '#org-consequence')).replace(/\s+/g, ' ');
+    assert.match(said, /its own wallets/);
+    assert.match(said, /Nothing is shared with this one/);
+    await context.close();
+  });
+
+  test('a refused creation is reported, and nothing is switched', async () => {
+    const { page, context } = await open({
+      openOrgFails: {
+        error: 'session_required',
+        message: 'Only a signed-in person can open an organisation, not an API key.',
+      },
+    });
+    await openTab(page, 'Team');
+    await page.waitForTimeout(300);
+
+    await page.fill('#org-new-name', 'Wholesale Arm');
+    await page.click('#org-submit');
+    await page.waitForTimeout(400);
+
+    assert.match(await text(page, '#flash'), /Only a signed-in person/);
+    assert.equal(await text(page, '#whoami-org'), 'Example Store');
+    // And the button works again, rather than staying disabled behind a failure.
+    assert.equal(await page.$eval('#org-submit', (node) => node.disabled), false);
     await context.close();
   });
 });
