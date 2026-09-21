@@ -84,7 +84,24 @@ import type { SolanaRpc } from './SolanaRpc.js';
 
 /** Where a transfer's recipient is looked up, to decide whether it is ours. */
 export interface SolanaAddressBook {
-  lookup(address: string): Promise<string | null>;
+  /**
+   * Whether a transfer to this address is one of ours.
+   *
+   * A boolean, and it used to be the id of the invoice that owned the address — which every
+   * caller compared against `null` and none of them read. That surplus is what made this the
+   * quietest bug in the project: the implementation answered the narrower question "which
+   * invoice owns this address", the callers took the answer as "is this ours", and a transfer
+   * to one of the merchant's own registered wallets that had no invoice on it yet was dropped
+   * here. Not credited, not parked, not logged — the poll never even asked the node about it,
+   * because `watched` was built from the same narrower question. Which is exactly what a
+   * merchant does first: add a wallet, send a little money to it, and watch nothing happen.
+   *
+   * So the question is the one the callers are actually asking, and the implementation is free
+   * to say yes for a registered wallet with no invoice. What such a transfer belongs to is the
+   * payment sink's decision, and its answer — parked for a person, or attached to an invoice
+   * that shows up later — is at least an answer.
+   */
+  recognizes(address: string): Promise<boolean>;
   /** Every wallet on this chain a transfer to which would be ours, as stored. */
   watched(): Promise<readonly string[]>;
 }
@@ -582,7 +599,7 @@ export class SolanaAdapter implements ChainAdapter {
       if (delta <= 0n) continue;
       // The wallet signed for its own balance to go up: its own trade, not a payment to it.
       if (signedBy(accounts, owner)) continue;
-      if ((await this.addressBook.lookup(owner)) === null) continue;
+      if (!(await this.addressBook.recognizes(owner))) continue;
 
       const sender = tokenSender(meta, entry.mint, accounts);
       payments.push({
@@ -609,7 +626,7 @@ export class SolanaAdapter implements ChainAdapter {
         if (before === undefined || after === undefined) continue;
         const delta = BigInt(after) - BigInt(before);
         if (delta <= 0n) continue;
-        if ((await this.addressBook.lookup(account.pubkey)) === null) continue;
+        if (!(await this.addressBook.recognizes(account.pubkey))) continue;
 
         payments.push({
           chain: this.chain,

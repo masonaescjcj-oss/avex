@@ -215,7 +215,7 @@ function adapterWith(options: {
       ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
     }),
     {
-      lookup: async (address) => (known.has(address) ? 'invoice-1' : null),
+      recognizes: async (address) => known.has(address),
       watched: async () => [...known],
     },
     { nativePriceUsd: async () => 5 },

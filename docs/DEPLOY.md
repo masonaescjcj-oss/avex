@@ -189,7 +189,39 @@ says so and changes nothing, so it is safe to run twice.
 
 It is for the transfer a poll missed: an endpoint that refused every request for an hour while
 the cursor moved past, a window that closed, or a rule that was wrong when it ran. The last of
-those has happened once, on TON — see below.
+those has happened twice — once on TON and once on every chain at once; both are below.
+
+### A payment that predates the wallet being registered
+
+A transfer is only ever found by a poll that was already watching the address. Adding a wallet
+does not reach backwards: the cursor is wherever the chain's head was, and a transfer in an
+older block is not in any range that will be scanned again. So a merchant who registers a
+wallet that has already been paid — a wallet they were using before AVEX, or a test payment
+sent before the wallet was added — has to name the transaction:
+
+```
+sudo -u avex npm run replay-tx --workspace @avex/api -- tron 0x<the transaction id>
+```
+
+TronGrid and Tronscan print a TRON transaction id without the `0x`. Put it back on; the
+command expects an `0x…` hash on every chain but TON.
+
+### A payment to a wallet that has no invoice on it yet
+
+This one used to be silent, and it was the worst bug this project has had.
+
+"Ours" meant "an invoice was issued against this address". A wallet the merchant had just
+registered had no invoice on it, so a transfer to it was not merely unmatched — the poll never
+asked the node about that address at all, nothing was credited, and nothing appeared in the
+reconciliation queue. Which is exactly what a merchant does first: add a wallet, send a little
+USDT to it, and watch nothing happen.
+
+A registered wallet is now watched from the moment it is added, whether an invoice has used it
+or not, and a transfer to one with no matching invoice is **parked** in
+`/admin` → unmatched payments for a person to attach. It is not attached automatically to an
+invoice opened afterwards: a stray that can pay for an order created later can pay for any
+order created later, which is somebody's money spent on a guess. Visible and waiting is the
+fix; deciding is still a person's call.
 
 ## Telegram Stars, when AVEX drives the bot
 

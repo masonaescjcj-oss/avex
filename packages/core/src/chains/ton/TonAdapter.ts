@@ -60,7 +60,24 @@ import type { TonApi } from './TonApi.js';
 
 /** Where a transfer's recipient is looked up, to decide whether it is ours. */
 export interface TonAddressBook {
-  lookup(address: string): Promise<string | null>;
+  /**
+   * Whether a transfer to this address is one of ours.
+   *
+   * A boolean, and it used to be the id of the invoice that owned the address — which every
+   * caller compared against `null` and none of them read. That surplus is what made this the
+   * quietest bug in the project: the implementation answered the narrower question "which
+   * invoice owns this address", the callers took the answer as "is this ours", and a transfer
+   * to one of the merchant's own registered wallets that had no invoice on it yet was dropped
+   * here. Not credited, not parked, not logged — the poll never even asked the node about it,
+   * because `watched` was built from the same narrower question. Which is exactly what a
+   * merchant does first: add a wallet, send a little money to it, and watch nothing happen.
+   *
+   * So the question is the one the callers are actually asking, and the implementation is free
+   * to say yes for a registered wallet with no invoice. What such a transfer belongs to is the
+   * payment sink's decision, and its answer — parked for a person, or attached to an invoice
+   * that shows up later — is at least an answer.
+   */
+  recognizes(address: string): Promise<boolean>;
   /** Every wallet on this chain a transfer to which would be ours, as stored. */
   watched(): Promise<readonly string[]>;
 }
@@ -271,7 +288,7 @@ export class TonAdapter implements ChainAdapter {
       // The indexer was asked for this owner's incoming transfers; checked anyway, because
       // crediting on somebody else's row is the one mistake worth a second comparison.
       if (!sameAddress(row.destination, wallet)) continue;
-      if ((await this.addressBook.lookup(wallet)) === null) continue;
+      if (!(await this.addressBook.recognizes(wallet))) continue;
 
       const amount = BigInt(row.amount);
       if (amount <= 0n) continue;
@@ -319,7 +336,7 @@ export class TonAdapter implements ChainAdapter {
     for (const row of rows) {
       const payment = this.nativePaymentFrom(row, wallet, native, to);
       if (payment === null) continue;
-      if ((await this.addressBook.lookup(wallet)) === null) continue;
+      if (!(await this.addressBook.recognizes(wallet))) continue;
       payments.push(payment);
     }
 
@@ -405,7 +422,7 @@ export class TonAdapter implements ChainAdapter {
 
       const wallet = friendlyOrUndefined(destination);
       if (wallet === undefined) continue;
-      if ((await this.addressBook.lookup(wallet)) === null) continue;
+      if (!(await this.addressBook.recognizes(wallet))) continue;
 
       const payment = this.nativePaymentFrom(row, wallet, native, row.now ?? 0);
       if (payment !== null) payments.push(payment);

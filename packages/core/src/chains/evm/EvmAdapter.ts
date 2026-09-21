@@ -50,7 +50,24 @@ export interface PriceOracle {
  */
 /** Maps a deposit address back to the invoice that owns it. */
 export interface AddressBook {
-  lookup(address: string): Promise<string | null>;
+  /**
+   * Whether a transfer to this address is one of ours.
+   *
+   * A boolean, and it used to be the id of the invoice that owned the address — which every
+   * caller compared against `null` and none of them read. That surplus is what made this the
+   * quietest bug in the project: the implementation answered the narrower question "which
+   * invoice owns this address", the callers took the answer as "is this ours", and a transfer
+   * to one of the merchant's own registered wallets that had no invoice on it yet was dropped
+   * here. Not credited, not parked, not logged — the poll never even asked the node about it,
+   * because `watched` was built from the same narrower question. Which is exactly what a
+   * merchant does first: add a wallet, send a little money to it, and watch nothing happen.
+   *
+   * So the question is the one the callers are actually asking, and the implementation is free
+   * to say yes for a registered wallet with no invoice. What such a transfer belongs to is the
+   * payment sink's decision, and its answer — parked for a person, or attached to an invoice
+   * that shows up later — is at least an answer.
+   */
+  recognizes(address: string): Promise<boolean>;
   /**
    * Every address on this chain a transfer to which would be ours.
    *
@@ -340,7 +357,7 @@ export class EvmAdapter implements ChainAdapter {
 
       // Topics pad addresses to 32 bytes; the address is the last 20.
       const recipient = toChecksumAddress(`0x${recipientTopic.slice(26)}`);
-      if ((await this.addressBook.lookup(recipient)) === null) continue;
+      if (!(await this.addressBook.recognizes(recipient))) continue;
       // The sender is the second topic, padded the same way.
       const senderTopic = log.topics[1];
       const sender =

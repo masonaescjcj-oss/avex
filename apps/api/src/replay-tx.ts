@@ -214,7 +214,7 @@ async function main(): Promise<void> {
       const value = transaction.value === undefined ? 0n : BigInt(transaction.value);
       if (rawTo !== null && value > 0n) {
         const to = isTron ? normalizeTronAddress(rawTo) : toChecksumAddress(rawTo);
-        if ((await addressBook.lookup(to)) !== null) {
+        if (await addressBook.recognizes(to)) {
           considered += 1;
           const from = transaction.from === undefined
             ? undefined
@@ -259,7 +259,7 @@ async function main(): Promise<void> {
       const rawFrom = `0x${entry.topics[1]!.slice(26)}`;
       const to = isTron ? normalizeTronAddress(rawTo) : toChecksumAddress(rawTo);
       const from = isTron ? normalizeTronAddress(rawFrom) : toChecksumAddress(rawFrom);
-      if ((await addressBook.lookup(to)) === null) {
+      if (!(await addressBook.recognizes(to))) {
         log('transfer to an address no invoice uses; skipped', { to });
         continue;
       }

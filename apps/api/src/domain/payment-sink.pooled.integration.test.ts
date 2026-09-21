@@ -330,6 +330,50 @@ describe('crediting a payment on a pooled chain', { skip: !databaseUrl }, () => 
     assert.equal((await parkedFor(stray))?.reason, 'invoice_expired');
   });
 
+  test('the first payment to a brand-new wallet is parked, not dropped', async () => {
+    /**
+     * The bug a merchant found by doing the obvious thing: add your TRON wallet, send a little
+     * USDT to it, watch AVEX notice. Nothing happened — no credit, no unmatched row, nothing in
+     * the reconciliation queue — because the watcher's idea of "ours" was "an invoice was issued
+     * against this address", and none had been yet. The transfer was dropped in the adapter
+     * before the sink ever saw it, and the poll had never even asked the node about the address.
+     *
+     * The sink's half of that was always right: a transfer to an address with no invoice on it
+     * parks. This asserts it, so the fix in the address book has something holding it in place —
+     * nothing else in this suite reaches the sink without an invoice at the address first.
+     */
+    const wallet = tronAddress();
+    const first = payment(wallet, 11_710_000n);
+
+    assert.equal(await sink.credit(first), 'unmatched');
+    assert.equal((await parkedFor(first))?.reason, 'no_matching_address');
+    // With the address on it, so an operator can see whose wallet took the money.
+    assert.equal((await parkedFor(first))?.toAddress, wallet);
+  });
+
+  test('a stray at a new wallet is not paid off by an invoice opened afterwards', async () => {
+    /**
+     * The limit of the fix, asserted so nobody widens it by accident.
+     *
+     * Making the transfer *visible* is the whole gain; attaching it is still a person's call.
+     * The sweep considers only invoices that existed when a stray was first seen — the same
+     * rule as `'the sweep leaves a stray alone when a fresh invoice is the only thing open'`
+     * — because a stray that could pay for an order created later is a stray that can pay for
+     * any order created later. So this one stays in the queue with the exact amount matching,
+     * which looks like a missed opportunity and is a refusal to spend somebody's money on a
+     * guess.
+     */
+    const wallet = tronAddress();
+    const early = payment(wallet, 20_011_000n);
+    assert.equal(await sink.credit(early), 'unmatched');
+
+    const later = await openInvoice(wallet, 20_011_000n);
+    await sink.sweepParked();
+
+    assert.equal(await statusOf(later), 'pending');
+    assert.equal((await parkedFor(early))?.resolution, 'pending');
+  });
+
   test('a late payer who sent the exact amount is credited to the invoice that expired', async () => {
     /**
      * The invoice lapsed an hour ago; the pool kept its number reserved for the day, so nothing

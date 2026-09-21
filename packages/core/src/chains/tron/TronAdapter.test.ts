@@ -183,7 +183,7 @@ function adapterWith(options: {
     },
     { nativePriceUsd: async () => 0.3 },
     {
-      lookup: async (address) => (known.has(address) ? 'invoice-1' : null),
+      recognizes: async (address) => known.has(address),
       // The poll asks the node about these and nothing else, so the fake has to know them.
       watched: async () => [...known],
     },
@@ -575,7 +575,7 @@ describe('watching TRON', () => {
       { nativePriceUsd: async () => 0.3 },
       // A wallet to ask about: with none, the poll has nothing to send and never reaches
       // the node, which is not the failure this test is about.
-      { lookup: async () => null, watched: async () => [WALLET] },
+      { recognizes: async () => false, watched: async () => [WALLET] },
     );
 
     await assert.rejects(adapter.poll('1'), /rate limited/);

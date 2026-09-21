@@ -217,7 +217,7 @@ function adapterWith(options: {
     },
     new SolanaRpc({ url: 'https://solana.example' }),
     {
-      lookup: async (candidate) => (known.has(candidate) ? 'invoice-1' : null),
+      recognizes: async (candidate) => known.has(candidate),
       watched: async () => [...known],
     },
     { nativePriceUsd: async () => 150 },

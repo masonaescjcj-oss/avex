@@ -1,16 +1,31 @@
 import { addressKey, foldsAddressCase } from '@avex/core';
 import type { ChainId } from '@avex/core';
 import { and, eq, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 
 import type { Database } from '../db/client.js';
-import { invoices } from '../db/schema.js';
+import { depositWallets, invoices } from '../db/schema.js';
 
 /**
- * Which invoice owns a deposit address.
+ * Whether an address is one of ours.
  *
  * The watcher sees a transfer to an address and has to decide whether it is ours. This is
  * that decision, and it is deliberately the only one it makes: a transfer to an address
  * nobody recognises is ignored, never credited to a guess.
+ *
+ * "Ours" is two things, and it used to be one. An address an invoice was issued against, and
+ * an address the merchant registered as one of their own wallets — a row in `deposit_wallets`
+ * that no invoice has been allocated to yet. Only the first counted, and the omission was the
+ * quietest bug this project has had: a merchant adds their TRON wallet, sends a little USDT to
+ * it to see the thing work, and nothing happens. Not a failed payment, not an unmatched one in
+ * the reconciliation queue — nothing anywhere, because the poll's recipient filter was built
+ * from the same narrow question and so the node was never even asked about that address.
+ * Afterwards the cursor has moved past the block and only `replay-tx` can reach it.
+ *
+ * A registered wallet with no invoice on it is money that needs a person, not money to be
+ * dropped. Saying yes here hands it to the payment sink, which parks it in the reconciliation
+ * queue — and `reconsiderParked` attaches it by itself if the matching invoice shows up within
+ * the grace window, which covers "paid a moment before the invoice was opened" outright.
  *
  * The two sides disagree about spelling and both are right. An EVM address is stored here in
  * EIP-55 mixed case, since that is what a merchant reads and what a wallet shows. An RPC log
@@ -22,13 +37,10 @@ import { invoices } from '../db/schema.js';
  * an address, and two distinct valid addresses can fold onto each other, which here would
  * credit a payment to somebody else's invoice. `addressKey` owns that decision.
  *
- * Cached, because a busy block asks the same question for the same address many times and
- * the answer cannot change: an invoice's deposit address is derived once and committed to.
- * Only hits are cached — a miss today may be a hit in a minute, when the invoice that owns
- * that address is created.
  */
 export class DatabaseAddressBook {
-  private readonly hits = new Map<string, string>();
+  /** Addresses already recognised. Only hits, for the reason `lookup` gives below. */
+  private readonly hits = new Set<string>();
 
   constructor(
     private readonly db: Database,
@@ -37,10 +49,27 @@ export class DatabaseAddressBook {
     private readonly maxCached = 10_000,
   ) {}
 
+  /**
+   * Whether a transfer to this address is ours — an invoice's address, or a registered wallet.
+   *
+   * Cached, because a busy block asks the same question for the same address many times.
+   * Only hits are cached: a miss today may be a hit in a minute, when the invoice or the
+   * wallet that makes it ours is created.
+   */
+  async recognizes(address: string): Promise<boolean> {
+    const key = addressKey(this.chain, address);
+    if (this.hits.has(key)) return true;
+    if (!(await this.ownsByInvoice(key)) && !(await this.ownsByWallet(key))) return false;
+    // Evicted wholesale rather than by age: this is a memo, not a cache with a policy, and
+    // an LRU here would be more machinery than the problem deserves.
+    if (this.hits.size >= this.maxCached) this.hits.clear();
+    this.hits.add(key);
+    return true;
+  }
+
+  /** The invoice that owns this address, if one does. Used by the sink's own resolution. */
   async lookup(address: string): Promise<string | null> {
     const key = addressKey(this.chain, address);
-    const cached = this.hits.get(key);
-    if (cached !== undefined) return cached;
 
     const [row] = await this.db
       .select({ id: invoices.id })
@@ -55,30 +84,52 @@ export class DatabaseAddressBook {
          * wallet. Refusing to recognise it would leave a real transfer credited to nothing,
          * which is the one outcome worse than crediting it late.
          */
-        and(
-          eq(invoices.chain, this.chain),
-          /**
-           * `lower()` on the column only where the chain says folding is safe.
-           *
-           * Written as a branch rather than a helper returning SQL because the two arms are
-           * different queries: the folded one cannot use an index on the column, the exact
-           * one can, and hiding that behind a function would hide it from whoever next reads
-           * a slow query log.
-           */
-          foldsAddressCase(this.chain)
-            ? sql`lower(${invoices.depositAddress}) = ${key}`
-            : eq(invoices.depositAddress, key),
-        ),
+        and(eq(invoices.chain, this.chain), this.matches(invoices.depositAddress, key)),
       )
       .limit(1);
 
-    if (!row) return null;
+    return row?.id ?? null;
+  }
 
-    // Evicted wholesale rather than by age: this is a memo, not a cache with a policy, and
-    // an LRU here would be more machinery than the problem deserves.
-    if (this.hits.size >= this.maxCached) this.hits.clear();
-    this.hits.set(key, row.id);
-    return row.id;
+  private async ownsByInvoice(key: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(and(eq(invoices.chain, this.chain), this.matches(invoices.depositAddress, key)))
+      .limit(1);
+    return row !== undefined;
+  }
+
+  /**
+   * A wallet the merchant registered, whether or not an invoice has used it.
+   *
+   * Retired wallets count too. `WalletPoolService.retire` says why in its own words: invoices
+   * already pointing at a retired wallet are still open, and a payment arriving there is still
+   * the merchant's money. A wallet is only ever removed from the *allocator*, never from the
+   * set of addresses worth recognising.
+   *
+   * No `lower()` here, unlike the invoices column: `register` stores the address through
+   * `addressKey`, which is the same function that produced the key, so the two are already in
+   * the same form on every chain.
+   */
+  private async ownsByWallet(key: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: depositWallets.id })
+      .from(depositWallets)
+      .where(and(eq(depositWallets.chain, this.chain), eq(depositWallets.address, key)))
+      .limit(1);
+    return row !== undefined;
+  }
+
+  /**
+   * `lower()` on the column only where the chain says folding is safe.
+   *
+   * Written as a branch rather than a helper returning SQL because the two arms are different
+   * queries: the folded one cannot use an index on the column, the exact one can, and hiding
+   * that behind a function would hide it from whoever next reads a slow query log.
+   */
+  private matches(column: typeof invoices.depositAddress, key: string): SQL | undefined {
+    return foldsAddressCase(this.chain) ? sql`lower(${column}) = ${key}` : eq(column, key);
   }
 
   /**
@@ -97,14 +148,37 @@ export class DatabaseAddressBook {
    * question: the addresses that could still receive, plus a slower sweep for late money.
    *
    * No filter on status, for the same reason `lookup` has none.
+   *
+   * And the merchants' registered wallets, whether an invoice has used them or not. Without
+   * them the node is never asked about a wallet on its first day, so the first transfer to it
+   * — which is very often the merchant's own test payment — is not merely unmatched but
+   * unseen. `recognizes` says the rest.
    */
   async watched(): Promise<readonly string[]> {
-    const rows = await this.db
-      .selectDistinct({ address: invoices.depositAddress })
-      .from(invoices)
-      .where(eq(invoices.chain, this.chain));
-    return rows
-      .map((row) => row.address)
-      .filter((address): address is string => typeof address === 'string' && address.length > 0);
+    const [onInvoices, registered] = await Promise.all([
+      this.db
+        .selectDistinct({ address: invoices.depositAddress })
+        .from(invoices)
+        .where(eq(invoices.chain, this.chain)),
+      this.db
+        .selectDistinct({ address: depositWallets.address })
+        .from(depositWallets)
+        .where(eq(depositWallets.chain, this.chain)),
+    ]);
+
+    /**
+     * Deduplicated here rather than by a `union` in SQL.
+     *
+     * A pooled wallet appears in both lists the moment it takes its first invoice, and the
+     * poll turns this into a list of log-filter topics — a duplicate would mean asking the
+     * node the same question twice and then crediting the same transfer twice on the strength
+     * of two identical logs. The sink's identity key would catch that; not generating it is
+     * cheaper and clearer.
+     */
+    const addresses = new Set<string>();
+    for (const row of [...onInvoices, ...registered]) {
+      if (typeof row.address === 'string' && row.address.length > 0) addresses.add(row.address);
+    }
+    return [...addresses];
   }
 }

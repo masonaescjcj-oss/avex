@@ -6,7 +6,7 @@ import { normalizeTronAddress, tronAddressFromEvmHex, tronAddressToHex } from '@
 import { and, eq } from 'drizzle-orm';
 
 import { createDatabase } from '../db/client.js';
-import { assets, invoices, organizations } from '../db/schema.js';
+import { assets, depositWallets, invoices, organizations } from '../db/schema.js';
 import { DatabaseAddressBook } from './address-book.js';
 
 /**
@@ -176,5 +176,89 @@ describe('the address book, across address encodings', { skip: !databaseUrl }, (
     // with whatever the chain reported, and "not ours" is an answer rather than a failure.
     assert.equal(await book.lookup('nonsense'), null);
     assert.equal(await book.lookup(`41${'00'.repeat(20)}`), null);
+    assert.equal(await book.recognizes('nonsense'), false);
+    assert.equal(await book.recognizes(`41${'00'.repeat(20)}`), false);
+  });
+
+  // ── a wallet the merchant registered, before any invoice has used it ──────
+
+  /**
+   * The bug this section exists for, and the most expensive one in the project so far.
+   *
+   * A merchant added their TRON wallet and sent a little USDT to it to watch the thing work.
+   * Nothing happened. Not a failed payment, not an unmatched one in the reconciliation queue —
+   * nothing anywhere, because "ours" meant "an invoice was issued against this address" and no
+   * invoice had been. The poll's recipient filter was built from the same narrow question, so
+   * the node was never even asked about the address; afterwards the cursor had moved past the
+   * block and only `replay-tx` could reach it.
+   */
+
+  async function registerWallet(chain: 'tron' | 'bsc', address: string): Promise<void> {
+    await db()
+      .insert(depositWallets)
+      .values({ organizationId: orgId, chain, address })
+      .onConflictDoNothing();
+  }
+
+  test('a registered wallet is ours before any invoice has used it', async () => {
+    const wallet = tronDeposit();
+    await registerWallet('tron', wallet);
+    const book = new DatabaseAddressBook(db(), 'tron');
+
+    assert.equal(await book.recognizes(wallet), true);
+    // Both on-chain spellings, because the node picks one and the merchant typed the other.
+    assert.equal(await book.recognizes(tronAddressToHex(wallet)), true);
+    /**
+     * And no invoice owns it, which is the whole point: the two questions are different and
+     * the sink is the one that decides what to do with an answer of "ours, unattributed".
+     */
+    assert.equal(await book.lookup(wallet), null);
+  });
+
+  test('a registered wallet is in the set the poll asks the node about', async () => {
+    /**
+     * The half of the fix that cannot be seen from `recognizes`. Recognising an address the
+     * log filter never named is recognising something that will not arrive.
+     */
+    const wallet = tronDeposit();
+    await registerWallet('tron', wallet);
+
+    const watched = await new DatabaseAddressBook(db(), 'tron').watched();
+    assert.ok(watched.includes(wallet), `${wallet} is not in the watched set`);
+  });
+
+  test('a wallet that also carries an invoice is named once, not twice', async () => {
+    /**
+     * The poll turns this list into log-filter topics. A duplicate means asking the node the
+     * same question twice and then being handed two identical logs for one transfer.
+     */
+    const wallet = tronDeposit();
+    await registerWallet('tron', wallet);
+    await openInvoice('tron', wallet);
+
+    const watched = await new DatabaseAddressBook(db(), 'tron').watched();
+    assert.equal(watched.filter((address) => address === wallet).length, 1);
+  });
+
+  test('a registered EVM wallet is recognised whatever case the chain reports', async () => {
+    /**
+     * `register` stores the address through `addressKey`, which folds on EVM — so the stored
+     * row is lowercase while the merchant reads EIP-55. Both have to be recognised, or this
+     * fix would work on TRON and quietly not on the four EVM chains.
+     */
+    const wallet = evmDeposit();
+    await registerWallet('bsc', wallet.toLowerCase());
+    const book = new DatabaseAddressBook(db(), 'bsc');
+
+    assert.equal(await book.recognizes(wallet), true);
+    assert.equal(await book.recognizes(wallet.toLowerCase()), true);
+  });
+
+  test('another chain\'s wallet is not this chain\'s', async () => {
+    // The same string can be a valid address on two chains. A row is only ours on its own.
+    const wallet = evmDeposit();
+    await registerWallet('bsc', wallet.toLowerCase());
+
+    assert.equal(await new DatabaseAddressBook(db(), 'polygon').recognizes(wallet), false);
   });
 });
