@@ -6,37 +6,18 @@ export default function Hero() {
   return (
     <section className={styles.hero}>
       <div className={styles.bg} aria-hidden="true" />
-      <div className={styles.gridLines} aria-hidden="true" />
 
       <div className="wrap">
         <div className={styles.top}>
-          <span className={styles.badge}>
+          <span className="cap cap--ok">
             <span className="dot" aria-hidden="true" />
             Taking new projects · worldwide
           </span>
-          <span className="mono dim">Est. 2021 · Remote-first studio</span>
+          <span className="mono">Est. 2021 · remote-first studio</span>
         </div>
 
         <h1 className={styles.title}>
-          <span className={styles.titleRow}>
-            <span className={styles.titleLine} style={{ '--d': '80ms' } as React.CSSProperties}>
-              We build
-            </span>
-          </span>
-          <span className={styles.titleRow}>
-            <span className={styles.titleLine} style={{ '--d': '200ms' } as React.CSSProperties}>
-              software that
-            </span>
-          </span>
-          <span className={styles.titleRow}>
-            <span
-              className={`${styles.titleLine} ${styles.outline}`}
-              style={{ '--d': '320ms' } as React.CSSProperties}
-            >
-              runs itself
-              <i className={styles.cursor} aria-hidden="true" />
-            </span>
-          </span>
+          We build software that <em>runs itself</em>.
         </h1>
 
         <div className={styles.below}>
@@ -44,8 +25,8 @@ export default function Hero() {
             <p className="lede">
               RetroAI is a product studio for <span className="hi">websites</span>,{' '}
               <span className="hi">applications</span>, <span className="hi">automation</span> and{' '}
-              <span className="hi">AI development</span>. We design it, build it, and keep it running
-              in production.
+              <span className="hi">AI development</span>. We design it, build it, and keep it
+              running in production.
             </p>
             <div className="btn-row">
               <Link href="/contact" className="btn btn--solid">

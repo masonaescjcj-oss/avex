@@ -4,13 +4,13 @@
   .split { grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); align-items: start; }
 }
 
-.channels { display: grid; border-top: 1px solid var(--line-2); }
+.channels { display: grid; border-top: 1px solid var(--hair-2); }
 
 .channel {
   display: grid;
   gap: 0.3rem;
   padding: 0.95rem 0;
-  border-bottom: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--hair-2);
   transition: padding-left 0.35s var(--ease);
 }
 
@@ -18,17 +18,15 @@
 
 .channelValue {
   font-size: 1.02rem;
-  color: var(--paper);
+  color: var(--ink);
   transition: color 0.3s var(--ease);
   overflow-wrap: anywhere;
 }
 
-.channel:hover .channelValue { color: var(--amber); }
+.channel:hover .channelValue { color: var(--signal); }
 
 .channelNote {
   font-family: var(--font-mono);
   font-size: 0.6rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--paper-28);
+  color: var(--ink-4);
 }

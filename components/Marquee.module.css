@@ -1,8 +1,8 @@
 .strip {
   overflow: hidden;
-  border-block: 1px solid var(--line-2);
+  border-block: 1px solid var(--hair-2);
   padding-block: 0.9rem;
-  background: rgba(237, 234, 227, 0.014);
+  background: color-mix(in srgb, var(--ink) 1.4%, transparent);
   user-select: none;
 }
 
@@ -24,16 +24,14 @@
   gap: 1.6rem;
   padding-inline: 0.8rem;
   font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--paper-45);
+  font-size: 0.82rem;
+  color: var(--ink-3);
   white-space: nowrap;
   transition: color 0.3s var(--ease);
 }
 
-.item:hover { color: var(--amber); }
-.item::after { content: '·'; color: var(--amber); opacity: 0.5; }
+.item:hover { color: var(--signal); }
+.item::after { content: '·'; color: var(--signal); opacity: 0.6; }
 
 @media (prefers-reduced-motion: reduce) {
   .track { animation: none; }

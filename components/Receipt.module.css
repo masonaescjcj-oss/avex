@@ -3,9 +3,9 @@
 /* ---------- printer head ---------- */
 
 .printer {
-  border: 1px solid var(--line);
-  border-radius: 3px 3px 0 0;
-  background: linear-gradient(180deg, rgba(237, 234, 227, 0.05), rgba(237, 234, 227, 0.015));
+  border: 1px solid var(--hair);
+  border-radius: var(--r-panel) var(--r-panel) 0 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ink) 5%, transparent), color-mix(in srgb, var(--ink) 1.5%, transparent));
   padding: 0.6rem 0.75rem;
   display: flex;
   align-items: center;
@@ -14,17 +14,17 @@
   font-size: 0.6rem;
   letter-spacing: 0.15em;
   text-transform: uppercase;
-  color: var(--paper-28);
+  color: var(--ink-4);
   margin-bottom: -0.9rem;
 }
 
-.printerState { margin-left: auto; color: var(--amber); font-variant-numeric: tabular-nums; }
-.printerState[data-done='1'] { color: var(--cyan); }
+.printerState { margin-left: auto; color: var(--signal); font-variant-numeric: tabular-nums; }
+.printerState[data-done='1'] { color: var(--ok); }
 
 .slot {
   height: 3px;
-  border-radius: 2px;
-  background: rgba(237, 234, 227, 0.09);
+  border-radius: var(--r-field);
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
   overflow: hidden;
   flex: 1;
   max-width: 6rem;
@@ -33,7 +33,7 @@
 .slotFill {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--amber), var(--cyan));
+  background: linear-gradient(90deg, var(--signal), var(--ok));
   transition: width 0.15s linear;
 }
 
@@ -51,10 +51,10 @@
   font-family: var(--font-mono);
   font-size: 0.7rem;
   line-height: 1.8;
-  background: #f4f2ec;
-  color: #14140f;
-  border-radius: 2px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  background: var(--tape);
+  color: var(--tape-ink);
+  border-radius: var(--r-field);
+  box-shadow: var(--lift);
   overflow: hidden;
   transition: height 0.2s linear;
   --tear: 8px;
@@ -108,12 +108,12 @@
 
 .head { text-align: center; letter-spacing: 0.16em; text-transform: uppercase; }
 .title { font-size: 0.95rem; font-weight: 700; letter-spacing: 0.22em; }
-.dim { color: rgba(20, 20, 15, 0.55); }
+.dim { color: var(--tape-muted); }
 .centre { text-align: center; }
 
 .rule {
   border: 0;
-  border-top: 1px dashed rgba(20, 20, 15, 0.3);
+  border-top: 1px dashed var(--tape-rule);
   margin-block: 0.75rem;
 }
 
@@ -121,7 +121,7 @@
 
 .pays {
   text-align: center;
-  color: rgba(20, 20, 15, 0.6);
+  color: var(--tape-muted);
   letter-spacing: 0.05em;
 }
 
@@ -130,8 +130,8 @@
   height: 32px;
   background: repeating-linear-gradient(
     90deg,
-    #14140f 0 2px, transparent 2px 4px, #14140f 4px 5px, transparent 5px 9px,
-    #14140f 9px 12px, transparent 12px 13px
+    var(--tape-ink) 0 2px, transparent 2px 4px, var(--tape-ink) 4px 5px, transparent 5px 9px,
+    var(--tape-ink) 9px 12px, transparent 12px 13px
   );
 }
 
@@ -161,7 +161,7 @@
   font-size: 0.6rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--paper-28);
+  color: var(--ink-4);
   transition: opacity 0.5s var(--ease);
 }
 
@@ -170,7 +170,7 @@
 .hint span:last-child {
   width: 2rem;
   height: 1px;
-  background: linear-gradient(90deg, var(--amber), transparent);
+  background: linear-gradient(90deg, var(--signal), transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {

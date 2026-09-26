@@ -1,21 +1,28 @@
 import type { Metadata, Viewport } from 'next';
-import { JetBrains_Mono, Space_Grotesk } from 'next/font/google';
+import { Bricolage_Grotesque, IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
 import Footer from '@/components/Footer';
 import Nav from '@/components/Nav';
 import { site } from '@/lib/site';
 import './globals.css';
 
-const grotesk = Space_Grotesk({
+const display = Bricolage_Grotesque({
   subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-grotesk',
+  weight: ['500', '600', '700'],
+  variable: '--font-bricolage',
   display: 'swap',
 });
 
-const mono = JetBrains_Mono({
+const sans = IBM_Plex_Sans({
   subsets: ['latin'],
-  weight: ['400', '500', '700'],
-  variable: '--font-mono-jb',
+  weight: ['400', '500', '600'],
+  variable: '--font-plex-sans',
+  display: 'swap',
+});
+
+const mono = IBM_Plex_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  variable: '--font-plex-mono',
   display: 'swap',
 });
 
@@ -56,7 +63,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#06060a',
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#171614' },
+    { media: '(prefers-color-scheme: light)', color: '#FFFFFF' },
+  ],
   width: 'device-width',
   initialScale: 1,
 };
@@ -80,13 +90,11 @@ const orgSchema = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${grotesk.variable} ${mono.variable}`}>
+    <html lang="en" className={`${display.variable} ${sans.variable} ${mono.variable}`}>
       <body>
         <a href="#main" className="sr-only">
           Skip to content
         </a>
-        <div className="crt" aria-hidden="true" />
-        <div className="vignette" aria-hidden="true" />
         <Nav />
         <main id="main">{children}</main>
         <Footer />

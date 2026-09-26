@@ -10,21 +10,19 @@
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(60% 60% at 12% 0%, rgba(255, 176, 32, 0.11), rgba(6, 6, 10, 0) 62%),
-    radial-gradient(50% 55% at 92% 24%, rgba(55, 230, 200, 0.075), rgba(6, 6, 10, 0) 60%);
+    radial-gradient(60% 60% at 12% 0%, var(--signal-soft), transparent 62%),
+    radial-gradient(50% 55% at 92% 24%, var(--ok-soft), transparent 60%);
 }
 
 .crumb {
   font-family: var(--font-mono);
   font-size: 0.625rem;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--paper-28);
+  color: var(--ink-4);
   margin-bottom: 1.35rem;
 }
 
-.crumb a { color: var(--paper-45); transition: color 0.3s var(--ease); }
-.crumb a:hover { color: var(--amber); }
+.crumb a { color: var(--ink-3); transition: color 0.3s var(--ease); }
+.crumb a:hover { color: var(--signal); }
 
 /* ---------- detail blocks ---------- */
 
@@ -34,7 +32,7 @@
   display: grid;
   gap: clamp(1.5rem, 3.5vw, 3rem);
   padding-block: clamp(2.5rem, 6vw, 4.75rem);
-  border-top: 1px solid var(--line-2);
+  border-top: 1px solid var(--hair-2);
   scroll-margin-top: calc(var(--nav-h) + 2rem);
 }
 
@@ -54,14 +52,14 @@
   display: flex;
   gap: 0.75rem;
   align-items: baseline;
-  color: var(--paper-70);
+  color: var(--ink-2);
   font-size: 0.95rem;
   line-height: 1.55;
 }
 
 .checkItem::before {
   content: '▸';
-  color: var(--amber);
+  color: var(--signal);
   flex: none;
   font-size: 0.72rem;
 }
@@ -78,7 +76,7 @@
   font-family: var(--font-mono);
   font-size: 0.65rem;
   letter-spacing: 0.16em;
-  color: var(--amber);
+  color: var(--signal);
   margin-bottom: 1.1rem;
   display: block;
 }
@@ -90,18 +88,18 @@
   margin-bottom: 0.6rem;
 }
 
-.cardBody { color: var(--paper-45); font-size: 0.9rem; line-height: 1.6; }
+.cardBody { color: var(--ink-3); font-size: 0.9rem; line-height: 1.6; }
 
 /* ---------- table-ish rows ---------- */
 
-.rows { border-top: 1px solid var(--line-2); }
+.rows { border-top: 1px solid var(--hair-2); }
 
 .row {
   display: grid;
   gap: 0.6rem 1.5rem;
   grid-template-columns: minmax(0, 1fr);
   padding: clamp(1.1rem, 2.5vw, 1.6rem) 0;
-  border-bottom: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--hair-2);
   transition: padding-left 0.4s var(--ease);
 }
 
@@ -114,8 +112,8 @@
   transition: color 0.3s var(--ease);
 }
 
-.row:hover .rowTitle { color: var(--amber); }
-.rowBody { color: var(--paper-45); font-size: 0.92rem; line-height: 1.55; }
+.row:hover .rowTitle { color: var(--signal); }
+.rowBody { color: var(--ink-3); font-size: 0.92rem; line-height: 1.55; }
 
 /* ---------- metrics ---------- */
 
@@ -126,7 +124,7 @@
 }
 
 .metric {
-  border-left: 1px solid var(--amber);
+  border-left: 1px solid var(--signal);
   padding-left: 0.9rem;
 }
 
@@ -140,8 +138,6 @@
 .metricLabel {
   font-family: var(--font-mono);
   font-size: 0.625rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--paper-45);
+  color: var(--ink-3);
   margin-top: 0.55rem;
 }

@@ -1,11 +1,11 @@
 .cta {
   position: relative;
   overflow: hidden;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--hair);
   padding-block: clamp(4rem, 10vw, 8rem);
   background:
-    radial-gradient(75% 110% at 50% 118%, rgba(255, 176, 32, 0.15), rgba(6, 6, 10, 0) 60%),
-    var(--ink);
+    radial-gradient(75% 110% at 50% 118%, var(--signal-soft), transparent 60%),
+    var(--bg);
 }
 
 .inner { display: grid; gap: clamp(1.75rem, 4vw, 3rem); }
@@ -23,7 +23,7 @@
 .channels {
   display: grid;
   gap: 0;
-  border-top: 1px solid var(--line-2);
+  border-top: 1px solid var(--hair-2);
 }
 
 .channel {
@@ -31,7 +31,7 @@
   align-items: center;
   gap: 1rem;
   padding: 0.95rem 0;
-  border-bottom: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--hair-2);
   transition: padding-left 0.35s var(--ease);
 }
 
@@ -40,18 +40,16 @@
 .channelLabel {
   font-family: var(--font-mono);
   font-size: 0.625rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--paper-28);
+  color: var(--ink-4);
   width: 5.5rem;
   flex: none;
 }
 
 .channelValue {
   font-size: 0.98rem;
-  color: var(--paper-70);
+  color: var(--ink-2);
   transition: color 0.3s var(--ease);
   overflow-wrap: anywhere;
 }
 
-.channel:hover .channelValue { color: var(--amber); }
+.channel:hover .channelValue { color: var(--signal); }

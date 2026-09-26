@@ -15,12 +15,12 @@
 .prose p {
   font-size: clamp(1rem, 1.35vw, 1.115rem);
   line-height: 1.72;
-  color: var(--paper-70);
+  color: var(--ink-2);
 }
 
 .prose p:first-child {
   font-size: clamp(1.1rem, 1.6vw, 1.3rem);
-  color: var(--paper);
+  color: var(--ink);
   line-height: 1.6;
 }
 
@@ -29,7 +29,7 @@
   font-size: 3.1em;
   line-height: 0.78;
   padding: 0.06em 0.12em 0 0;
-  color: var(--amber);
+  color: var(--signal);
   font-weight: 500;
 }
 

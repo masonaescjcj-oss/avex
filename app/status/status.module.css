@@ -18,13 +18,13 @@
 .bar {
   flex: 1;
   min-width: 2px;
-  border-radius: 1px;
-  background: rgba(55, 230, 200, 0.45);
+  border-radius: var(--r-panel);
+  background: var(--ok);
   transition: background 0.3s var(--ease), transform 0.3s var(--ease);
 }
 
-.bar:hover { transform: scaleY(1.08); background: var(--cyan); }
-.bar[data-state='partial'] { background: rgba(255, 176, 32, 0.75); }
+.bar:hover { transform: scaleY(1.08); background: var(--ok); }
+.bar[data-state='partial'] { background: var(--signal); }
 
 .serviceRow {
   display: grid;
@@ -50,7 +50,7 @@
   font-size: 0.625rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--cyan);
+  color: var(--ok);
 }
 
-.state[data-degraded='true'] { color: var(--amber); }
+.state[data-degraded='true'] { color: var(--signal); }

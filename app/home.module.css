@@ -12,7 +12,7 @@
   display: grid;
   gap: clamp(1.5rem, 3.5vw, 3rem);
   padding-block: clamp(2.25rem, 5vw, 4rem);
-  border-top: 1px solid var(--line-2);
+  border-top: 1px solid var(--hair-2);
   scroll-margin-top: calc(var(--nav-h) + 2rem);
 }
 
@@ -27,7 +27,7 @@
   font-family: var(--font-mono);
   font-size: 0.7rem;
   letter-spacing: 0.16em;
-  color: var(--amber);
+  color: var(--signal);
   padding-top: 0.4rem;
 }
 
@@ -42,14 +42,14 @@
 .stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
-  border-top: 1px solid var(--line-2);
-  border-left: 1px solid var(--line-2);
+  border-top: 1px solid var(--hair-2);
+  border-left: 1px solid var(--hair-2);
 }
 
 .stat {
   padding: clamp(1.25rem, 3vw, 2.1rem) clamp(1rem, 2.4vw, 1.75rem);
-  border-right: 1px solid var(--line-2);
-  border-bottom: 1px solid var(--line-2);
+  border-right: 1px solid var(--hair-2);
+  border-bottom: 1px solid var(--hair-2);
 }
 
 .statValue {
@@ -63,18 +63,14 @@
 .statLabel {
   font-family: var(--font-mono);
   font-size: 0.6875rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--paper-45);
+  color: var(--ink-3);
   margin-top: 0.75rem;
 }
 
 .statNote {
   font-family: var(--font-mono);
   font-size: 0.6rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--paper-28);
+  color: var(--ink-4);
   margin-top: 0.25rem;
 }
 
@@ -85,7 +81,7 @@
   gap: 0.75rem 1.5rem;
   grid-template-columns: minmax(0, 1fr);
   padding: clamp(1.1rem, 2.5vw, 1.6rem) 0;
-  border-bottom: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--hair-2);
   align-items: baseline;
   transition: padding-left 0.4s var(--ease), background 0.4s var(--ease);
 }
@@ -98,13 +94,13 @@
 }
 
 .workRow:hover { padding-left: 0.5rem; }
-.workRow:hover .workName { color: var(--amber); }
+.workRow:hover .workName { color: var(--signal); }
 
 .workIdx {
   font-family: var(--font-mono);
   font-size: 0.65rem;
   letter-spacing: 0.14em;
-  color: var(--paper-28);
+  color: var(--ink-4);
 }
 
 .workName {
@@ -114,7 +110,7 @@
   transition: color 0.3s var(--ease);
 }
 
-.workSummary { color: var(--paper-45); font-size: 0.92rem; line-height: 1.5; }
+.workSummary { color: var(--ink-3); font-size: 0.92rem; line-height: 1.5; }
 
 /* ---------- process strip ---------- */
 
@@ -125,7 +121,7 @@
   gap: 0.5rem 1.5rem;
   grid-template-columns: minmax(0, 1fr);
   padding: clamp(1.15rem, 2.6vw, 1.75rem) 0;
-  border-bottom: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--hair-2);
 }
 
 @media (min-width: 54rem) {
